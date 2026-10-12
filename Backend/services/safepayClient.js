@@ -306,7 +306,7 @@ function requireReusableCard(card, at = new Date()) {
   const expiry = card?.expires_at?.seconds;
   if (card?.max_usage !== -1 || !card.cybersource?.token || !/^\d{4}$/.test(card.cybersource.last_four || '')
     || !Number.isFinite(Number(expiry)) || Number(expiry) * 1000 <= at.getTime()) {
-    throw providerError('Please add a reusable card and explicitly choose to save it for future payments.', 'SAFEPAY_REUSABLE_CARD_REQUIRED', 409);
+    throw providerError('Please add a reusable card for future payments.', 'SAFEPAY_REUSABLE_CARD_REQUIRED', 409);
   }
   return card;
 }

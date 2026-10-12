@@ -1,9 +1,10 @@
 'use strict';
 const mockCreateCustomer = jest.fn();
 const mockListCards = jest.fn();
+const mockGetCard = jest.fn();
 jest.mock('../../services/safepayClient', () => ({
   ...jest.requireActual('../../services/safepayClient'),
-  createSafepayClient: () => ({ createCustomer: mockCreateCustomer, listCards: mockListCards }),
+  createSafepayClient: () => ({ createCustomer: mockCreateCustomer, listCards: mockListCards, getCard: mockGetCard }),
 }));
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -11,7 +12,7 @@ const User = require('../../models/User');
 const Customer = require('../../models/SafepayCustomer');
 const Payment = require('../../models/SafepayPayment');
 const Subscription = require('../../models/SellerSubscription');
-const { billingContact, ensureCustomer, startCardSetup, listCards } = require('../../services/safepayCustomerService');
+const { billingContact, ensureCustomer, startCardSetup, listCards, setDefaultCard } = require('../../services/safepayCustomerService');
 let mongo, user;
 const validContact = { fullName: 'Test Seller', phone: '+923001234567', country: 'Pakistan', countryCode: 'PK' };
 const providerCustomer = { token: 'cus_customer-fixture' };
@@ -32,6 +33,7 @@ beforeEach(async () => {
   await Promise.all([User, Customer, Payment, Subscription].map(model => model.deleteMany({})));
   mockCreateCustomer.mockReset().mockResolvedValue(providerCustomer);
   mockListCards.mockReset().mockResolvedValue([]);
+  mockGetCard.mockReset();
   user = await User.create({ username: 'Seller', email: 'customer-fixture@example.com', status: 'active', role: 'seller',
     savedShippingInfo: { ...validContact, fullName: 'SingleName' } });
 });
@@ -167,6 +169,15 @@ test('existing closed profiles and missing consent cannot initiate provider work
 const reusableCard = (id, last4 = '1111', expiry = '2030') => ({ token: id, max_usage: -1,
   expires_at: { seconds: Date.parse(`${expiry}-12-31T23:59:59Z`) / 1000 },
   cybersource: { token: 'private-network-credential', scheme: 1, last_four: last4, expiry_month: '12', expiry_year: expiry } });
+test('manual default selection records explicit intent even when choosing the same card again', async () => {
+  await ensureCustomer(user._id, validContact);
+  mockGetCard.mockResolvedValue(reusableCard('pm_shopping-fixture'));
+  await setDefaultCard(user._id, 'pm_shopping-fixture');
+  await setDefaultCard(user._id, 'pm_shopping-fixture');
+  expect(await Customer.findOne({ user: user._id }).select('+defaultCardId')).toMatchObject({
+    defaultCardId: 'pm_shopping-fixture', defaultCardManualRevision: 2, defaultCardSetupOrder: '',
+  });
+});
 test('owned current billing selection stays distinct from the shopping default, including past-due recovery', async () => {
   await ensureCustomer(user._id, validContact);
   await Customer.updateOne({ user: user._id }, { $set: { defaultCardId: 'pm_shopping-fixture' } });

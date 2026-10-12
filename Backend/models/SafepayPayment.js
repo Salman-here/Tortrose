@@ -30,6 +30,13 @@ const schema = new mongoose.Schema({
   },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
   cardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false, immutable: true },
+  cardSetup: {
+    selectionPolicy: { type: String, enum: ['', 'new-card-default-v1'], default: '' },
+    existingCardIds: [{ type: String, match: /^pm_[a-zA-Z0-9-]+$/ }],
+    manualRevision: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
+    savedCardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/ },
+    defaultAppliedAt: { type: Date, default: null },
+  },
   chargeStartedAt: { type: Date, default: null },
   chargeCompletedAt: { type: Date, default: null },
   chargeOutcome: { type: String, enum: ['not_started', 'pending', 'declined', 'unknown', 'paid'], default: 'not_started' },

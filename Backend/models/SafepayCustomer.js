@@ -5,6 +5,9 @@ const schema = new mongoose.Schema({
   environment: { type: String, enum: ['sandbox', 'production'], required: true, immutable: true },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/ },
   defaultCardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false },
+  // Explicit selections/removals take precedence over an earlier card setup.
+  defaultCardManualRevision: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
+  defaultCardSetupOrder: { type: String, default: '', maxlength: 64 },
   deletingCardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false },
   deletionStartedAt: { type: Date, default: null },
   status: { type: String, enum: ['new', 'creating', 'ready', 'deleted'], default: 'new' },

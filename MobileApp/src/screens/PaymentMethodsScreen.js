@@ -164,7 +164,7 @@ export default function PaymentMethodsScreen({ navigation }) {
     if (addingRef.current || adding || waitingForRetry || loading || loadError) return;
     if (!consentToSave) {
       setNotice({ type: 'info', title: 'Your permission is required',
-        text: 'Confirm that Safepay may securely save this card. Adding a card does not start automatic payments.' });
+        text: 'Please agree to save this card for future payments.' });
       return;
     }
     const problem = needsBillingContact ? billingContactProblem(billingContact) : '';
@@ -187,9 +187,13 @@ export default function PaymentMethodsScreen({ navigation }) {
         const refreshed = await loadCards({ quiet: true });
         await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
         setConsentToSave(false);
-        setNotice(refreshed.cards.length
-          ? { type: 'success', title: 'Card saved securely', text: 'Your reusable cards are listed below. Subscription billing requires a separate agreement.' }
-          : { type: 'info', title: 'Choose reusable card storage', text: 'Verification completed, but no reusable card was saved. Add it again and select “Securely save this card” on the Safepay form.' });
+        const saved = result.savedPaymentMethodId && refreshed.cards.find(card => card.id === result.savedPaymentMethodId && card.usable === true);
+        setNotice(saved
+          ? { type: 'success', title: 'Card saved securely', text: refreshed.defaultPaymentMethodId === saved.id
+            ? 'Your card is saved and set as your default for checkout.' : 'Your card is saved. Your current default card is unchanged.' }
+          : { type: 'info', title: 'Check your saved cards', text: !result.savedPaymentMethodId && refreshed.cards.some(card => card.usable === true)
+            ? 'Card verification completed. Your saved cards are listed below.'
+            : 'Your saved card is not available yet. Refresh your cards to check before starting another setup.' });
       } else if (['cancelled', 'failed'].includes(result.status)) {
         await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
         setNotice({ type: 'info', title: 'Card setup closed', text: 'Safepay confirmed that this card setup did not complete.' });
@@ -458,15 +462,15 @@ export default function PaymentMethodsScreen({ navigation }) {
               activeOpacity={0.78}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: consentToSave }}
-              accessibilityLabel="Consent to save this card securely with Safepay"
+              accessibilityLabel="Save this card for future payments"
             >
               <View style={[styles.checkbox, consentToSave && styles.checkboxChecked]}>
                 {consentToSave && <Ionicons name="checkmark" size={15} color="#fff" />}
               </View>
               <View style={styles.consentCopy}>
-                <Text style={styles.consentTitle}>Save with my permission</Text>
+                <Text style={styles.consentTitle}>Save this card for future payments</Text>
                 <Text style={styles.consentText}>
-                  I authorize Safepay to save this card for purchases I approve. Automatic subscription renewals require my separate agreement. Adding a card does not start a subscription.
+                  New cards become your default for checkout.
                 </Text>
               </View>
             </TouchableOpacity>

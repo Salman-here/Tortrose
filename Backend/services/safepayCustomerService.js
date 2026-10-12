@@ -169,7 +169,7 @@ async function requireOwnedReusableCard(userId, cardId) {
   return { link, card, client, config };
 }
 async function startCardSetup(userId, body) {
-  if (body?.consentToSave !== true) throw fail('Please authorize Safepay to securely save your card.', 'CARD_STORAGE_CONSENT_REQUIRED', 400);
+  if (body?.consentToSave !== true) throw fail('Please agree to save this card for future payments.', 'CARD_STORAGE_CONSENT_REQUIRED', 400);
   const link = await ensureCustomer(userId, body.billingContact);
   await Payment.init();
   const requestKey = clean(body.requestKey);
@@ -180,7 +180,9 @@ async function startCardSetup(userId, body) {
 }
 async function setDefaultCard(userId, cardId) {
   const { link } = await requireOwnedReusableCard(userId, cardId);
-  await Customer.updateOne({ _id: link._id, customerId: link.customerId }, { $set: { defaultCardId: cardId } });
+  const result = await Customer.updateOne({ _id: link._id, customerId: link.customerId, status: 'ready', deletingCardId: { $ne: cardId } },
+    { $set: { defaultCardId: cardId, defaultCardSetupOrder: '' }, $inc: { defaultCardManualRevision: 1 } });
+  if (result.matchedCount !== 1) throw fail('This card is unavailable. Refresh your payment methods.', 'CARD_REMOVAL_PENDING');
   return { success: true, defaultPaymentMethodId: cardId };
 }
 async function deleteCard(userId, cardId) {
@@ -197,6 +199,7 @@ async function deleteCard(userId, cardId) {
       status: { $in: ['new', 'creating', 'ready', 'authorized', 'manual_review'] } }).session(session);
     if (subscription || inFlight) throw fail('Change your subscription card or cancel renewal before removing this card. Pending payments must finish first.', 'CARD_IN_USE');
     locked.deletingCardId = cardId; locked.deletionStartedAt = locked.deletionStartedAt || new Date();
+    locked.defaultCardManualRevision = (locked.defaultCardManualRevision || 0) + 1;
     await locked.save({ session });
   });
   const before = await client.listCards(link.customerId);

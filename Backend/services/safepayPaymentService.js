@@ -10,6 +10,7 @@ const { createSafepayClient, requireMoney, requireReusableCard } = require('./sa
 const { safepayPaymentFacts, assertSafepayOrderBinding } = require('./safepayPaymentFacts');
 const { normalizeSafepayPaymentRail, normalizeRaastAttemptStatus, safepayPaymentRailObservation } = require('./safepayPaymentRailService');
 const { buildReturnUrl } = require('./safepayReturnNavigation');
+const { POLICY: CARD_SETUP_POLICY, snapshotCardSetup, verifySavedSetupCard, applyCardSetupDefault } = require('./safepayCardSetupService');
 
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const stable = value => Array.isArray(value) ? value.map(stable)
@@ -90,11 +91,14 @@ function createSafepayPaymentService({
       ...(customerId ? { customerId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
     const expectedFingerprint = fingerprint(terms);
     if (!existing) {
+      const cardSetup = input.purpose === 'card_setup'
+        ? await snapshotCardSetup(input, config, clientFor(config), session) : null;
       try {
         const [created] = await Payment.create([{ ...identity, reference: input.reference, amountMinor: input.amountMinor,
           currency: input.currency, order: input.order || null, store: input.store || null, returnRequest: input.returnRequest || null,
           terms: input.terms || {}, fingerprint: expectedFingerprint, providerMode,
-          providerEntryMode: providerMode === 'payment' && input.cardId ? 'tms' : '', customerId, cardId: input.cardId || null }], { session });
+          providerEntryMode: providerMode === 'payment' && input.cardId ? 'tms' : '', customerId, cardId: input.cardId || null,
+          ...(cardSetup ? { cardSetup } : {}) }], { session });
         existing = created;
       } catch (error) {
         if (error.code !== 11000 || session) throw error;
@@ -268,6 +272,10 @@ function createSafepayPaymentService({
       const observed = await Payment.updateOne({ _id: payment._id, processingToken: lease }, { $set: observation });
       if (observed.matchedCount !== 1) throw fail('Payment reconciliation lease changed.', 'SAFEPAY_RECONCILE_CONFLICT');
       const facts = safepayPaymentFacts(tracker);
+      const savedSetupCard = facts.outcome === 'paid' && payment.purpose === 'card_setup' && !payment.appliedAt
+        && ['new', 'creating', 'ready', 'authorized'].includes(payment.status)
+        && payment.cardSetup?.selectionPolicy === CARD_SETUP_POLICY
+        ? await verifySavedSetupCard(payment, tracker, config, client, at) : null;
       await mongoose.connection.transaction(async session => {
         const current = await Payment.findOne({ _id: payment._id, processingToken: lease }).session(session);
         if (!current) throw fail('Payment reconciliation lease changed.', 'SAFEPAY_RECONCILE_CONFLICT');
@@ -306,6 +314,9 @@ function createSafepayPaymentService({
               current.riskPending = true;
               current.lastErrorCode = 'SAFEPAY_LATE_PAYMENT_REVIEW';
             } else {
+              if (current.purpose === 'card_setup' && current.cardSetup?.selectionPolicy === CARD_SETUP_POLICY) {
+                await applyCardSetupDefault(current, savedSetupCard, session, at);
+              }
               if (current.purpose !== 'card_setup') await settle(current, tracker, session);
               current.status = current.purpose === 'card_setup' ? 'authorized' : 'paid';
               current.capturedMinor = current.purpose === 'card_setup' ? 0 : current.amountMinor;
@@ -358,7 +369,8 @@ function createSafepayPaymentService({
 
 function paymentResponse(payment) {
   const paid = payment.status === 'paid' && !!payment.appliedAt && !payment.riskPending;
-  const cardSaved = payment.purpose === 'card_setup' && payment.status === 'authorized' && !!payment.appliedAt;
+  const cardSaved = payment.purpose === 'card_setup' && payment.status === 'authorized' && !!payment.appliedAt
+    && (payment.cardSetup?.selectionPolicy !== CARD_SETUP_POLICY || !!payment.cardSetup.savedCardId);
   return { paymentMethod: 'safepay', paymentFlow: 'safepay_hosted', paymentId: String(payment._id),
     purpose: payment.purpose, environment: payment.environment, currency: payment.currency,
     amountMinor: payment.amountMinor, mongoOrderId: payment.order || null,
@@ -366,7 +378,9 @@ function paymentResponse(payment) {
     paymentRail: normalizeSafepayPaymentRail(payment.paymentRail),
     raastAttemptStatus: normalizeSafepayPaymentRail(payment.paymentRail) === 'raast' ? normalizeRaastAttemptStatus(payment.raastAttemptStatus) : null,
     status: cardSaved ? 'authorized' : paid ? 'paid' : ['cancelled', 'failed', 'refunded', 'refund_pending', 'manual_review'].includes(payment.status) ? payment.status : 'pending',
-    isPaid: paid, completed: paid || cardSaved, cardSaved, webhookProcessed: paid || cardSaved, providerState: payment.providerState, failureCode: payment.lastErrorCode || '' };
+    isPaid: paid, completed: paid || cardSaved, cardSaved,
+    ...(cardSaved && payment.cardSetup?.savedCardId ? { savedPaymentMethodId: payment.cardSetup.savedCardId } : {}),
+    webhookProcessed: paid || cardSaved, providerState: payment.providerState, failureCode: payment.lastErrorCode || '' };
 }
 
 module.exports = { createSafepayPaymentService, requireMobileSafepay, requireSafepayConfiguration, paymentResponse, fingerprint,

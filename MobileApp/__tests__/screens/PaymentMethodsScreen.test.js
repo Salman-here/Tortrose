@@ -69,7 +69,7 @@ test('shows a recoverable loading error instead of crashing or claiming there ar
 
 const newProfileResponse = { data: { cards: [], billingProfileReady: false,
   billingContact: { fullName: 'SingleName', phone: '+923001234567', country: 'Pakistan', countryCode: 'PK' } } };
-const consent = screen => fireEvent.press(screen.getByLabelText('Consent to save this card securely with Safepay'));
+const consent = screen => fireEvent.press(screen.getByLabelText('Save this card for future payments'));
 const add = screen => fireEvent.press(screen.getByLabelText('Add a payment card'));
 
 test('new accounts see prefilled billing fields before attempting customer creation', async () => {
@@ -149,4 +149,41 @@ test('existing provider profiles do not force users to re-enter contact details'
   add(screen);
   await waitFor(() => expect(openSafepayCheckout).toHaveBeenCalledTimes(1));
   expect(api.post.mock.calls[0][1].billingContact).toBeUndefined();
+});
+
+const savedCard = { id: 'pm_new-card', brand: 'visa', last4: '1111', expMonth: 12, expYear: 2030, usable: true };
+test('new saved card shows the server-selected default without another client-side selection', async () => {
+  api.get.mockResolvedValueOnce({ data: { cards: [], defaultPaymentMethodId: null, billingProfileReady: true } })
+    .mockResolvedValue({ data: { cards: [savedCard], defaultPaymentMethodId: savedCard.id, billingProfileReady: true } });
+  api.post.mockResolvedValue({ data: { paymentId: 'owned-setup' } });
+  openSafepayCheckout.mockResolvedValue({ status: 'authorized', savedPaymentMethodId: savedCard.id });
+  const screen = render(<PaymentMethodsScreen navigation={navigation} />);
+  await waitFor(() => expect(screen.getByText('No card saved yet')).toBeTruthy());
+  expect(screen.getByText('Save this card for future payments')).toBeTruthy();
+  consent(screen); add(screen);
+  await waitFor(() => expect(screen.getByText('Your card is saved and set as your default for checkout.')).toBeTruthy());
+  expect(screen.getByText('DEFAULT')).toBeTruthy();
+  expect(api.patch).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Save this card for future payments').props.accessibilityState.checked).toBe(false);
+});
+test('an unrelated existing card never proves the just-added card was saved', async () => {
+  api.get.mockResolvedValue({ data: { cards: [{ ...savedCard, id: 'pm_other-card' }], defaultPaymentMethodId: 'pm_other-card', billingProfileReady: true } });
+  api.post.mockResolvedValue({ data: { paymentId: 'owned-setup' } });
+  openSafepayCheckout.mockResolvedValue({ status: 'authorized', savedPaymentMethodId: savedCard.id });
+  const screen = render(<PaymentMethodsScreen navigation={navigation} />);
+  await waitFor(() => expect(screen.getByText('1111')).toBeTruthy());
+  consent(screen); add(screen);
+  await waitFor(() => expect(screen.getByText('Your saved card is not available yet. Refresh your cards to check before starting another setup.')).toBeTruthy());
+  expect(screen.queryByText('Card saved securely')).toBeNull();
+  expect(api.patch).not.toHaveBeenCalled();
+});
+test('a newer explicit default selection is shown as unchanged after card setup', async () => {
+  api.get.mockResolvedValue({ data: { cards: [savedCard], defaultPaymentMethodId: 'pm_other-card', billingProfileReady: true } });
+  api.post.mockResolvedValue({ data: { paymentId: 'owned-setup' } });
+  openSafepayCheckout.mockResolvedValue({ status: 'authorized', savedPaymentMethodId: savedCard.id });
+  const screen = render(<PaymentMethodsScreen navigation={navigation} />);
+  await waitFor(() => expect(screen.getByText('1111')).toBeTruthy());
+  consent(screen); add(screen);
+  await waitFor(() => expect(screen.getByText('Your card is saved. Your current default card is unchanged.')).toBeTruthy());
+  expect(api.patch).not.toHaveBeenCalled();
 });
