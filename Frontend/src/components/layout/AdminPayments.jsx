@@ -203,11 +203,11 @@ const WithdrawalConfirmation = ({ confirmation, busy, formatAmount, onCancel, on
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 onMouseDown={event => { if (event.target === event.currentTarget) onCancel(); }}>
                 <motion.section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={busy} aria-labelledby="withdrawal-confirmation-title" aria-describedby="withdrawal-confirmation-risk"
-                    className="glass-panel-strong w-full max-w-lg rounded-3xl p-5 sm:p-6 max-h-[88dvh] overflow-y-auto outline-none"
+                    className="modal-surface glass-panel-strong w-full max-w-lg rounded-3xl p-5 sm:p-6 max-h-[88dvh] overflow-y-auto outline-none"
                     style={{ background: 'hsl(var(--background) / 0.98)', color: 'hsl(var(--foreground))' }}
                     initial={{ opacity: 0, scale: 0.96, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 16 }}>
                     <div className="flex items-start gap-3">
-                        <div className="p-3 rounded-2xl shrink-0" style={{ background: 'rgba(249,115,22,0.12)', color: 'hsl(30,90%,50%)' }}><AlertTriangle size={22} /></div>
+                        <div className="p-3 rounded-2xl shrink-0" style={{ background: 'rgba(249,115,22,0.12)', color: "var(--modal-warning)" }}><AlertTriangle size={22} /></div>
                         <h2 id="withdrawal-confirmation-title" className="text-lg font-extrabold flex-1 min-w-0 break-words pt-2">{confirmation.title}</h2>
                         <button type="button" disabled={busy} onClick={onCancel} aria-label="Close withdrawal confirmation" className="glass-button p-2 rounded-xl disabled:opacity-50"><X size={18} /></button>
                     </div>

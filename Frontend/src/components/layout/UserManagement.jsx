@@ -379,7 +379,7 @@ const UserManagement = () => {
         <AnimatePresence key={i}>
           {modal.show && modal.user && (
             <Motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={modal.onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <Motion.div className="glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+              <Motion.div className="modal-surface glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
                 <h3 className="text-lg font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>{modal.title}</h3>
                 <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>{modal.message}</p>
                 <div className="flex justify-end space-x-3">
@@ -396,15 +396,15 @@ const UserManagement = () => {
       <AnimatePresence>
         {showRoleModal && selectedUser && (
           <Motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setShowRoleModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Motion.div className="glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+            <Motion.div className="modal-surface glass-panel max-w-md w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
               <h3 className="text-lg font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Change User Role</h3>
               <p className="text-sm mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Current role: <span className="font-semibold">{selectedUser.role}</span></p>
               <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>Change {selectedUser.username}'s role to:</p>
               <div className="space-y-2 mb-6">
                 {[
                   { role: 'user', label: 'User', icon: <User size={16} />, style: { background: 'rgba(255,255,255,0.05)', color: 'hsl(var(--foreground))' } },
-                  { role: 'seller', label: 'Seller', icon: <Store size={16} />, style: { background: 'rgba(16, 185, 129, 0.08)', color: 'hsl(150, 60%, 40%)' } },
-                  { role: 'admin', label: 'Admin', icon: <Shield size={16} />, style: { background: 'rgba(99, 102, 241, 0.08)', color: 'hsl(220, 70%, 55%)' } },
+                  { role: 'seller', label: 'Seller', icon: <Store size={16} />, style: { background: 'rgba(16, 185, 129, 0.08)', color: "var(--modal-success)" } },
+                  { role: 'admin', label: 'Admin', icon: <Shield size={16} />, style: { background: 'rgba(99, 102, 241, 0.08)', color: "var(--modal-info)" } },
                 ].map(r => (
                   <button key={r.role} onClick={() => { selectedUser.targetRole = r.role; confirmChangeRole(); }} disabled={selectedUser.role === r.role}
                     className="w-full px-4 py-3 rounded-xl text-left flex items-center gap-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm"
@@ -425,7 +425,7 @@ const UserManagement = () => {
       <AnimatePresence>
         {showTrialModal && selectedUser && (
           <Motion.div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={closeTrialModal} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Motion.div className="glass-panel max-w-lg w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+            <Motion.div className="modal-surface glass-panel max-w-lg w-full p-6" onClick={e => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
               <div className="flex items-start gap-3 mb-5">
                 <div className="glass-inner p-2.5 rounded-xl"><CalendarDays className="w-5 h-5" style={{ color: 'hsl(var(--primary))' }} /></div>
                 <div>

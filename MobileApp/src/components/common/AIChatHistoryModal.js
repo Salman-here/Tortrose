@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -15,6 +14,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import Modal from './AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,8 @@ import {
   groupConversationSessions,
 } from '../../utils/aiChatHistory';
 import GlassBlurFill from './GlassBlurFill';
+import ModalSurface from './ModalSurface';
+import { getModalPalette } from '../../styles/modalTheme';
 
 const messageCountLabel = (count) => `${count} ${count === 1 ? 'message' : 'messages'}`;
 
@@ -50,7 +52,8 @@ export default function AIChatHistoryModal({
   onRename,
   onDelete,
 }) {
-  const { palette } = useTheme();
+  const { palette: modalBasePalette } = useTheme();
+  const palette = getModalPalette(modalBasePalette);
   const insets = useSafeAreaInsets();
   const { height: viewportHeight } = useWindowDimensions();
   const styles = useMemo(() => buildStyles(palette), [palette]);
@@ -268,7 +271,7 @@ export default function AIChatHistoryModal({
           style={styles.sheetAnchor}
           pointerEvents="box-none"
         >
-          <View
+          <ModalSurface
             testID="ai-chat-history-modal"
             style={[styles.sheet, { height: sheetHeight, paddingBottom: Math.max(insets.bottom, spacing.md) }]}
           >
@@ -425,7 +428,7 @@ export default function AIChatHistoryModal({
                 ) : null}
               />
             )}
-          </View>
+          </ModalSurface>
         </KeyboardAvoidingView>
       </View>
     </Modal>

@@ -2,7 +2,6 @@ import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Modal,
   Platform,
   StyleSheet,
   Text,
@@ -10,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Modal from './AppModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,6 +29,7 @@ import {
 } from '../../utils/phoneNumber';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
+import ModalSurface from './ModalSurface';
 
 const CATALOG_CACHE_KEY = 'rozare:phone-country-catalog:v1';
 const CATALOG_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -335,7 +336,7 @@ const PhoneNumberInput = forwardRef(function PhoneNumberInput({
       >
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setPickerOpen(false)} accessibilityLabel="Close country picker" />
-          <SafeAreaView style={styles.sheet}>
+          <ModalSurface as={SafeAreaView} style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View>
@@ -390,7 +391,7 @@ const PhoneNumberInput = forwardRef(function PhoneNumberInput({
                 );
               }}
             />
-          </SafeAreaView>
+          </ModalSurface>
         </View>
       </Modal>
     </View>

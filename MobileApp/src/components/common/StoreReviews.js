@@ -4,8 +4,9 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, TextInput, Modal, Alert, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
+import Modal from './AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import api from '../../config/api';
@@ -309,7 +310,7 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
       {/* Submission Modal */}
       <Modal visible={showForm} transparent animationType="slide" onRequestClose={() => setShowForm(false)}>
         <View style={styles.modalOverlay}>
-          <GlassPanel variant="strong" style={styles.modalCard}>
+          <GlassPanel variant="modal" style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{myReview ? 'Edit your review' : 'Write a review'}</Text>
               <TouchableOpacity onPress={() => setShowForm(false)}>

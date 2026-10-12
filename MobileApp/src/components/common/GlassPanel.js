@@ -13,6 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { borderRadius as br, shadows, spacing } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useGlassBlurTarget } from '../../contexts/GlassBlurContext';
+import { ModalSurfaceContext, useModalSurface } from '../../contexts/ModalSurfaceContext';
+import { getModalTokens } from '../../styles/modalTheme';
 
 const buildVariants = (palette) => {
   const g = palette.glass;
@@ -33,6 +35,9 @@ export default function GlassPanel({
   ...viewProps
 }) {
   const { palette, isDark } = useTheme();
+  const inModal = useModalSurface();
+  const isModalPanel = variant === 'modal';
+  const modal = getModalTokens(palette);
   const VARIANTS = buildVariants(palette);
   const v = VARIANTS[variant] || VARIANTS.default;
   const tint = isDark ? 'dark' : 'light';
@@ -56,7 +61,16 @@ export default function GlassPanel({
     { backgroundColor: v.bg, borderColor: v.border },
     Platform.OS === 'android' && styles.androidPanel,
     style,
+    isModalPanel && { backgroundColor: modal.surface, borderColor: modal.border },
   ];
+
+  if (inModal || isModalPanel) {
+    return <ModalSurfaceContext.Provider value><View {...viewProps} style={surfaceStyle}>
+      {isModalPanel && <LinearGradient colors={modal.glow} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill} pointerEvents="none" />}
+      {children}
+    </View></ModalSurfaceContext.Provider>;
+  }
 
   if (Platform.OS === 'android' && !useNativeAndroidBlur) {
     return (

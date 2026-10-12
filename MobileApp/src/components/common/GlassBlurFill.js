@@ -12,6 +12,7 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useGlassBlurTarget } from '../../contexts/GlassBlurContext';
+import { useModalSurface } from '../../contexts/ModalSurfaceContext';
 
 export default function GlassBlurFill({
   intensity = 40,
@@ -19,6 +20,10 @@ export default function GlassBlurFill({
 }) {
   const { isDark } = useTheme();
   const blurTarget = useGlassBlurTarget();
+  const inModal = useModalSurface();
+
+  // Modal windows must not sample the screen through their dimmer.
+  if (inModal) return null;
 
   if (Platform.OS === 'android') {
     if (!androidBlur || !blurTarget) return null;

@@ -30,7 +30,7 @@ export default function CurrencySelector() {
           <>
             <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
             <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-              className="absolute right-0 mt-1 w-44 glass-panel-strong z-50 overflow-hidden p-1">
+              className="modal-surface absolute right-0 mt-1 w-44 glass-panel-strong z-50 overflow-hidden p-1">
               {Object.entries(currencies).map(([code, info]) => (
                 <motion.button key={code} onClick={() => handleCurrencyChange(code)} disabled={currencyPreferenceSaving}
                   whileHover={{ backgroundColor: 'rgba(255,255,255,0.1)' }}

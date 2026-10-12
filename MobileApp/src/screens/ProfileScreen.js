@@ -5,8 +5,9 @@
 
 import React, { useCallback, useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput,
 } from 'react-native';
+import Modal from '../components/common/AppModal';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -342,7 +343,7 @@ export default function ProfileScreen({ navigation }) {
           <View
             style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
           >
-            <GlassPanel variant="strong" style={{ borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: spacing.xl, paddingBottom: spacing.xxxl }}>
+            <GlassPanel variant="modal" style={{ borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: spacing.xl, paddingBottom: spacing.xxxl }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg }}>
                 <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: palette.colors.text }}>Edit Shipping Info</Text>
                 <TouchableOpacity onPress={() => setEditingShipping(false)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: palette.glass.bgSubtle, justifyContent: 'center', alignItems: 'center' }}>

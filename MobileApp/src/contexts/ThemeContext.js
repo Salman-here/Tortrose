@@ -12,6 +12,8 @@ import React, { createContext, useContext, useEffect, useMemo, useState, useCall
 import { Appearance, AppState, Platform, useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { lightPalette, darkPalette } from '../styles/palettes';
+import { useModalSurface } from './ModalSurfaceContext';
+import { getModalPalette } from '../styles/modalTheme';
 import {
   isThemeMode,
   normalizeSystemColorScheme,
@@ -131,18 +133,21 @@ export function ThemeProvider({ children }) {
 
 export function useTheme() {
   const context = useContext(ThemeContext);
+  const inModal = useModalSurface();
+  const basePalette = context?.palette || lightPalette;
+  const palette = useMemo(() => inModal ? getModalPalette(basePalette) : basePalette, [inModal, basePalette]);
   if (!context || !context.palette) {
     // Fallback to light palette if context not ready
     return {
       mode: 'system',
       resolvedMode: 'light',
       isDark: false,
-      palette: lightPalette,
+      palette,
       setMode: () => {},
       toggle: () => {},
     };
   }
-  return context;
+  return inModal ? { ...context, palette } : context;
 }
 
 /**

@@ -7,8 +7,9 @@
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Modal, Platform,
+  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Platform,
 } from 'react-native';
+import Modal from '../../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -645,7 +646,7 @@ export default function SellerDashboardScreen({ navigation }) {
         onRequestClose={() => setShowFounderOffer(false)}
       >
         <View style={styles.founderBackdrop}>
-          <GlassPanel variant="strong" style={styles.founderModal}>
+          <GlassPanel variant="modal" style={styles.founderModal}>
             <TouchableOpacity
               onPress={() => setShowFounderOffer(false)}
               style={styles.founderClose}

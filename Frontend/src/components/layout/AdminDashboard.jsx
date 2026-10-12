@@ -824,7 +824,7 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
             className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 pt-8 sm:pt-12 z-50 overflow-y-auto">
             <motion.div initial={{ scale: 0.92, opacity: 0, y: 30 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 30 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="w-full max-w-4xl mb-8 glass-panel-strong"
+                className="modal-surface w-full max-w-4xl mb-8 glass-panel-strong"
                 style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
                 <div className="max-h-[85vh] overflow-y-auto" style={{ borderRadius: 28 }}>
 
@@ -912,7 +912,7 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
                                     onClick={() => setProduct({ ...product, imageInputType: type })}
                                     className="flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
                                     style={(product.imageInputType || 'url') === type
-                                        ? { background: 'rgba(99, 102, 241, 0.15)', color: 'hsl(220, 70%, 55%)', border: '2px solid hsl(220, 70%, 55%)' }
+                                        ? { background: 'rgba(99, 102, 241, 0.15)', color: "var(--modal-info)", border: '2px solid hsl(220, 70%, 55%)' }
                                         : { background: 'var(--glass-bg)', color: 'hsl(var(--muted-foreground))', border: '2px solid var(--glass-border)' }}>
                                     {type === 'url' ? 'URL' : 'Upload File'}
                                 </button>
@@ -949,7 +949,7 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
                                     onClick={() => setProduct({ ...product, additionalImageInputType: type })}
                                     className="flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
                                     style={(product.additionalImageInputType || 'url') === type
-                                        ? { background: 'rgba(99, 102, 241, 0.15)', color: 'hsl(220, 70%, 55%)', border: '2px solid hsl(220, 70%, 55%)' }
+                                        ? { background: 'rgba(99, 102, 241, 0.15)', color: "var(--modal-info)", border: '2px solid hsl(220, 70%, 55%)' }
                                         : { background: 'var(--glass-bg)', color: 'hsl(var(--muted-foreground))', border: '2px solid var(--glass-border)' }}>
                                     {type === 'url' ? 'URL' : 'Upload Files'}
                                 </button>

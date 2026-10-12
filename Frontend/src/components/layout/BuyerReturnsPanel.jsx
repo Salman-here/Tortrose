@@ -557,7 +557,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
       {typeof document !== 'undefined' && createPortal(<AnimatePresence>
         {selectedGroup && (
           <motion.div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={closeDialog}>
-            <motion.div ref={dialogPanel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={submitting} aria-labelledby="buyer-return-dialog-title" className="glass-panel-strong w-full max-w-xl max-h-[90vh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
+            <motion.div ref={dialogPanel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={submitting} aria-labelledby="buyer-return-dialog-title" className="modal-surface glass-panel-strong w-full max-w-xl max-h-[90vh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 mb-5">
                 <div>
                   <h3 id="buyer-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Request a return</h3>
@@ -601,7 +601,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               </div>
 
               {selectedGroup.policyVariants?.length > 1 && (
-                <p className="text-xs mt-3" style={{ color: 'hsl(38, 85%, 42%)' }}>Items with different refund or replacement resolutions must be submitted in separate requests.</p>
+                <p className="text-xs mt-3" style={{ color: "var(--modal-warning)" }}>Items with different refund or replacement resolutions must be submitted in separate requests.</p>
               )}
 
               <label className="block text-sm font-medium mt-5 mb-2" style={{ color: 'hsl(var(--foreground))' }}>Reason</label>

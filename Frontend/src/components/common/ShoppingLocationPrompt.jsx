@@ -53,7 +53,7 @@ export default function ShoppingLocationPrompt() {
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-[10000] bg-black/45 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
-      <section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="shopping-location-title" onFocusCapture={event => { if (event.target.tagName === 'INPUT') touched.current = true; }} className="glass-panel w-full max-w-xl max-h-[90dvh] overflow-y-auto rounded-3xl p-5 sm:p-7 outline-none" style={{ background: 'hsl(var(--background))' }}>
+      <section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="shopping-location-title" onFocusCapture={event => { if (event.target.tagName === 'INPUT') touched.current = true; }} className="modal-surface glass-panel w-full max-w-xl max-h-[90dvh] overflow-y-auto rounded-3xl p-5 sm:p-7 outline-none" style={{ background: 'hsl(var(--background))' }}>
         <div className="flex items-start justify-between gap-3">
           <div><h2 id="shopping-location-title" className="text-xl font-bold">Where would you like to shop?</h2>
             <p className="text-sm mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Choose a country or explore stores that sell globally.</p></div>

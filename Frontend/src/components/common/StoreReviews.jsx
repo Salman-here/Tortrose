@@ -330,7 +330,7 @@ export default function StoreReviews({ storeId, storeOwnerId, onSummaryChange })
       <AnimatePresence>
         {formOpen && (
           <motion.div className="fixed inset-0 z-[100] bg-black/45 backdrop-blur-sm flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => { if (event.target === event.currentTarget) setFormOpen(false); }}>
-            <motion.form onSubmit={submitReview} className="glass-panel-strong p-5 sm:p-6 w-full max-w-lg" initial={{ opacity: 0, scale: 0.96, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 12 }}>
+            <motion.form onSubmit={submitReview} className="modal-surface glass-panel-strong p-5 sm:p-6 w-full max-w-lg" initial={{ opacity: 0, scale: 0.96, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 12 }}>
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>{myReview ? 'Edit Store Rating' : 'Rate This Store'}</h2>
                 <button type="button" onClick={() => setFormOpen(false)} className="w-9 h-9 rounded-lg inline-flex items-center justify-center" aria-label="Close"><X size={18} /></button>

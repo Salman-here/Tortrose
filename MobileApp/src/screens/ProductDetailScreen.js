@@ -5,9 +5,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  useWindowDimensions, FlatList, Share, Animated, Modal, TextInput,
+  useWindowDimensions, FlatList, Share, Animated, TextInput,
   Platform, ActivityIndicator, RefreshControl, PanResponder,
 } from 'react-native';
+import Modal from '../components/common/AppModal';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -44,6 +45,7 @@ import {
   validateProductSelections,
 } from '../utils/productOptions';
 import { optionsKeyOf } from '../utils/guestCart';
+import { getModalTokens } from '../styles/modalTheme';
 
 const PRODUCT_TOPBAR_SHEEN = [
   'rgba(14,165,233,0.12)',
@@ -955,7 +957,7 @@ export default function ProductDetailScreen({ route, navigation }) {
       <Modal visible={reviewModalVisible} animationType="slide" transparent onRequestClose={() => setReviewModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <KeyboardAwareFormScrollView contentContainerStyle={styles.reviewModalScrollContent} bottomOffset={spacing.md}>
-          <GlassPanel variant="strong" style={styles.modalSheet}>
+          <GlassPanel variant="modal" style={styles.modalSheet}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
               <Text style={{ fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: palette.colors.text }}>Write a Review</Text>
               <TouchableOpacity
@@ -986,7 +988,7 @@ export default function ProductDetailScreen({ route, navigation }) {
               value={reviewComment}
               onChangeText={setReviewComment}
               placeholder="Share your experience..."
-              placeholderTextColor={palette.colors.grayLight}
+              placeholderTextColor={getModalTokens(palette).muted}
               multiline
               numberOfLines={4}
               textAlignVertical="top"

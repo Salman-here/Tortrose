@@ -156,7 +156,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                 <motion.div initial={{ scale: 0.92, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 20 }}
                     transition={{ type: 'spring', damping: 25, stiffness: 300 }}
                     onClick={(e) => e.stopPropagation()}
-                    className="max-w-2xl w-full max-h-[95vh] overflow-y-auto glass-panel-strong"
+                    className="modal-surface max-w-2xl w-full max-h-[95vh] overflow-y-auto glass-panel-strong"
                     style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.1)' }}>
                     
                     {/* Header */}
@@ -175,7 +175,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                                 <button key={tab.key} onClick={() => setActiveOperation(tab.key)}
                                     className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl transition-all text-sm font-medium"
                                     style={activeOperation === tab.key
-                                        ? { background: 'rgba(99, 102, 241, 0.12)', color: 'hsl(220, 70%, 55%)' }
+                                        ? { background: 'rgba(99, 102, 241, 0.12)', color: "var(--modal-info)" }
                                         : { background: 'rgba(255,255,255,0.05)', color: 'hsl(var(--muted-foreground))' }}>
                                     {tab.icon} <span>{tab.label}</span>
                                 </button>
@@ -193,7 +193,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                                 {storeCurrencyError && (
                                     <div className="flex items-center justify-between gap-3 mt-1">
                                         <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{storeCurrencyError}</p>
-                                        <button type="button" onClick={fetchStoreCurrency} className="text-xs font-semibold" style={{ color: 'hsl(220, 70%, 55%)' }}>Retry</button>
+                                        <button type="button" onClick={fetchStoreCurrency} className="text-xs font-semibold" style={{ color: "var(--modal-info)" }}>Retry</button>
                                     </div>
                                 )}
                             </div>
@@ -207,7 +207,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                                             <button key={dt.key} onClick={() => setDiscountType(dt.key)}
                                                 className="flex items-center justify-center gap-1.5 sm:gap-2 p-2 sm:p-3 rounded-xl transition-all text-sm font-medium"
                                                 style={discountType === dt.key
-                                                    ? { background: 'rgba(99, 102, 241, 0.12)', color: 'hsl(220, 70%, 55%)', border: '2px solid hsl(220, 70%, 55%)' }
+                                                    ? { background: 'rgba(99, 102, 241, 0.12)', color: "var(--modal-info)", border: '2px solid hsl(220, 70%, 55%)' }
                                                     : { background: 'rgba(255,255,255,0.05)', color: 'hsl(var(--muted-foreground))', border: '2px solid var(--glass-border)' }}>
                                                 {dt.icon} <span>{dt.label}</span>
                                             </button>
@@ -239,7 +239,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                                             <button key={pt.key} onClick={() => setPriceUpdateType(pt.key)}
                                                 className="flex flex-col items-center justify-center gap-1 p-2 sm:p-3 rounded-xl transition-all font-medium"
                                                 style={priceUpdateType === pt.key
-                                                    ? { background: 'rgba(99, 102, 241, 0.12)', color: 'hsl(220, 70%, 55%)', border: '2px solid hsl(220, 70%, 55%)' }
+                                                    ? { background: 'rgba(99, 102, 241, 0.12)', color: "var(--modal-info)", border: '2px solid hsl(220, 70%, 55%)' }
                                                     : { background: 'rgba(255,255,255,0.05)', color: 'hsl(var(--muted-foreground))', border: '2px solid var(--glass-border)' }}>
                                                 {pt.icon} <span className="text-[10px] sm:text-xs">{pt.label}</span>
                                             </button>
@@ -270,7 +270,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                         {activeOperation === 'remove' && (
                             <div className="space-y-4">
                                 <div className="glass-inner rounded-xl p-4 text-center" style={{ borderLeft: '3px solid hsl(30, 90%, 50%)' }}>
-                                    <Trash2 className="mx-auto mb-3" size={32} style={{ color: 'hsl(0, 72%, 55%)' }} />
+                                    <Trash2 className="mx-auto mb-3" size={32} style={{ color: "var(--modal-danger)" }} />
                                     <h4 className="font-semibold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Remove All Discounts</h4>
                                     <p className="text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>This will remove all discounts from {safeSelectedProducts.length} selected product(s). Prices will revert to their original values.</p>
                                 </div>
@@ -298,7 +298,7 @@ const BulkDiscountModal = ({ isOpen, onClose, selectedProducts, onSuccess, isAdm
                                                     ? formatPrice(presentation.price, { sourceCurrency: presentation.currency, targetCurrency: isAdmin ? undefined : presentation.currency })
                                                     : 'Price unavailable'}
                                                 {presentation?.hasDiscount && (
-                                                    <span className="ml-2" style={{ color: 'hsl(150, 60%, 45%)' }}>{formatPrice(presentation.discountedPrice, { sourceCurrency: presentation.currency, targetCurrency: isAdmin ? undefined : presentation.currency })}</span>
+                                                    <span className="ml-2" style={{ color: "var(--modal-success)" }}>{formatPrice(presentation.discountedPrice, { sourceCurrency: presentation.currency, targetCurrency: isAdmin ? undefined : presentation.currency })}</span>
                                                 )}
                                             </p>
                                         </div>

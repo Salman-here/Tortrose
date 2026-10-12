@@ -325,7 +325,7 @@ export default function ReturnOrdersPanel({ formatPrice }) {
       {typeof document !== 'undefined' && createPortal(<AnimatePresence>
         {dialog && (
           <motion.div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={closeDialog}>
-            <motion.div ref={dialogPanel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={submitting} aria-labelledby="seller-return-dialog-title" className="glass-panel-strong w-full max-w-md max-h-[90dvh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
+            <motion.div ref={dialogPanel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={submitting} aria-labelledby="seller-return-dialog-title" className="modal-surface glass-panel-strong w-full max-w-md max-h-[90dvh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 id="seller-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{dialog.type === 'accept' ? 'Accept return' : actionLabels[dialog.status]}</h3>
@@ -365,11 +365,11 @@ export default function ReturnOrdersPanel({ formatPrice }) {
                   <p className="text-sm mt-5" style={{ color: 'hsl(var(--muted-foreground))' }}>The return becomes completed only after the full amount is funded and credited to the buyer's Rozare Wallet.</p>
                   <div className="grid gap-3 mt-4">
                     <button type="button" onClick={() => acceptReturn(dialog.request, 'seller_balance')} disabled={submitting} className="glass-button p-4 rounded-xl text-left inline-flex items-start gap-3 disabled:opacity-50">
-                      <WalletCards size={19} className="mt-0.5 shrink-0" style={{ color: 'hsl(150, 60%, 40%)' }} />
+                      <WalletCards size={19} className="mt-0.5 shrink-0" style={{ color: "var(--modal-success)" }} />
                       <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Use seller balance</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Available delivered online revenue is debited atomically.</span></span>
                     </button>
                     <button type="button" onClick={() => acceptReturn(dialog.request, 'card')} disabled={submitting} className="glass-button p-4 rounded-xl text-left inline-flex items-start gap-3 disabled:opacity-50">
-                      <CreditCard size={19} className="mt-0.5 shrink-0" style={{ color: 'hsl(220, 70%, 55%)' }} />
+                      <CreditCard size={19} className="mt-0.5 shrink-0" style={{ color: "var(--modal-info)" }} />
                       <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Pay through Safepay</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Safepay verifies the exact amount before wallet credit.</span></span>
                     </button>
                   </div>

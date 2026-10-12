@@ -764,10 +764,10 @@ const CouponManagement = () => {
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                         <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
-                            className="glass-panel-strong p-6 max-w-sm w-full">
+                            className="modal-surface glass-panel-strong p-6 max-w-sm w-full">
                             <div className="flex items-center gap-3 mb-4">
                                 <div className="p-2 rounded-full" style={{ background: 'rgba(239,68,68,0.12)' }}>
-                                    <AlertTriangle size={20} style={{ color: 'hsl(0, 72%, 55%)' }} />
+                                    <AlertTriangle size={20} style={{ color: "var(--modal-danger)" }} />
                                 </div>
                                 <h3 className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Delete Coupon?</h3>
                             </div>
@@ -797,10 +797,10 @@ const CouponManagement = () => {
                         className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50"
                         onClick={(e) => e.target === e.currentTarget && setShowForm(false)}>
                         <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-                            className="glass-panel-strong p-5 sm:p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+                            className="modal-surface glass-panel-strong p-5 sm:p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
                             <div className="flex items-center justify-between mb-5">
                                 <h3 className="text-lg font-bold flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
-                                    <Ticket size={20} style={{ color: 'hsl(280, 60%, 55%)' }} />
+                                    <Ticket size={20} style={{ color: "var(--modal-accent)" }} />
                                     {editingCoupon ? 'Edit Coupon' : 'Create Coupon'}
                                 </h3>
                                 <button onClick={() => { setShowForm(false); resetForm(); }}
@@ -819,11 +819,11 @@ const CouponManagement = () => {
                                             placeholder="e.g. SAVE20" className="glass-input flex-1 text-sm font-mono uppercase tracking-wider" />
                                         <button type="button" onClick={generateRandomCode}
                                             className="px-3 py-2 rounded-xl glass-inner text-xs font-medium whitespace-nowrap"
-                                            style={{ color: 'hsl(280, 60%, 55%)' }}>
+                                            style={{ color: "var(--modal-accent)" }}>
                                             Generate
                                         </button>
                                     </div>
-                                    {formErrors.code && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.code}</p>}
+                                    {formErrors.code && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.code}</p>}
                                 </div>
 
                                 {/* Discount Type & Value */}
@@ -845,7 +845,7 @@ const CouponManagement = () => {
                                             value={form.discountValue} onChange={(e) => setForm(f => ({ ...f, discountValue: e.target.value }))}
                                             placeholder={form.discountType === 'percentage' ? '10' : '5.00'}
                                             className="glass-input w-full text-sm" />
-                                        {formErrors.discountValue && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.discountValue}</p>}
+                                        {formErrors.discountValue && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.discountValue}</p>}
                                     </div>
                                 </div>
 
@@ -866,7 +866,7 @@ const CouponManagement = () => {
                                             Selected Products
                                         </label>
                                     </div>
-                                    {formErrors.applicableProducts && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.applicableProducts}</p>}
+                                    {formErrors.applicableProducts && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.applicableProducts}</p>}
                                 </div>
 
                                 {/* Product Picker */}
@@ -878,7 +878,7 @@ const CouponManagement = () => {
                                             </span>
                                             <button type="button" onClick={() => setShowProductPicker(!showProductPicker)}
                                                 className="text-xs font-semibold flex items-center gap-1"
-                                                style={{ color: 'hsl(280, 60%, 55%)' }}>
+                                                style={{ color: "var(--modal-accent)" }}>
                                                 {showProductPicker ? 'Hide' : 'Select Products'}
                                                 {showProductPicker ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                                             </button>
@@ -920,7 +920,7 @@ const CouponManagement = () => {
                                         <input type="number" min="1" step="1" value={form.maxUses}
                                             onChange={(e) => setForm(f => ({ ...f, maxUses: e.target.value }))}
                                             placeholder="Unlimited" className="glass-input w-full text-sm" />
-                                        {formErrors.maxUses && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.maxUses}</p>}
+                                        {formErrors.maxUses && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.maxUses}</p>}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--foreground))' }}>
@@ -929,7 +929,7 @@ const CouponManagement = () => {
                                         <input type="number" min="1" step="1" value={form.maxUsesPerUser}
                                             onChange={(e) => setForm(f => ({ ...f, maxUsesPerUser: e.target.value }))}
                                             placeholder="1" className="glass-input w-full text-sm" />
-                                        {formErrors.maxUsesPerUser && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.maxUsesPerUser}</p>}
+                                        {formErrors.maxUsesPerUser && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.maxUsesPerUser}</p>}
                                     </div>
                                 </div>
 
@@ -942,7 +942,7 @@ const CouponManagement = () => {
                                         <input type="number" min="0" step="0.01" value={form.minOrderAmount}
                                             onChange={(e) => setForm(f => ({ ...f, minOrderAmount: e.target.value }))}
                                             placeholder="No minimum" className="glass-input w-full text-sm" />
-                                        {formErrors.minOrderAmount && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.minOrderAmount}</p>}
+                                        {formErrors.minOrderAmount && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.minOrderAmount}</p>}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--foreground))' }}>
@@ -951,7 +951,7 @@ const CouponManagement = () => {
                                         <input type="number" min="0.01" step="0.01" value={form.maxDiscountAmount}
                                             onChange={(e) => setForm(f => ({ ...f, maxDiscountAmount: e.target.value }))}
                                             placeholder="No cap" className="glass-input w-full text-sm" />
-                                        {formErrors.maxDiscountAmount && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.maxDiscountAmount}</p>}
+                                        {formErrors.maxDiscountAmount && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.maxDiscountAmount}</p>}
                                     </div>
                                 </div>
 
@@ -968,7 +968,7 @@ const CouponManagement = () => {
                                         <input type="date" value={form.expiryDate}
                                             onChange={(e) => setForm(f => ({ ...f, expiryDate: e.target.value }))}
                                             className="glass-input w-full text-sm" />
-                                        {formErrors.expiryDate && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.expiryDate}</p>}
+                                        {formErrors.expiryDate && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.expiryDate}</p>}
                                     </div>
                                 </div>
 
@@ -985,7 +985,7 @@ const CouponManagement = () => {
                                     <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                         Fixed values stay stored in {form.currency}. New coupons use your store product currency; changing display currency never rewrites them.
                                     </p>
-                                    {formErrors.currency && <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{formErrors.currency}</p>}
+                                    {formErrors.currency && <p className="text-xs mt-1" style={{ color: "var(--modal-danger)" }}>{formErrors.currency}</p>}
                                 </div>
 
                                 {/* Save Button */}

@@ -3,7 +3,8 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, StyleSheet, FlatList, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, FlatList, Alert, ActivityIndicator } from 'react-native';
+import Modal from './common/AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -41,7 +42,7 @@ export default function CurrencySelector() {
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <GlassPanel variant="strong" style={styles.modalContent}>
+          <GlassPanel variant="modal" style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Currency</Text>
               <TouchableOpacity style={styles.closeBtn} onPress={() => setModalVisible(false)} activeOpacity={0.8}>

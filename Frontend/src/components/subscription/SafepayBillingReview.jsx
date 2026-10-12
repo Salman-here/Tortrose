@@ -133,7 +133,7 @@ function SafepayBillingReview({ quote, cards, cardId, onCardChange, consent, onC
   }, [quote]);
   if (!quote) return null;
   return createPortal(<div className="fixed inset-0 z-[9995] bg-black/60 flex items-center justify-center p-4">
-    <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="safepay-billing-title" className="safepay-surface w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl p-6 shadow-xl space-y-5">
+    <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="safepay-billing-title" className="modal-surface safepay-surface w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl p-6 shadow-xl space-y-5">
       <header className="flex items-center justify-between gap-3"><h2 id="safepay-billing-title" className="font-bold text-lg">Review your subscription</h2><button type="button" aria-label="Close subscription review" disabled={busy} onClick={onClose}><X /></button></header>
       <h3 className="font-semibold">{quote.planName}</h3>
       <div className="glass-card p-4 space-y-2"><p>Due now: <strong>{formatUsdCents(quote.dueNowMinor)} USD</strong></p><p>Recurring price: <strong>{formatUsdCents(quote.monthlyAmountMinor)} USD/month</strong></p>{quote.freePeriodDays > 0 && <p>First {quote.freePeriodDays} days free.</p>}{quote.creditMinor > 0 && <p>Credit toward future billing: {formatUsdCents(quote.creditMinor)} USD</p>}</div>

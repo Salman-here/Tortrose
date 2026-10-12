@@ -76,7 +76,7 @@ export default function SafetyActionsDialog({ open, onClose, report, block, init
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-[120] bg-slate-950/55 backdrop-blur-sm flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
-          <motion.div className="glass-panel-strong w-full max-w-lg p-5 sm:p-6 max-h-[88vh] overflow-y-auto" initial={{ opacity: 0, scale: 0.96, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 16 }}>
+          <motion.div className="modal-surface glass-panel-strong w-full max-w-lg p-5 sm:p-6 max-h-[88vh] overflow-y-auto" initial={{ opacity: 0, scale: 0.96, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 16 }}>
             <div className="flex items-start gap-3">
               <div className="w-11 h-11 rounded-2xl text-white flex items-center justify-center shrink-0 shadow-lg" style={{ background: 'linear-gradient(135deg,#14B8A6,#0EA5E9,#6366F1)' }}>
                 {mode === 'block' ? <Ban size={20} /> : <ShieldCheck size={20} />}
@@ -93,14 +93,14 @@ export default function SafetyActionsDialog({ open, onClose, report, block, init
             {mode === 'menu' ? (
               <div className="mt-5 grid gap-3">
                 <button type="button" onClick={() => setMode('report')} className="glass-inner p-4 rounded-2xl flex items-center gap-3 text-left hover:scale-[1.01] transition-transform">
-                  <span className="w-10 h-10 rounded-xl inline-flex items-center justify-center" style={{ background: 'rgba(245,158,11,.12)', color: 'hsl(45,80%,40%)' }}><Flag size={19} /></span>
+                  <span className="w-10 h-10 rounded-xl inline-flex items-center justify-center" style={{ background: 'rgba(245,158,11,.12)', color: "var(--modal-warning)" }}><Flag size={19} /></span>
                   <span className="flex-1"><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Report</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Send this content to the Rozare safety team.</span></span>
                 </button>
-                {block && <button type="button" onClick={() => setMode('block')} className="glass-inner p-4 rounded-2xl flex items-center gap-3 text-left hover:scale-[1.01] transition-transform"><span className="w-10 h-10 rounded-xl inline-flex items-center justify-center" style={{ background: 'rgba(239,68,68,.10)', color: 'hsl(0,72%,55%)' }}><Ban size={19} /></span><span className="flex-1"><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Block {block.label || 'account'}</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Hide their content from your Rozare account.</span></span></button>}
+                {block && <button type="button" onClick={() => setMode('block')} className="glass-inner p-4 rounded-2xl flex items-center gap-3 text-left hover:scale-[1.01] transition-transform"><span className="w-10 h-10 rounded-xl inline-flex items-center justify-center" style={{ background: 'rgba(239,68,68,.10)', color: "var(--modal-danger)" }}><Ban size={19} /></span><span className="flex-1"><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Block {block.label || 'account'}</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Hide their content from your Rozare account.</span></span></button>}
               </div>
             ) : mode === 'block' ? (
               <>
-                <div className="mt-5 rounded-2xl p-4 flex gap-3" style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.18)' }}><AlertTriangle size={20} style={{ color: 'hsl(0,72%,55%)' }} className="shrink-0" /><p className="text-sm leading-relaxed" style={{ color: 'hsl(var(--foreground))' }}>This changes only what you see. Rozare may separately review any report you submit.</p></div>
+                <div className="mt-5 rounded-2xl p-4 flex gap-3" style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.18)' }}><AlertTriangle size={20} style={{ color: "var(--modal-danger)" }} className="shrink-0" /><p className="text-sm leading-relaxed" style={{ color: 'hsl(var(--foreground))' }}>This changes only what you see. Rozare may separately review any report you submit.</p></div>
                 <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setMode('menu')} className="glass-button px-4 py-2.5 rounded-xl text-sm font-semibold">Go back</button><button type="button" onClick={submitBlock} disabled={busy} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(0,72%,55%)' }}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />} Block</button></div>
               </>
             ) : (

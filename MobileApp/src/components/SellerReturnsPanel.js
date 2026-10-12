@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Modal,
   Platform,
   RefreshControl,
   ScrollView,
@@ -13,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Modal from './common/AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { openSafepayCheckout } from '../utils/safepayCheckout';
@@ -821,7 +821,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
           style={styles.modalOverlay}
           accessibilityViewIsModal
         >
-          <GlassPanel variant="strong" style={styles.modalCard}>
+          <GlassPanel variant="modal" style={styles.modalCard}>
             <KeyboardAwareFormScrollView
               contentContainerStyle={styles.modalContent}
             >

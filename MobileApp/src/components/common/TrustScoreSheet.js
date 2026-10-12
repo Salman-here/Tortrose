@@ -2,12 +2,14 @@
  * TrustScoreSheet — themed bottom-sheet modal showing a trust score breakdown.
  */
 import React, { useEffect, useState } from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import Modal from './AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
 import GlassPanel from './GlassPanel';
 import { useTheme } from '../../contexts/ThemeContext';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
+import { getModalPalette } from '../../styles/modalTheme';
 
 const ScoreRow = ({ item, palette }) => {
   const colors = palette.colors;
@@ -31,7 +33,8 @@ const ScoreRow = ({ item, palette }) => {
 };
 
 export default function TrustScoreSheet({ visible, onClose, storeId, storeName }) {
-  const { palette } = useTheme();
+  const { palette: modalBasePalette } = useTheme();
+  const palette = getModalPalette(modalBasePalette);
   const colors = palette.colors;
   const glass = palette.glass;
   const styles = makeStyles(palette);
@@ -69,7 +72,7 @@ export default function TrustScoreSheet({ visible, onClose, storeId, storeName }
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-        <GlassPanel variant="strong" style={styles.sheet}>
+        <GlassPanel variant="modal" style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.header}>
             <View style={{ flex: 1 }}>

@@ -92,7 +92,7 @@ const FounderPromotionModal = ({ subscription, sellerKey }) => {
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.96, y: 12 }}
                         onClick={(event) => event.stopPropagation()}
-                        className="glass-panel-strong w-full max-w-md p-6 relative"
+                        className="modal-surface glass-panel-strong w-full max-w-md p-6 relative"
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="founder-promotion-title"
@@ -110,11 +110,11 @@ const FounderPromotionModal = ({ subscription, sellerKey }) => {
 
                         <div
                             className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
-                            style={{ background: 'rgba(59, 130, 246, 0.12)', color: 'hsl(220, 70%, 55%)' }}
+                            style={{ background: 'rgba(59, 130, 246, 0.12)', color: "var(--modal-info)" }}
                         >
                             <Tag size={22} />
                         </div>
-                        <p className="text-xs font-bold uppercase" style={{ color: 'hsl(220, 70%, 55%)' }}>
+                        <p className="text-xs font-bold uppercase" style={{ color: "var(--modal-info)" }}>
                             First 100 Sellers
                         </p>
                         <h2 id="founder-promotion-title" className="text-xl font-bold mt-1 pr-8" style={{ color: 'hsl(var(--foreground))' }}>
@@ -137,7 +137,7 @@ const FounderPromotionModal = ({ subscription, sellerKey }) => {
                             </div>
                         </div>
 
-                        <p className="text-xs font-semibold mt-4" style={{ color: 'hsl(150, 60%, 42%)' }}>
+                        <p className="text-xs font-semibold mt-4" style={{ color: "var(--modal-success)" }}>
                             {promotion.sellerHasReservation
                                 ? 'A founder spot is currently reserved for your account'
                                 : `${promotion.remaining} of ${promotion.maxRedemptions} founder spots remaining`}

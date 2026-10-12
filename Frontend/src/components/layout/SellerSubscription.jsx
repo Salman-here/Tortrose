@@ -1332,11 +1332,11 @@ const SellerSubscription = () => {
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
                             onClick={e => e.stopPropagation()}
-                            className="glass-panel-strong p-6 max-w-md w-full"
+                            className="modal-surface glass-panel-strong p-6 max-w-md w-full"
                         >
                             <div className="text-center mb-4">
                                 <div className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center mb-3" style={{ background: 'rgba(239, 68, 68, 0.12)' }}>
-                                    <AlertTriangle size={22} style={{ color: 'hsl(0, 72%, 55%)' }} />
+                                    <AlertTriangle size={22} style={{ color: "var(--modal-danger)" }} />
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Cancel Subscription?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
@@ -1347,9 +1347,9 @@ const SellerSubscription = () => {
                             {founderRateActive && (
                                 <div className="mb-4 p-3.5 rounded-xl" style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                                     <div className="flex items-start gap-2">
-                                        <Tag size={14} className="shrink-0 mt-0.5" style={{ color: 'hsl(0, 72%, 55%)' }} />
+                                        <Tag size={14} className="shrink-0 mt-0.5" style={{ color: "var(--modal-danger)" }} />
                                         <div>
-                                            <p className="text-xs font-bold" style={{ color: 'hsl(0, 72%, 55%)' }}>Founder Price Will Be Lost</p>
+                                            <p className="text-xs font-bold" style={{ color: "var(--modal-danger)" }}>Founder Price Will Be Lost</p>
                                             <p className="text-[11px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                 When this subscription ends, your FIRST100 rate is permanently forfeited and cannot be applied again. Switching between Starter and Elite without ending the subscription keeps it.
                                             </p>
@@ -1362,9 +1362,9 @@ const SellerSubscription = () => {
                             {subscription?.plan === 'starter' && subscription?.bonusFeaturesActive && !subscription?.bonusFeaturesExpiredPermanently && subscription?.bonusExpiryDate && new Date(subscription.bonusExpiryDate) > new Date() && (
                                 <div className="mb-4 p-3.5 rounded-xl" style={{ background: 'rgba(249, 115, 22, 0.08)', border: '1px solid rgba(249, 115, 22, 0.2)' }}>
                                     <div className="flex items-start gap-2">
-                                        <Clock size={14} className="shrink-0 mt-0.5" style={{ color: 'hsl(30, 90%, 50%)' }} />
+                                        <Clock size={14} className="shrink-0 mt-0.5" style={{ color: "var(--modal-warning)" }} />
                                         <div>
-                                            <p className="text-xs font-bold" style={{ color: 'hsl(30, 85%, 45%)' }}>Bonus Features Warning</p>
+                                            <p className="text-xs font-bold" style={{ color: "var(--modal-warning)" }}>Bonus Features Warning</p>
                                             <p className="text-[11px] mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                                 Once your subscription period ends, you will have <strong>3 days</strong> to re-subscribe and keep your bonus features for the remaining {bonusDaysUntilExpiry} days. After 3 days, bonus features will be <strong>permanently removed</strong> from the Starter plan and you would need to upgrade to Elite to get them back.
                                             </p>
@@ -1405,11 +1405,11 @@ const SellerSubscription = () => {
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
                             onClick={e => e.stopPropagation()}
-                            className="glass-panel-strong p-6 max-w-md w-full"
+                            className="modal-surface glass-panel-strong p-6 max-w-md w-full"
                         >
                             <div className="text-center mb-4">
                                 <div className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center mb-3" style={{ background: 'rgba(139, 92, 246, 0.12)' }}>
-                                    <Gem size={22} style={{ color: 'hsl(270, 60%, 55%)' }} />
+                                    <Gem size={22} style={{ color: "var(--modal-accent)" }} />
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Upgrade to Rozare Elite?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
@@ -1418,7 +1418,7 @@ const SellerSubscription = () => {
                             </div>
 
                             <div className="mb-4 p-3.5 rounded-xl" style={{ background: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.15)' }}>
-                                <p className="text-xs font-bold mb-2" style={{ color: 'hsl(270, 60%, 55%)' }}>What you get with Elite:</p>
+                                <p className="text-xs font-bold mb-2" style={{ color: "var(--modal-accent)" }}>What you get with Elite:</p>
                                 <div className="space-y-1.5">
                                     {[
                                         'All Starter features included',
@@ -1432,7 +1432,7 @@ const SellerSubscription = () => {
                                         eliteMetaAds ? 'Meta ads add-on selected' : `Optional Meta ads add-on (+${metaAdsAddonPrice}/month)`,
                                     ].map((f, i) => (
                                         <div key={i} className="flex items-center gap-2">
-                                            <Check size={11} style={{ color: 'hsl(270, 60%, 55%)' }} />
+                                            <Check size={11} style={{ color: "var(--modal-accent)" }} />
                                             <span className="text-[11px]" style={{ color: 'hsl(var(--foreground))' }}>{f}</span>
                                         </div>
                                     ))}
@@ -1471,11 +1471,11 @@ const SellerSubscription = () => {
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
                             onClick={e => e.stopPropagation()}
-                            className="glass-panel-strong p-6 max-w-md w-full"
+                            className="modal-surface glass-panel-strong p-6 max-w-md w-full"
                         >
                             <div className="text-center mb-4">
                                 <div className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center mb-3" style={{ background: 'rgba(249, 115, 22, 0.12)' }}>
-                                    <AlertTriangle size={22} style={{ color: 'hsl(30, 90%, 50%)' }} />
+                                    <AlertTriangle size={22} style={{ color: "var(--modal-warning)" }} />
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Downgrade to Starter?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
@@ -1484,7 +1484,7 @@ const SellerSubscription = () => {
                             </div>
 
                             <div className="mb-4 p-3.5 rounded-xl" style={{ background: 'rgba(249, 115, 22, 0.06)', border: '1px solid rgba(249, 115, 22, 0.15)' }}>
-                                <p className="text-xs font-bold mb-2" style={{ color: 'hsl(30, 85%, 45%)' }}>What changes with Starter:</p>
+                                <p className="text-xs font-bold mb-2" style={{ color: "var(--modal-warning)" }}>What changes with Starter:</p>
                                 <div className="space-y-1.5">
                                     {[
                                         { text: `Billing changes to ${starterMonthlyPriceLabel}/month`, good: true },
@@ -1493,7 +1493,7 @@ const SellerSubscription = () => {
                                         { text: 'All core features remain (store, products, payments, AI)', good: true },
                                     ].map((f, i) => (
                                         <div key={i} className="flex items-center gap-2">
-                                            {f.good ? <Check size={11} style={{ color: 'hsl(150, 60%, 45%)' }} /> : <AlertTriangle size={11} style={{ color: 'hsl(30, 90%, 50%)' }} />}
+                                            {f.good ? <Check size={11} style={{ color: "var(--modal-success)" }} /> : <AlertTriangle size={11} style={{ color: "var(--modal-warning)" }} />}
                                             <span className="text-[11px]" style={{ color: 'hsl(var(--foreground))' }}>{f.text}</span>
                                         </div>
                                     ))}

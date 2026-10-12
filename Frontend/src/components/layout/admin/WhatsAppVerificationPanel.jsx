@@ -593,7 +593,7 @@ const WhatsAppVerificationPanel = () => {
                         onClick={closeQrModal}>
                         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
                             onClick={(e) => e.stopPropagation()}
-                            className="glass-panel-strong rounded-3xl p-6 max-w-md w-full">
+                            className="modal-surface glass-panel-strong rounded-3xl p-6 max-w-md w-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
                                     Link WhatsApp
@@ -612,13 +612,13 @@ const WhatsAppVerificationPanel = () => {
                             <div className="aspect-square rounded-2xl glass-inner flex items-center justify-center overflow-hidden p-4">
                                 {qrLoading && !qrBase64 && !pairingCode ? (
                                     <div className="text-center">
-                                        <Loader2 size={32} className="animate-spin mx-auto mb-2" style={{ color: 'hsl(150,70%,40%)' }} />
+                                        <Loader2 size={32} className="animate-spin mx-auto mb-2" style={{ color: "var(--modal-success)" }} />
                                         <div className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                             Starting WhatsApp connection...
                                         </div>
                                     </div>
                                 ) : qrError ? (
-                                    <div className="text-center text-xs px-4" style={{ color: 'hsl(0,72%,55%)' }}>
+                                    <div className="text-center text-xs px-4" style={{ color: "var(--modal-danger)" }}>
                                         {qrError}
                                     </div>
                                 ) : pairingCode ? (
@@ -628,7 +628,7 @@ const WhatsAppVerificationPanel = () => {
                                                 Pairing Code
                                             </div>
                                             <div className="text-4xl font-extrabold tracking-[0.3em] py-4 px-6 rounded-xl glass-panel-strong" 
-                                                style={{ color: 'hsl(150,70%,40%)', fontFamily: 'monospace' }}>
+                                                style={{ color: "var(--modal-success)", fontFamily: 'monospace' }}>
                                                 {pairingCode}
                                             </div>
                                         </div>
@@ -647,7 +647,7 @@ const WhatsAppVerificationPanel = () => {
                                 ) : qrBase64 ? (
                                     <img src={qrBase64} alt="WhatsApp QR" className="w-full h-full object-contain" />
                                 ) : status?.status === 'connected' ? (
-                                    <div className="text-center" style={{ color: 'hsl(150,70%,40%)' }}>
+                                    <div className="text-center" style={{ color: "var(--modal-success)" }}>
                                         <CheckCircle2 size={48} className="mx-auto mb-2" />
                                         <div className="text-sm font-bold">Connected!</div>
                                     </div>
@@ -736,7 +736,7 @@ const WhatsAppVerificationPanel = () => {
                                 <button
                                     onClick={() => { setResetMsg(''); setConfirmReset(true); }}
                                     className="w-full mt-3 py-2.5 rounded-xl text-sm font-bold inline-flex items-center justify-center gap-1.5"
-                                    style={{ background: 'rgba(245,158,11,0.14)', color: 'hsl(38,92%,45%)' }}
+                                    style={{ background: 'rgba(245,158,11,0.14)', color: "var(--modal-warning)" }}
                                 >
                                     <RotateCcw size={14} /> Reset stuck instance
                                 </button>
@@ -754,7 +754,7 @@ const WhatsAppVerificationPanel = () => {
                     onClick={() => setConfirmDisconnect(false)}>
                     <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }}
                         onClick={(e) => e.stopPropagation()}
-                        className="glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
+                        className="modal-surface glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
                         <h3 className="text-lg font-extrabold mb-2" style={{ color: 'hsl(var(--foreground))' }}>
                             Disconnect WhatsApp?
                         </h3>
@@ -781,10 +781,10 @@ const WhatsAppVerificationPanel = () => {
                     onClick={() => !resetting && setConfirmReset(false)}>
                     <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }}
                         onClick={(e) => e.stopPropagation()}
-                        className="glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
+                        className="modal-surface glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
                         <div className="flex items-start gap-3 mb-3">
                             <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                                style={{ background: 'rgba(245,158,11,0.14)', color: 'hsl(38,92%,45%)' }}>
+                                style={{ background: 'rgba(245,158,11,0.14)', color: "var(--modal-warning)" }}>
                                 <RotateCcw size={18} />
                             </div>
                             <div>
@@ -1426,7 +1426,7 @@ const SellerNotificationTab = () => {
                         onClick={closeSellerQrModal}>
                         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
                             onClick={(e) => e.stopPropagation()}
-                            className="glass-panel-strong rounded-3xl p-6 max-w-md w-full">
+                            className="modal-surface glass-panel-strong rounded-3xl p-6 max-w-md w-full">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="text-lg font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>
                                     Link Unified WhatsApp
@@ -1445,13 +1445,13 @@ const SellerNotificationTab = () => {
                             <div className="aspect-square rounded-2xl glass-inner flex items-center justify-center overflow-hidden p-4">
                                 {sellerQrLoading && !sellerQrBase64 && !sellerPairingCode ? (
                                     <div className="text-center">
-                                        <Loader2 size={32} className="animate-spin mx-auto mb-2" style={{ color: 'hsl(220,70%,55%)' }} />
+                                        <Loader2 size={32} className="animate-spin mx-auto mb-2" style={{ color: "var(--modal-info)" }} />
                                         <div className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                             Starting WhatsApp connection...
                                         </div>
                                     </div>
                                 ) : sellerQrError ? (
-                                    <div className="text-center text-xs px-4" style={{ color: 'hsl(0,72%,55%)' }}>
+                                    <div className="text-center text-xs px-4" style={{ color: "var(--modal-danger)" }}>
                                         {sellerQrError}
                                     </div>
                                 ) : sellerPairingCode ? (
@@ -1461,7 +1461,7 @@ const SellerNotificationTab = () => {
                                                 Pairing Code
                                             </div>
                                             <div className="text-4xl font-extrabold tracking-[0.3em] py-4 px-6 rounded-xl glass-panel-strong"
-                                                style={{ color: 'hsl(220,70%,55%)', fontFamily: 'monospace' }}>
+                                                style={{ color: "var(--modal-info)", fontFamily: 'monospace' }}>
                                                 {sellerPairingCode}
                                             </div>
                                         </div>
@@ -1480,7 +1480,7 @@ const SellerNotificationTab = () => {
                                 ) : sellerQrBase64 ? (
                                     <img src={sellerQrBase64} alt="WhatsApp QR" className="w-full h-full object-contain" />
                                 ) : sellerStatus?.status === 'connected' ? (
-                                    <div className="text-center" style={{ color: 'hsl(220,70%,55%)' }}>
+                                    <div className="text-center" style={{ color: "var(--modal-info)" }}>
                                         <CheckCircle2 size={48} className="mx-auto mb-2" />
                                         <div className="text-sm font-bold">Connected!</div>
                                     </div>
@@ -1549,7 +1549,7 @@ const SellerNotificationTab = () => {
                                 <button
                                     onClick={() => { setSellerResetMsg(''); setConfirmSellerReset(true); }}
                                     className="w-full mt-3 py-2.5 rounded-xl text-sm font-bold inline-flex items-center justify-center gap-1.5"
-                                    style={{ background: 'rgba(245,158,11,0.14)', color: 'hsl(38,92%,45%)' }}
+                                    style={{ background: 'rgba(245,158,11,0.14)', color: "var(--modal-warning)" }}
                                 >
                                     <RotateCcw size={14} /> Reset stuck instance
                                 </button>
@@ -1567,7 +1567,7 @@ const SellerNotificationTab = () => {
                     onClick={() => setConfirmSellerDisconnect(false)}>
                     <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }}
                         onClick={(e) => e.stopPropagation()}
-                        className="glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
+                        className="modal-surface glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
                         <h3 className="text-lg font-extrabold mb-2" style={{ color: 'hsl(var(--foreground))' }}>
                             Disconnect Unified WhatsApp?
                         </h3>
@@ -1594,10 +1594,10 @@ const SellerNotificationTab = () => {
                     onClick={() => !sellerResetting && setConfirmSellerReset(false)}>
                     <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }}
                         onClick={(e) => e.stopPropagation()}
-                        className="glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
+                        className="modal-surface glass-panel-strong rounded-3xl p-6 max-w-sm w-full">
                         <div className="flex items-start gap-3 mb-3">
                             <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                                style={{ background: 'rgba(245,158,11,0.14)', color: 'hsl(38,92%,45%)' }}>
+                                style={{ background: 'rgba(245,158,11,0.14)', color: "var(--modal-warning)" }}>
                                 <RotateCcw size={18} />
                             </div>
                             <div>

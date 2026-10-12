@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, Modal, ScrollView, Platform } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, ScrollView, Platform } from 'react-native';
+import Modal from '../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -301,7 +302,7 @@ export default function StoresListingScreen({ navigation }) {
         <Modal visible={showFilters} animationType="slide" transparent onRequestClose={() => setShowFilters(false)}>
           <View style={styles.sheetOverlay}>
             <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowFilters(false)} activeOpacity={1} />
-            <GlassPanel variant="strong" style={styles.sheet}>
+            <GlassPanel variant="modal" style={styles.sheet}>
               <View style={styles.sheetHandle} />
               <View style={styles.sheetHeader}>
                 <Text style={styles.sheetTitle}>Filter & Sort</Text>

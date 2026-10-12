@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Modal from './AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../../config/api';
@@ -17,6 +17,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, shadows, spacing } from '../../styles/theme';
 import GlassPanel from './GlassPanel';
+import { getModalPalette } from '../../styles/modalTheme';
 
 const REASONS = [
   ['inappropriate', 'Inappropriate', 'Sexual, abusive, or offensive content'],
@@ -36,7 +37,8 @@ export default function SafetyActionsSheet({
   onBlocked,
 }) {
   const { currentUser } = useAuth();
-  const { palette } = useTheme();
+  const { palette: modalBasePalette } = useTheme();
+  const palette = getModalPalette(modalBasePalette);
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const [mode, setMode] = useState(block && initialMode === 'menu' ? 'menu' : 'report');
   const [reason, setReason] = useState('');
@@ -101,7 +103,7 @@ export default function SafetyActionsSheet({
   return (
     <Modal visible={Boolean(visible)} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <GlassPanel variant="strong" style={styles.sheet}>
+        <GlassPanel variant="modal" style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.header}>
             <LinearGradient colors={palette.gradients.cta} style={styles.iconWrap}>

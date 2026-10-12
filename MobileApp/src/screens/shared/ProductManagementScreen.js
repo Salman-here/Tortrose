@@ -6,8 +6,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import useProductModerationUpdates from '../../hooks/useProductModerationUpdates';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, Alert,
-  RefreshControl, TextInput, Modal, ScrollView, ActivityIndicator, Platform,
+  RefreshControl, TextInput, ScrollView, ActivityIndicator, Platform,
 } from 'react-native';
+import Modal from '../../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -783,7 +784,7 @@ export default function ProductManagementScreen({ navigation, route }) {
 
       <Modal visible={bulkModalVisible} transparent animationType="slide" onRequestClose={() => setBulkModalVisible(false)} accessibilityViewIsModal>
         <TouchableOpacity style={styles.bulkModalOverlay} activeOpacity={1} onPress={() => setBulkModalVisible(false)} accessibilityRole="button" accessibilityLabel="Close bulk actions" />
-        <GlassPanel variant="strong" style={styles.bulkModalSheet}>
+        <GlassPanel variant="modal" style={styles.bulkModalSheet}>
           <View style={styles.bulkModalTitleRow}>
             <Text style={styles.bulkModalTitle}>Bulk Actions - {selectedProducts.length} products</Text>
             <TouchableOpacity onPress={() => setBulkModalVisible(false)} accessibilityRole="button" accessibilityLabel="Close bulk actions">

@@ -532,7 +532,7 @@ function Products() {
               exit={{ x: '-110%', opacity: 0 }}
               transition={{ type: 'spring', stiffness: 320, damping: 34 }}
               aria-label='Product filters'
-              className='fixed left-3 sm:left-4 w-[86vw] max-w-[340px] glass-panel-strong z-[71] overflow-y-auto overscroll-contain lg:hidden flex flex-col filter-sb'
+              className='modal-surface fixed left-3 sm:left-4 w-[86vw] max-w-[340px] glass-panel-strong z-[71] overflow-y-auto overscroll-contain lg:hidden flex flex-col filter-sb'
               style={{
                 top: 'calc(12px + env(safe-area-inset-top))',
                 maxHeight: 'calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',

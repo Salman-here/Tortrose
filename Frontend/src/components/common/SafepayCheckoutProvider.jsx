@@ -90,7 +90,7 @@ export default function SafepayCheckoutProvider({ children }) {
   return <>{children}{payment && createPortal(
     <div className="fixed inset-0 z-[10000] bg-black/65 flex items-center justify-center p-2 sm:p-5">
       <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="safepay-title"
-        className="w-full max-w-xl h-[92dvh] rounded-2xl overflow-hidden shadow-2xl flex flex-col bg-white text-slate-900">
+        className="modal-surface w-full max-w-xl h-[92dvh] rounded-2xl overflow-hidden shadow-2xl flex flex-col bg-white text-slate-900">
         <header className="flex items-center justify-between p-4 border-b">
           <div><h2 id="safepay-title" className="font-bold flex items-center gap-2"><ShieldCheck size={18} /> Secure payment</h2>
             <p className="text-xs text-slate-600">Safepay {payment.environment === 'sandbox' ? 'sandbox — test payment' : 'secure checkout'}</p></div>

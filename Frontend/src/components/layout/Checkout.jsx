@@ -2390,7 +2390,7 @@ function OwnedCheckout({ owner }) {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-              className="glass-panel-strong p-6 max-w-md w-full">
+              className="modal-surface glass-panel-strong p-6 max-w-md w-full">
               <h3 className="text-lg font-semibold mb-2" style={{ color: 'hsl(var(--foreground))' }}>Update Shipping Info?</h3>
               <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>
                 Your shipping details have changed. Would you like to save them for future orders?

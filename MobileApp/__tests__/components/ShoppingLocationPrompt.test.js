@@ -1,4 +1,5 @@
 import React from 'react';
+jest.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';

@@ -246,7 +246,7 @@ const StoreVerifications = () => {
                 { show: showRemoveModal, store: selectedStore, title: 'Remove Verification', icon: <AlertTriangle size={22} style={{ color: 'hsl(30, 90%, 50%)' }} />, value: removalReason, setValue: setRemovalReason, placeholder: 'Explain why...', onConfirm: handleRemoveVerification, confirmLabel: 'Remove Verification', confirmStyle: { background: 'hsl(0, 72%, 55%)' }, onClose: () => { setShowRemoveModal(false); setRemovalReason(''); setSelectedStore(null); } },
             ].map((modal, i) => modal.show && modal.store && (
                 <div key={i} className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-6 max-w-md w-full">
+                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="modal-surface glass-panel p-6 max-w-md w-full">
                         <h3 className="text-xl font-bold mb-4 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>{modal.icon} {modal.title}</h3>
                         <p className="text-sm mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>For <strong>{modal.store.storeName}</strong>. Please provide a reason:</p>
                         <textarea value={modal.value} onChange={(e) => modal.setValue(e.target.value)} rows={4} className="glass-input mb-2" placeholder={modal.placeholder} maxLength={500} />
@@ -265,9 +265,9 @@ const StoreVerifications = () => {
             {/* Verify Store Modal */}
             {showVerifyModal && selectedStore && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-6 max-w-md w-full">
+                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="modal-surface glass-panel p-6 max-w-md w-full">
                         <h3 className="text-xl font-bold mb-4 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
-                            <CheckCircle size={22} style={{ color: 'hsl(150, 60%, 45%)' }} /> Verify Store
+                            <CheckCircle size={22} style={{ color: "var(--modal-success)" }} /> Verify Store
                         </h3>
                         <p className="text-sm mb-6" style={{ color: 'hsl(var(--muted-foreground))' }}>Verify <strong>{selectedStore.storeName}</strong>? This adds a verification badge.</p>
                         <div className="flex gap-4">

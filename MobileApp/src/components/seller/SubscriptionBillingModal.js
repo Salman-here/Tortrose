@@ -1,11 +1,13 @@
 import React, { useMemo } from 'react';
-import { Modal, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import Modal from '../common/AppModal';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Picker } from '@react-native-picker/picker';
 import { Ionicons } from '@expo/vector-icons';
 import GlassPanel from '../common/GlassPanel';
 import { useTheme } from '../../contexts/ThemeContext';
 import { fontSize, fontWeight, spacing } from '../../styles/theme';
+import { getModalPalette } from '../../styles/modalTheme';
 
 export const billingDialogHeight = (windowHeight, insets) => Math.max(1, Math.min(
   680, windowHeight - insets.top - insets.bottom - spacing.lg * 2,
@@ -14,7 +16,8 @@ export const billingDialogHeight = (windowHeight, insets) => Math.max(1, Math.mi
 export default function SubscriptionBillingModal({
   quote, cards, cardId, onCardChange, consent, onConsentChange, busy, onConfirm, onClose, formatUsd,
 }) {
-  const { palette } = useTheme();
+  const { palette: modalBasePalette } = useTheme();
+  const palette = getModalPalette(modalBasePalette);
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => buildStyles(palette), [palette]);
@@ -31,7 +34,7 @@ export default function SubscriptionBillingModal({
         {/* A flex scroll view needs a definite parent height. maxHeight alone
             previously collapsed this Android dialog to its padding. A Modal
             is also a separate native window, so do not reuse the screen's blur target. */}
-        <GlassPanel testID="subscription-billing-dialog" androidBlur={false}
+        <GlassPanel variant="modal" testID="subscription-billing-dialog" androidBlur={false}
           style={[styles.panel, { height: billingDialogHeight(height, insets) }]} accessibilityViewIsModal>
           <View style={styles.header}>
             <Text accessibilityRole="header" style={styles.title}>Review your subscription</Text>

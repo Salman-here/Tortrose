@@ -124,7 +124,7 @@ const ProductOptionsModal = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.98 }}
             transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-            className="glass-panel-strong relative flex max-h-[min(90dvh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-t-[28px] sm:rounded-[28px]"
+            className="modal-surface glass-panel-strong relative flex max-h-[min(90dvh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-t-[28px] sm:rounded-[28px]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="product-options-title"
@@ -259,7 +259,7 @@ const ProductOptionsModal = ({
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="mt-5 flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold"
-                  style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.22)', color: 'hsl(0,72%,50%)' }}
+                  style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.22)', color: "var(--modal-danger)" }}
                   role="alert"
                 >
                   <ChevronRight size={14} className="shrink-0" />

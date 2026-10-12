@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import Modal from './common/AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../config/api';
 import GlassPanel from './common/GlassPanel';
@@ -7,9 +8,11 @@ import { useTheme } from '../contexts/ThemeContext';
 import { getOrderSellerGroups, getOrderCurrency, assertOrderDetailPresentation } from '../utils/orderPresentation';
 import { assertCancellationQuote } from '../utils/cancellationQuote';
 import { getOriginalPaymentLabel } from '../utils/paymentPresentation';
+import { getModalPalette } from '../styles/modalTheme';
 
 export default function BuyerCancellationModal({ order, sellerIds, formatMoney, onClose, onCancelled, onBusyChange }) {
-  const { palette } = useTheme();
+  const { palette: modalBasePalette } = useTheme();
+  const palette = getModalPalette(modalBasePalette);
   const [quote, setQuote] = useState(null), [destination, setDestination] = useState('wallet');
   const [accepted, setAccepted] = useState(false), [error, setError] = useState('');
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
@@ -50,7 +53,7 @@ export default function BuyerCancellationModal({ order, sellerIds, formatMoney, 
   };
   const text = { color: palette.colors.textPrimary }, muted = { color: palette.colors.textSecondary };
   return <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => !busy && onClose()}>
-    <View style={styles.overlay}><GlassPanel variant="strong" style={styles.panel}>
+    <View style={styles.overlay}><GlassPanel variant="modal" style={styles.panel}>
       <View style={styles.header}><Text style={[styles.title, text]}>Cancel {sellerIds ? 'this store’s items' : 'order'}?</Text>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close cancellation" disabled={busy} onPress={onClose} style={styles.close}><Ionicons name="close" size={21} color={palette.colors.textPrimary} /></TouchableOpacity></View>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">

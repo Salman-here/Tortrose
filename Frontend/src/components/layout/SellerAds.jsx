@@ -74,10 +74,10 @@ function EliteDialog({ open, onClose, onSubscribe }) {
                         animate={{ scale: 1, opacity: 1 }}
                         exit={{ scale: 0.96, opacity: 0 }}
                         onClick={(event) => event.stopPropagation()}
-                        className="glass-panel-strong p-6 max-w-md w-full"
+                        className="modal-surface glass-panel-strong p-6 max-w-md w-full"
                     >
                         <div className="w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center"
-                            style={{ background: 'rgba(139,92,246,0.14)', color: 'hsl(270,60%,55%)' }}>
+                            style={{ background: 'rgba(139,92,246,0.14)', color: "var(--modal-accent)" }}>
                             <Crown size={24} />
                         </div>
                         <h3 className="text-lg font-bold text-center" style={{ color: 'hsl(var(--foreground))' }}>Subscribe Elite to run ads</h3>

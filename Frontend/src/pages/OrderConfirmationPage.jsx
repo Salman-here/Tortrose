@@ -451,7 +451,7 @@ export default function OrderConfirmationPage() {
             {/* Re-order confirmation dialog */}
             {showReorderDialog && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setShowReorderDialog(false)}>
-                <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+                <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="modal-surface glass-panel p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
                   <h3 className="text-lg font-semibold mb-3" style={{ color: 'hsl(var(--foreground))' }}>Confirm this order again?</h3>
                   <div className="glass-inner rounded-xl p-3 mb-4 space-y-2">
                     {order.orderItems.map((it, i) => (

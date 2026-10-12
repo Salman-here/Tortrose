@@ -5,8 +5,9 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, Modal, ActivityIndicator,
+  StyleSheet, ActivityIndicator,
 } from 'react-native';
+import Modal from '../components/common/AppModal';
 import { Image } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Feedback from '../utils/feedback';
@@ -1522,7 +1523,7 @@ export default function CheckoutScreen({ navigation }) {
         }}
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: spacing.lg }}>
-          <GlassPanel variant="strong" style={{ padding: spacing.xl, width: '100%', maxWidth: 360, borderRadius: 24 }}>
+          <GlassPanel variant="modal" style={{ padding: spacing.xl, width: '100%', maxWidth: 360, borderRadius: 24 }}>
             <View style={{ alignItems: 'center', marginBottom: spacing.lg }}>
               <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md }}>
                 <Ionicons name="location" size={28} color={palette.colors.primary} />

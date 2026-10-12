@@ -5,8 +5,9 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, Platform, Modal, ActivityIndicator, Switch,
+  Alert, Platform, ActivityIndicator, Switch,
 } from 'react-native';
+import Modal from '../../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';

@@ -5,8 +5,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Modal, RefreshControl, ActivityIndicator, Platform, Alert,
+  TextInput, RefreshControl, ActivityIndicator, Platform, Alert,
 } from 'react-native';
+import Modal from '../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Feedback from '../utils/feedback';
@@ -253,7 +254,7 @@ export default function SavedAddressesScreen({ navigation }) {
         <Modal visible={showForm} transparent animationType="slide" onRequestClose={() => setShowForm(false)}>
           <View style={styles.modalRoot}>
             <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowForm(false)} />
-            <GlassPanel variant="strong" style={styles.modal}>
+            <GlassPanel variant="modal" style={styles.modal}>
               <View style={styles.modalHandle} />
               <View style={styles.modalHead}>
                 <Text style={styles.modalTitle}>{editingId ? 'Edit Address' : 'New Address'}</Text>

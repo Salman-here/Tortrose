@@ -354,6 +354,90 @@ input, select, textarea {
     color: hsl(var(--foreground));
 }
 
+/* Popups need a readable surface above the dimmer, not a page-card tint.
+   Keep ordinary glass cards unchanged; scope these tokens to dialog panels. */
+.modal-surface {
+    --foreground: 222 35% 16%;
+    --muted-foreground: 220 20% 38%;
+    --background: 220 50% 99%;
+    --muted: 220 35% 94%;
+    --border: 220 30% 84%;
+    --modal-surface-color: #f8fbff;
+    --modal-backdrop-filter: none;
+    --modal-field-color: #ffffff;
+    --modal-inner-color: #edf3fb;
+    --modal-info: #1d4ed8;
+    --modal-success: #047857;
+    --modal-warning: #92400e;
+    --modal-danger: #b91c1c;
+    --modal-accent: #6d28d9;
+    --glass-bg: rgba(224, 234, 251, 0.55);
+    --glass-bg-strong: #f2f6ff;
+    --glass-bg-subtle: rgba(115, 132, 168, 0.08);
+    --glass-border: rgba(123, 145, 180, 0.30);
+    --glass-border-strong: rgba(123, 145, 180, 0.40);
+    --glass-border-subtle: rgba(123, 145, 180, 0.22);
+    background-color: var(--modal-surface-color) !important;
+    background-image: linear-gradient(135deg, rgba(20, 184, 166, 0.035), rgba(99, 102, 241, 0.035)) !important;
+    color: hsl(var(--foreground)) !important;
+    border-color: var(--glass-border-strong) !important;
+    box-shadow: 0 24px 70px rgba(18, 32, 60, 0.22), inset 0 1px 0 rgba(255,255,255,0.8);
+    /* Blurring the dimmer through a dialog defeats its opaque background. */
+    -webkit-backdrop-filter: var(--modal-backdrop-filter) !important;
+    backdrop-filter: var(--modal-backdrop-filter) !important;
+    color-scheme: light;
+}
+
+.dark .modal-surface {
+    --foreground: 220 35% 95%;
+    --muted-foreground: 220 28% 79%;
+    --background: 223 38% 14%;
+    --muted: 223 30% 21%;
+    --border: 220 22% 35%;
+    --modal-surface-color: #182238;
+    --modal-field-color: #202d47;
+    --modal-inner-color: #202d47;
+    --modal-info: #93c5fd;
+    --modal-success: #6ee7b7;
+    --modal-warning: #fcd34d;
+    --modal-danger: #fca5a5;
+    --modal-accent: #c4b5fd;
+    --glass-bg: rgba(111, 141, 193, 0.12);
+    --glass-bg-strong: #24324d;
+    --glass-bg-subtle: rgba(141, 163, 201, 0.10);
+    --glass-border: rgba(172, 195, 231, 0.22);
+    --glass-border-strong: rgba(172, 195, 231, 0.32);
+    --glass-border-subtle: rgba(172, 195, 231, 0.16);
+    box-shadow: 0 24px 70px rgba(0,0,0,0.44), inset 0 1px 0 rgba(255,255,255,0.07);
+    color-scheme: dark;
+}
+
+.modal-surface :is(input, select, textarea, .glass-input, .rozare-phone-field) {
+    background-color: var(--modal-field-color) !important;
+    color: hsl(var(--foreground));
+    border-color: var(--glass-border);
+}
+.modal-surface :is(input, textarea)::placeholder {
+    color: hsl(var(--muted-foreground));
+    opacity: 1;
+}
+.modal-surface :is(.text-gray-400, .text-gray-500, .text-gray-600, .text-gray-700,
+    .text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700) {
+    color: hsl(var(--muted-foreground)) !important;
+}
+.modal-surface :is(.text-gray-800, .text-gray-900, .text-slate-800, .text-slate-900) {
+    color: hsl(var(--foreground)) !important;
+}
+.modal-surface :is(.bg-white, .bg-slate-50, .bg-gray-50, .bg-slate-100, .bg-gray-100) {
+    background-color: var(--modal-inner-color) !important;
+}
+.modal-surface .glass-inner {
+    border-color: var(--glass-border-subtle);
+}
+.modal-surface.glass-card:hover {
+    transform: none;
+}
+
 /* ====================
    Water Shimmer Overlay
 ==================== */

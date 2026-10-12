@@ -1559,7 +1559,7 @@ const StoreSettings = () => {
             {/* Delete Confirmation Modal */}
             {showDeleteConfirm && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-6 max-w-md w-full">
+                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="modal-surface glass-panel p-6 max-w-md w-full">
                         <h3 className="text-xl font-bold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Delete Store?</h3>
                         <p className="mb-6 text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>Are you sure? This action cannot be undone. Products will remain but won't be associated with a store.</p>
                         <div className="flex gap-4">
@@ -1573,7 +1573,7 @@ const StoreSettings = () => {
             {/* Verification Modal */}
             {showVerificationModal && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-6 max-w-md w-full">
+                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="modal-surface glass-panel p-6 max-w-md w-full">
                         <h3 className="text-xl font-bold mb-4 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
                             <CheckCircle size={22} style={{ color: 'hsl(var(--primary))' }} /> Apply for Verification
                         </h3>
@@ -1613,9 +1613,9 @@ const StoreSettings = () => {
             {/* Cooldown Confirmation Modal */}
             {showCooldownModal && (
                 <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-panel p-6 max-w-md w-full">
+                    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="modal-surface glass-panel p-6 max-w-md w-full">
                         <h3 className="text-xl font-bold mb-3 flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
-                            <AlertTriangle size={22} style={{ color: 'hsl(45, 80%, 45%)' }} /> Heads up — change cooldown
+                            <AlertTriangle size={22} style={{ color: "var(--modal-warning)" }} /> Heads up — change cooldown
                         </h3>
                         <p className="text-sm mb-4" style={{ color: 'hsl(var(--muted-foreground))' }}>
                             Once you save, you won't be able to change the following again for the time noted:
@@ -1625,7 +1625,7 @@ const StoreSettings = () => {
                                 <li key={c.field} className="glass-inner rounded-xl px-4 py-3 flex items-center justify-between">
                                     <span className="text-sm font-semibold capitalize" style={{ color: 'hsl(var(--foreground))' }}>{c.label}</span>
                                     <span className="text-xs font-bold px-2.5 py-1 rounded-full"
-                                        style={{ background: 'rgba(234,179,8,0.12)', color: 'hsl(45, 80%, 40%)' }}>
+                                        style={{ background: 'rgba(234,179,8,0.12)', color: "var(--modal-warning)" }}>
                                         Locked for {c.days} day{c.days === 1 ? '' : 's'}
                                     </span>
                                 </li>

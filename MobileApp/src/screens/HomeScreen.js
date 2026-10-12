@@ -14,11 +14,11 @@ import {
   RefreshControl,
   TextInput,
   TouchableOpacity,
-  Modal,
   ScrollView,
   Platform,
   useWindowDimensions,
 } from 'react-native';
+import Modal from '../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -45,6 +45,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories';
 import HomeCatalogSkeleton from '../components/common/HomeCatalogSkeleton';
 import { ProductCardSkeleton } from '../components/common/Skeleton';
+import { getModalTokens } from '../styles/modalTheme';
 
 // Subtle brand aurora (teal → sky → indigo) laid over glass surfaces for depth.
 const HERO_SHEEN = ['rgba(20,184,166,0.13)', 'rgba(14,165,233,0.06)', 'rgba(99,102,241,0.15)'];
@@ -870,7 +871,7 @@ export default function HomeScreen({ navigation }) {
             activeOpacity={1}
             accessibilityLabel="Close filters"
           />
-          <GlassPanel variant="strong" style={[styles.modalContent, { height: filterSheetHeight }]}>
+          <GlassPanel variant="modal" style={[styles.modalContent, { height: filterSheetHeight }]}>
             <LinearGradient
               colors={HERO_SHEEN}
               start={{ x: 0, y: 0 }}
@@ -923,7 +924,7 @@ export default function HomeScreen({ navigation }) {
                   value={filterDraft.search}
                   onChangeText={(search) => setFilterDraft(previous => ({ ...previous, search }))}
                   placeholder="Search products, brands and categories"
-                  placeholderTextColor={palette.colors.textLight}
+                  placeholderTextColor={getModalTokens(palette).muted}
                   style={styles.sheetSearchInput}
                   returnKeyType="done"
                 />

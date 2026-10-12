@@ -10,7 +10,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -19,6 +18,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import Modal from './AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,7 @@ import {
   getProductOptionGroups,
   validateProductSelections,
 } from '../../utils/productOptions';
+import { getModalPalette } from '../../styles/modalTheme';
 
 const OPTION_GRADIENT_FALLBACK = ['#14B8A6', '#0EA5E9', '#6366F1'];
 
@@ -49,7 +50,8 @@ export function ProductOptionsModal({
   onConfirm,
   submitting = false,
 }) {
-  const { palette } = useTheme();
+  const { palette: modalBasePalette } = useTheme();
+  const palette = getModalPalette(modalBasePalette);
   const insets = useSafeAreaInsets();
   const { height: viewportHeight } = useWindowDimensions();
   const groups = useMemo(() => getProductOptionGroups(product), [product]);
@@ -162,7 +164,7 @@ export function ProductOptionsModal({
           accessibilityLabel="Close product options"
         />
         <View style={[styles.sheetWrap, { maxHeight: maxSheetHeight, paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-          <GlassPanel variant="strong" style={styles.sheet}>
+          <GlassPanel variant="modal" style={styles.sheet}>
             <View style={styles.handle} />
             <View style={styles.header}>
               <LinearGradient

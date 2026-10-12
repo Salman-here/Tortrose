@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import PhoneNumberInput, { fetchPhoneCountries } from '../../../src/components/common/PhoneNumberInput';
+jest.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
 import api from '../../../src/config/api';
 import { resolveBuyerCountrySuggestion } from '../../../src/utils/buyerLocation';
 

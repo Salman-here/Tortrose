@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Modal,
   Platform,
   RefreshControl,
   ScrollView,
@@ -14,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Modal from '../../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -977,7 +977,7 @@ function CouponFormModal({
       <View style={styles.modalOverlay}>
         <View style={styles.modalKeyboard}>
           <SafeAreaView style={styles.modalSafe} edges={['bottom', 'left', 'right']}>
-            <GlassPanel variant="strong" style={styles.modalContent}>
+            <GlassPanel variant="modal" style={styles.modalContent}>
               <View style={styles.modalHandle} />
               <View style={styles.modalHeader}>
                 <View>

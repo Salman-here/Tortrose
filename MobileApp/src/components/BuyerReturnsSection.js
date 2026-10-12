@@ -3,13 +3,13 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
-  Modal,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import Modal from './common/AppModal';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';

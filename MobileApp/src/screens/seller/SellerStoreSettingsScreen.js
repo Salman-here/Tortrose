@@ -6,8 +6,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import StoreModerationNotice from '../../components/common/StoreModerationNotice';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, RefreshControl, Modal, Platform, ActivityIndicator, Switch, Linking,
+  Alert, RefreshControl, Platform, ActivityIndicator, Switch, Linking,
 } from 'react-native';
+import Modal from '../../components/common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -1206,7 +1207,7 @@ export default function SellerStoreSettingsScreen({ navigation }) {
       {/* Verification Modal */}
       <Modal visible={showVerificationModal} animationType="slide" transparent onRequestClose={() => setShowVerificationModal(false)}>
         <View style={styles.modalOverlay}>
-          <GlassPanel variant="strong" style={styles.modalSheet}>
+          <GlassPanel variant="modal" style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Apply for Verification</Text>
               <TouchableOpacity onPress={() => setShowVerificationModal(false)}><Ionicons name="close" size={24} color={palette.colors.text} /></TouchableOpacity>

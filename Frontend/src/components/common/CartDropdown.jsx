@@ -109,7 +109,7 @@ const CartDropdown = () => {
           <motion.div
             initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
             transition={{ type: 'tween', ease: 'easeInOut', duration: 0.3 }}
-            className="fixed top-0 right-0 h-full w-[380px] max-w-full z-50 flex flex-col glass-panel-strong"
+            className="modal-surface fixed top-0 right-0 h-full w-[380px] max-w-full z-50 flex flex-col glass-panel-strong"
             style={{ borderRadius: '28px 0 0 28px' }}
           >
             {/* Header */}

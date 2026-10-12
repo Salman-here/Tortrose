@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
+import Modal from './AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -7,9 +8,12 @@ import { useBuyerLocation } from '../../contexts/BuyerLocationContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { EMPTY_SHOPPING_LOCATION, shoppingLocationIsValid } from '../../utils/shoppingLocation';
 import ShoppingLocationFields from './ShoppingLocationFields';
+import ModalSurface from './ModalSurface';
+import { getModalPalette } from '../../styles/modalTheme';
 
 export default function ShoppingLocationPrompt({ enabled = false, routeName = '' }) {
-  const { palette } = useTheme();
+  const { palette: modalBasePalette } = useTheme();
+  const palette = getModalPalette(modalBasePalette);
   const { currentUser } = useAuth();
   const { height: viewportHeight } = useWindowDimensions();
   const { buyerLocation, detecting, selectionRequired, editorOpen, closeLocationSelector, updateBuyerLocation } = useBuyerLocation();
@@ -34,7 +38,7 @@ export default function ShoppingLocationPrompt({ enabled = false, routeName = ''
   };
   return <Modal visible={open} transparent animationType="fade" onRequestClose={() => { if (!selectionRequired && !saving) closeLocationSelector(); }} statusBarTranslucent navigationBarTranslucent>
     <SafeAreaView style={styles.overlay}>
-      <View style={[styles.panel, { height: Math.min(viewportHeight * 0.88, selectionRequired ? 640 : 850), backgroundColor: palette.colors.background, borderColor: palette.glass.borderSubtle }]} accessibilityViewIsModal>
+      <ModalSurface style={[styles.panel, { height: Math.min(viewportHeight * 0.88, selectionRequired ? 640 : 850), backgroundColor: palette.colors.background, borderColor: palette.glass.borderSubtle }]} accessibilityViewIsModal>
         <ScrollView style={{ flex: 1 }} nestedScrollEnabled keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
           <View style={styles.heading}><Text style={[styles.title, { color: palette.colors.text }]}>Where would you like to shop?</Text>
             {!selectionRequired && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close shopping location" disabled={saving} onPress={closeLocationSelector}><Ionicons name="close" size={24} color={palette.colors.text} /></TouchableOpacity>}
@@ -48,7 +52,7 @@ export default function ShoppingLocationPrompt({ enabled = false, routeName = ''
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveLabel}>{selectionRequired ? 'Start shopping' : 'Save shopping location'}</Text>}
           </TouchableOpacity>
         </ScrollView>
-      </View>
+      </ModalSurface>
     </SafeAreaView>
   </Modal>;
 }

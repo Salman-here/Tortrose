@@ -5,9 +5,10 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal,
+  View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList,
   Platform, Alert, ActivityIndicator, ScrollView, Image,
 } from 'react-native';
+import Modal from './common/AppModal';
 import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -54,6 +55,7 @@ import {
 } from '../utils/persistedMutationAttempt';
 import { resolveAIClientRoute, openAIClientRoute } from '../utils/aiClientRoutes';
 import { aiCommercePreviewPresentation, aiCommerceMessageText, aiSecureHandoffRoute } from '../utils/aiCommercePresentation';
+import ModalSurface from './common/ModalSurface';
 
 const CommerceReviewCard = ({ result, current, busy, onConfirm, c, styles }) => {
   const preview = aiCommercePreviewPresentation(result);
@@ -1892,7 +1894,7 @@ export default function ChatBot({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleCloseChat}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>{content}</View>
+        <ModalSurface style={styles.modalContent}>{content}</ModalSurface>
       </View>
     </Modal>
   );
