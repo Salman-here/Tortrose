@@ -8,6 +8,8 @@ import {
 import { Link } from 'react-router-dom';
 import Loader from '../common/Loader';
 import PhoneField from '../common/PhoneField';
+import LocationAutocomplete from '../common/LocationAutocomplete';
+import { normalizeProfileShippingAddress, updateProfileShippingLocation, profileShippingLocationError } from '../../utils/profileShippingAddress';
 import { useAuth } from '../../contexts/AuthContext';
 import axios from 'axios';
 import { toast } from 'react-toastify';
@@ -32,9 +34,7 @@ const UserProfile = () => {
     // Shipping info state
     const [shippingInfo, setShippingInfo] = useState(null);
     const [isEditingShipping, setIsEditingShipping] = useState(false);
-    const [shippingForm, setShippingForm] = useState({
-        fullName: '', email: '', phone: '', address: '', city: '', state: '', postalCode: '', country: 'Pakistan'
-    });
+    const [shippingForm, setShippingForm] = useState(() => normalizeProfileShippingAddress());
     const [savingShipping, setSavingShipping] = useState(false);
 
     const handleInputChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
@@ -60,9 +60,10 @@ const UserProfile = () => {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const info = res.data.shippingInfo;
-            if (info && info.fullName) {
-                setShippingInfo(info);
-                setShippingForm(info);
+            if (info && (info.fullName || info.address || info.city)) {
+                const saved = normalizeProfileShippingAddress(info);
+                setShippingInfo(saved);
+                setShippingForm(saved);
             }
         } catch (e) { console.error(e); }
     };
@@ -72,19 +73,29 @@ const UserProfile = () => {
         setShippingForm(prev => ({ ...prev, [name]: value }));
     };
 
+    const selectShippingLocation = (type, option) => {
+        setShippingForm(previous => updateProfileShippingLocation(previous, type, option));
+    };
+
     const handleSaveShipping = async (e) => {
         e.preventDefault();
+        if (savingShipping) return;
+        const locationError = profileShippingLocationError(shippingForm);
+        if (locationError) { toast.error(locationError); return; }
+        const saved = normalizeProfileShippingAddress(shippingForm);
         setSavingShipping(true);
         try {
             const token = getAuthToken();
             await axios.patch(`${import.meta.env.VITE_API_URL}api/user/shipping-info`,
-                { shippingInfo: shippingForm },
+                { shippingInfo: saved },
                 { headers: { Authorization: `Bearer ${token}` } }
             );
-            toast.success('Shipping info saved!');
-            setShippingInfo(shippingForm);
+            toast.success('Shipping address saved.');
+            setShippingInfo(saved);
+            setShippingForm(saved);
             setIsEditingShipping(false);
-        } catch (e) { toast.error('Failed to save shipping info'); }
+            await fetchAndUpdateCurrentUser();
+        } catch (e) { toast.error(e.response?.data?.msg || 'Your shipping address could not be saved. Please try again.'); }
         finally { setSavingShipping(false); }
     };
 
@@ -420,10 +431,10 @@ const UserProfile = () => {
                                 <motion.button whileTap={{ scale: 0.97 }} type="submit" disabled={savingShipping}
                                     className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold"
                                     style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'hsl(150, 60%, 40%)', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
-                                    <Save size={14} /> Save
+                                    {savingShipping ? <LucideLoader size={14} className="animate-spin" /> : <Save size={14} />} {savingShipping ? 'Saving…' : 'Save'}
                                 </motion.button>
-                                <motion.button whileTap={{ scale: 0.97 }} type="button"
-                                    onClick={() => { setIsEditingShipping(false); setShippingForm(shippingInfo || { fullName: '', email: '', phone: '', address: '', city: '', state: '', postalCode: '', country: 'Pakistan' }); }}
+                                <motion.button whileTap={{ scale: 0.97 }} type="button" disabled={savingShipping}
+                                    onClick={() => { setIsEditingShipping(false); setShippingForm(normalizeProfileShippingAddress(shippingInfo)); }}
                                     className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold glass-inner"
                                     style={{ color: 'hsl(var(--foreground))' }}>
                                     <X size={14} /> Cancel
@@ -439,10 +450,6 @@ const UserProfile = () => {
                                 { label: 'Email', name: 'email', icon: <Mail size={12} />, type: 'email' },
                                 { label: 'Phone', name: 'phone', icon: <Phone size={12} />, custom: 'phone' },
                                 { label: 'Address', name: 'address', icon: <Home size={12} /> },
-                                { label: 'City', name: 'city' },
-                                { label: 'State', name: 'state' },
-                                { label: 'Postal Code', name: 'postalCode' },
-                                { label: 'Country', name: 'country' },
                             ].map((field) => (
                                 <div key={field.name}>
                                     <label className="block text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-2"
@@ -455,15 +462,37 @@ const UserProfile = () => {
                                             value={shippingForm.phone || ''}
                                             onChange={(v) => setShippingForm((prev) => ({ ...prev, phone: v || '' }))}
                                             profileCountry={shippingForm.country}
+                                            disabled={savingShipping}
                                             placeholder="Phone (used for WhatsApp order updates)"
                                         />
                                     ) : (
                                         <input type={field.type || 'text'} name={field.name}
                                             value={shippingForm[field.name] || ''} onChange={handleShippingChange}
+                                            disabled={savingShipping}
                                             className="glass-input" placeholder={`Enter ${field.label.toLowerCase()}`} />
                                     )}
                                 </div>
                             ))}
+                            <LocationAutocomplete type="country" label="Country" value={shippingForm.country}
+                                code={shippingForm.countryCode} placeholder="Select country" required disabled={savingShipping}
+                                onSelect={option => selectShippingLocation('country', option)}
+                                onClear={() => selectShippingLocation('country', null)} />
+                            <LocationAutocomplete type="state" label="State/Province" value={shippingForm.state}
+                                code={shippingForm.stateCode} countryCode={shippingForm.countryCode} countryName={shippingForm.country}
+                                placeholder="Select state" disabled={savingShipping || (!shippingForm.country && !shippingForm.countryCode)}
+                                onSelect={option => selectShippingLocation('state', option)}
+                                onClear={() => selectShippingLocation('state', null)} />
+                            <LocationAutocomplete type="city" label="City" value={shippingForm.city} code={shippingForm.stateCode}
+                                countryCode={shippingForm.countryCode} countryName={shippingForm.country}
+                                stateCode={shippingForm.stateCode} stateName={shippingForm.state} placeholder="Select city" required
+                                disabled={savingShipping || (!shippingForm.country && !shippingForm.countryCode)}
+                                onSelect={option => selectShippingLocation('city', option)}
+                                onClear={() => selectShippingLocation('city', null)} />
+                            <div>
+                                <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Postal Code</label>
+                                <input name="postalCode" value={shippingForm.postalCode} onChange={handleShippingChange}
+                                    disabled={savingShipping} className="glass-input" placeholder="Enter postal code" />
+                            </div>
                         </div>
                     ) : shippingInfo ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -119,6 +119,7 @@ const LocationAutocomplete = ({
       )}
       <div className="relative min-w-0">
         <input
+          aria-label={label || placeholder}
           value={query}
           disabled={disabled}
           required={required}
