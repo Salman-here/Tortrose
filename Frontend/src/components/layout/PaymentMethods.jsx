@@ -111,7 +111,7 @@ export default function PaymentMethods() {
         <LocationAutocomplete type="country" label="Billing country" value={contact.country} code={contact.countryCode} required disabled={busy || loading} onSelect={country => edit({ country: country.name, countryCode: country.isoCode })} onClear={() => edit({ country: '', countryCode: '' })} />
       </fieldset>}
       <label className="flex gap-3 items-start text-sm"><input type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)} className="mt-1" /><span>Save this card for future payments.</span></label>
-      <p className="text-xs text-muted-foreground">New cards become your default for checkout. Adding a card does not start a subscription.</p>
+      <p className="text-xs text-muted-foreground">New cards become your default for checkout.</p>
       <p className="text-xs text-muted-foreground">By continuing, you agree to Rozare’s <Link className="underline" to="/terms">Terms</Link> and <Link className="underline" to="/privacy">Privacy Policy</Link>.</p>
       <button type="submit" className="glass-button-primary px-5 py-3 flex items-center gap-2 disabled:opacity-50" disabled={!consent || busy || loading || cardsUnavailable || remaining > 0}><Plus size={18} />{busy ? 'Verifying…' : remaining ? `Retry in ${remaining}s` : 'Add a new card'}</button>
       <p className="text-xs text-muted-foreground flex items-center gap-2"><LockKeyhole size={14} /> Card details are entered only in Safepay's secure form.</p>

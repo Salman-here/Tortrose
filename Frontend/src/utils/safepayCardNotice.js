@@ -1,5 +1,5 @@
 export function safepayCardSetupNotice(result, refreshed) {
-  if (result?.status !== 'authorized') return 'Card setup is not complete. Retry to check the same attempt; adding a card does not start a subscription.';
+  if (result?.status !== 'authorized') return 'Card setup is not complete. Retry to check the same attempt.';
   if (!Array.isArray(refreshed?.cards)) return 'Your cards could not be refreshed yet. Use Refresh saved cards to check before starting another setup.';
   const saved = result.savedPaymentMethodId && refreshed.cards.find(card => card?.id === result.savedPaymentMethodId && card.usable === true);
   if (saved) return refreshed.defaultPaymentMethodId === saved.id

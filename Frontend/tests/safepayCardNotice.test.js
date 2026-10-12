@@ -29,4 +29,6 @@ test('web form uses short consent and refreshes before showing the saved-card re
   const provider = readFileSync(new URL('../src/components/common/SafepayCheckoutProvider.jsx', import.meta.url), 'utf8');
   assert.match(provider, /payment.purpose === 'card_setup'.*Complete Safepay/);
   assert.doesNotMatch(source + provider, /I authorize Safepay|select.*Securely save this card/i);
+  assert.doesNotMatch(source + provider, /adding a card does not start a subscription/i);
+  assert.doesNotMatch(safepayCardSetupNotice({ status: 'pending' }, null), /adding a card does not start a subscription/i);
 });
