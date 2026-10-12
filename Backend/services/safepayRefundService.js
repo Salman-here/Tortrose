@@ -11,6 +11,7 @@ const { cancelUnpaidOrderLocally } = require('./orderCancellationService');
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
+const { escapeHtml } = require('../utils/orderPresentation');
 const fail = () => Object.assign(new Error('Safepay refund evidence does not reconcile to the original charge.'), { code: 'SAFEPAY_REFUND_EVIDENCE_INVALID', statusCode: 409 });
 
 function refundEvidence(tracker, payment) {
@@ -49,17 +50,19 @@ async function notifyRefund({ payment, order, evidence, record, sellerIndex = nu
   if (!channels.length) return;
   const title = 'Card refund completed';
   const message = sellerId
-    ? `Order ${order.orderId}: your share of the Safepay card refund is {{money.refund}} in the original order currency. The corresponding deduction is recorded in your seller balance.`
-    : `Safepay confirmed a {{money.refund}} refund for order ${order.orderId} to the original card. Your bank may take additional time to display it.`;
+    ? `A card refund of {{money.refund}} was confirmed for your items in order ${order.orderId}. The amount is shown in the original order currency; the related deduction is recorded in your seller balance. View the order in Seller Dashboard for details.`
+    : `Your refund of {{money.refund}} for order ${order.orderId} was confirmed by Safepay and sent to the original card. Your bank may take additional time to display it.`;
   await enqueueNotificationEvent({ eventKey: `safepay-refund:${payment._id}:${evidence.amountMinor}:${sellerId || 'buyer'}:v1`,
     eventType: 'order.payment_refund_completed', aggregateType: 'SafepayRefundEvent', aggregateId: record._id,
     occurredAt: evidence.occurredAt, financial: true, recipient, channels,
-    templates: { inapp: { title, body: message }, push: { title, body: message }, email: { subject: title, text: message }, whatsapp: { message } },
+    templates: { inapp: { title, body: message }, push: { title, body: message },
+      email: { subject: `${title} — ${order.orderId}`, text: message, html: `<p>${escapeHtml(message)}</p>` },
+      whatsapp: { message: `*${title}*\n\n${message}` } },
     money: [snapshotMinorMoney({ key: 'refund', label: sellerId ? 'Seller refund share in order currency' : 'Card refund', amountMinor,
       currency: payment.currency, sourceModel: 'SafepayRefundEvent', sourceDocumentId: record._id,
       sourcePath: sellerId ? `sellerAllocations[${sellerIndex}].amountMinor` : 'deltaMinor' })],
       metadata: { category: 'payment', channelId: sellerId ? 'seller' : 'buyer', whatsappCategory: 'payment_risk', relatedOrder: order._id,
-      linkTo: sellerId ? `/seller-dashboard/order/${order._id}` : `/user-dashboard/order/detail/${order._id}`,
+      linkTo: sellerId ? `/seller-dashboard/order/${order._id}` : order.user ? `/user-dashboard/order/detail/${order._id}` : '/track-order',
       data: { type: 'order_refund', orderId: String(order._id) } }, session });
 }
 

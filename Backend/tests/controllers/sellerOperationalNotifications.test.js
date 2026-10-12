@@ -29,7 +29,9 @@ const NotificationOutbox = require('../../models/NotificationOutbox');
 const Product = require('../../models/Product');
 const SellerPaymentAccount = require('../../models/SellerPaymentAccount');
 const Store = require('../../models/Store');
+const StoreReview = require('../../models/StoreReview');
 const User = require('../../models/User');
+const { verifySellerOperationalNotificationAuthority } = require('../../services/notificationOutboxDeliveryService');
 
 let replicaSet;
 
@@ -92,11 +94,111 @@ beforeEach(async () => {
     Product.deleteMany({}),
     SellerPaymentAccount.deleteMany({}),
     Store.deleteMany({}),
+    StoreReview.deleteMany({}),
     User.deleteMany({}),
   ]);
 });
 
 describe('durable seller operational notifications', () => {
+  test.each([
+    ['name', { storeName: 'Updated Rating Store' }],
+    ['subdomain', { storeSlug: 'updated-rating-store' }],
+    ['visibility', { isActive: false }],
+    ['content status', { moderationStatus: 'blocked' }],
+  ])('versioned store rating notices are skipped if the %s changes before delivery', async (_label, patch) => {
+    const seller = await createUser('seller', 'rating-snapshot');
+    const buyer = await createUser('user', 'rating-snapshot');
+    const store = await Store.create({ seller: seller._id, storeName: 'Original Rating Store',
+      storeSlug: 'original-rating-store', isActive: true, moderationStatus: 'approved' });
+    const review = await StoreReview.create({ store: store._id, user: buyer._id, rating: 5, isVerifiedPurchase: true });
+    await sellerOperationalNotifications.enqueueNewStoreReviewNotification({ store, review, buyerName: buyer.username });
+    const rows = await NotificationOutbox.find({ eventType: 'store.review_created' }).lean();
+    expect(rows).toHaveLength(4);
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toBeNull();
+    await Store.updateOne({ _id: store._id }, { $set: patch });
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toMatchObject({ outcome: 'skipped' });
+  });
+
+  test.each(['pending', 'blocked'])('a versioned %s storefront rating uses a safe fallback while its presentation stays unchanged', async moderationStatus => {
+    const seller = await createUser('seller', 'rating-held');
+    const buyer = await createUser('user', 'rating-held');
+    const store = await Store.create({ seller: seller._id, storeName: 'Unreviewed Rating Name',
+      storeSlug: 'unreviewed-rating-name', isActive: true, moderationStatus });
+    const review = await StoreReview.create({ store: store._id, user: buyer._id, rating: 5, isVerifiedPurchase: true });
+    await sellerOperationalNotifications.enqueueNewStoreReviewNotification({ store, review, buyerName: buyer.username });
+    const rows = await NotificationOutbox.find({ eventType: 'store.review_created' }).lean();
+    expect(rows).toHaveLength(4);
+    expect(JSON.stringify(rows)).not.toMatch(/Unreviewed Rating Name|unreviewed-rating-name/);
+    for (const row of rows) {
+      expect(row.payload.data.reviewStoreName).toBe('your store');
+      expect(row.payload.data.reviewStorefrontUrl).toBe('');
+      expect(await verifySellerOperationalNotificationAuthority(row)).toBeNull();
+    }
+    await Store.updateOne({ _id: store._id }, { $set: { moderationStatus: 'approved' } });
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toMatchObject({ outcome: 'skipped' });
+  });
+
+  test('a versioned inactive-store rating uses a valid management fallback until the store becomes public', async () => {
+    const seller = await createUser('seller', 'rating-inactive');
+    const buyer = await createUser('user', 'rating-inactive');
+    const store = await Store.create({ seller: seller._id, storeName: 'Inactive Rating Store',
+      storeSlug: 'inactive-rating-store', isActive: false, moderationStatus: 'approved' });
+    const review = await StoreReview.create({ store: store._id, user: buyer._id, rating: 4, isVerifiedPurchase: true });
+    await sellerOperationalNotifications.enqueueNewStoreReviewNotification({ store, review, buyerName: buyer.username });
+    const rows = await NotificationOutbox.find({ eventType: 'store.review_created' }).lean();
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      expect(row.payload.data.reviewStorefrontUrl).toBe('');
+      expect(row.payload.linkTo).toBe('/seller-dashboard/store-overview');
+      expect(await verifySellerOperationalNotificationAuthority(row)).toBeNull();
+    }
+    await Store.updateOne({ _id: store._id }, { $set: { isActive: true } });
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toMatchObject({ outcome: 'skipped' });
+  });
+
+  test.each([
+    ['name', { storeName: 'Updated Seller Store' }],
+    ['subdomain', { storeSlug: 'updated-seller-store' }],
+    ['content status', { moderationStatus: 'blocked' }],
+  ])('versioned store creation notices are skipped if the %s changes before delivery', async (_label, patch) => {
+    const seller = await createUser('seller', 'creation-snapshot');
+    const store = await Store.create({ seller: seller._id, storeName: 'Original Seller Store',
+      storeSlug: 'original-seller-store', moderationStatus: 'approved' });
+    await sellerOperationalNotifications.enqueueStoreCreatedNotification(store);
+    const rows = await NotificationOutbox.find({ eventType: 'store.created' }).lean();
+    expect(rows).toHaveLength(4);
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toBeNull();
+    await Store.updateOne({ _id: store._id }, { $set: patch });
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toMatchObject({ outcome: 'skipped' });
+  });
+
+  test.each(['pending', 'blocked'])('versioned %s store creation notices expose no unreviewed content and are skipped after approval', async moderationStatus => {
+    const seller = await createUser('seller', 'creation-held');
+    const store = await Store.create({ seller: seller._id, storeName: 'Unreviewed Store Name',
+      storeSlug: 'unreviewed-store-name', moderationStatus });
+    await sellerOperationalNotifications.enqueueStoreCreatedNotification(store);
+    const rows = await NotificationOutbox.find({ eventType: 'store.created' }).lean();
+    expect(rows).toHaveLength(4);
+    expect(JSON.stringify(rows)).not.toMatch(/Unreviewed Store Name|unreviewed-store-name/);
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toBeNull();
+    await Store.updateOne({ _id: store._id }, { $set: { moderationStatus: 'approved' } });
+    for (const row of rows) expect(await verifySellerOperationalNotificationAuthority(row)).toMatchObject({ outcome: 'skipped' });
+  });
+
+  test('a versioned legacy store creation without a moderation field normalizes to approved', async () => {
+    const seller = await createUser('seller', 'creation-legacy-approved');
+    const store = await Store.create({ seller: seller._id, storeName: 'Legacy Seller Store', storeSlug: 'legacy-seller-store' });
+    await Store.updateOne({ _id: store._id }, { $unset: { moderationStatus: 1 } });
+    const legacy = await Store.findById(store._id).lean();
+    await sellerOperationalNotifications.enqueueStoreCreatedNotification(legacy);
+    const rows = await NotificationOutbox.find({ eventType: 'store.created' }).lean();
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      expect(row.payload.data.storeModerationStatusAtCreation).toBe('approved');
+      expect(await verifySellerOperationalNotificationAuthority(row)).toBeNull();
+    }
+  });
+
   test('stages product notices only on a new blocked transition', () => {
     const placeholder = {
       name: 'Test Product',
@@ -142,6 +244,16 @@ describe('durable seller operational notifications', () => {
     expect(store).toBeTruthy();
     expect(store.productCurrency).toBe('PKR');
     expect(await NotificationOutbox.countDocuments({ eventType: 'store.created' })).toBe(4);
+    const createdNotices = await NotificationOutbox.find({ eventType: 'store.created' }).lean();
+    const publicUrl = `https://${store.storeSlug}.rozare.com/`;
+    expect(createdNotices.find(row => row.channel === 'email').payload.text).toContain(publicUrl);
+    expect(createdNotices.find(row => row.channel === 'whatsapp').payload.message).toContain(publicUrl);
+    expect(JSON.stringify(createdNotices.map(row => row.payload))).not.toContain('Store path:');
+    expect(createdNotices.every(row => row.payload.linkTo === '/seller-dashboard/store-settings')).toBe(true);
+    expect(createdNotices.every(row => row.payload.data.storePresentationVersion === 1
+      && row.payload.data.storefrontUrlAtCreation === publicUrl
+      && row.payload.data.storeNameAtCreation === store.storeName
+      && row.payload.data.storeModerationStatusAtCreation === 'approved')).toBe(true);
 
     const approveResponse = responseRecorder();
     await approveVerification(adminRequest(admin, store), approveResponse.res);

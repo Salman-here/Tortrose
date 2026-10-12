@@ -198,7 +198,7 @@ async function notifyOperation(operation, { session, type = 'subscription.paymen
     aggregateType: 'SafepayBillingOperation', aggregateId: operation._id, occurredAt: operation.appliedAt || operation.acceptedAt,
     financial: true, recipient: { kind: 'user', audienceRole: 'seller', user: operation.seller, destinationPolicy: 'current_user', allowBlocked: true },
     channels: ['inapp', 'push', 'email', 'whatsapp'],
-    templates: { inapp: { title, body }, push: { title, body }, email: { subject: title, text: body }, whatsapp: { message: `${title}\n\n${body}` } },
+    templates: { inapp: { title, body }, push: { title, body }, email: { subject: title, text: body }, whatsapp: { message: `*${title}*\n\n${body}` } },
     money: [snapshotMinorMoney({ key: 'charged', amountMinor, currency: 'USD', sourceModel: 'SafepayBillingOperation', sourceDocumentId: operation._id, sourcePath: 'terms.dueMinor', label: 'Subscription charge' })],
     metadata: { category: 'subscription', channelId: 'seller', whatsappCategory: type === 'subscription.payment_failed' ? 'payment_failed' : 'subscription_activated',
       linkTo: '/seller-dashboard/subscription', data: { type: 'subscription_updated', operationId: id(operation) } }, session });
@@ -261,8 +261,8 @@ async function applyOperation(operation, sub, session) {
     'subscriptionPaymentRiskLock.stripeSubscriptionId': { $in: ['', null] },
     $or: [{ isActive: true }, ...(previousBlockedAt ? [{ blockedAt: previousBlockedAt }] : [])] },
   { $set: { isActive: true, blockedAt: null, 'subdomainPurchase.removalScheduledAt': null } }, { session });
-  await notifyOperation(operation, { session, title: terms.trialDays ? 'Subscription trial started' : 'Subscription updated',
-    body: `${terms.planName} is now ${sub.status === 'free_period' ? 'in its introductory free period' : 'active'}. Charged: {{money.charged}}. Review your next billing date and renewal settings in Rozare.` });
+  await notifyOperation(operation, { session, title: terms.trialDays ? 'Your subscription introductory period has started' : 'Your subscription was updated',
+    body: `${terms.trialDays ? `Your ${terms.planName} plan was activated with a ${terms.trialDays}-day free introductory period. Amount due at activation: {{money.charged}}.` : `Your ${terms.planName} subscription was updated successfully. Amount paid: {{money.charged}}.`} Review your current billing dates, plan price and renewal settings in Subscription.` });
   return sub;
 }
 
@@ -421,8 +421,8 @@ async function failBillingPayment(payment, session) {
     }
     await sub.save({ session });
   }
-  await notifyOperation(op, { session, type: 'subscription.payment_failed', title: 'Subscription payment was not completed',
-    body: 'The payment of {{money.charged}} could not be completed. No paid subscription access was granted by this attempt. Review your billing details in Rozare.' });
+  await notifyOperation(op, { session, type: 'subscription.payment_failed', title: 'Subscription payment unsuccessful',
+    body: 'Your payment of {{money.charged}} was unsuccessful. This attempt did not activate or extend your subscription. Review your payment method and retry in Subscription.' });
 }
 
 module.exports = { CONSENT_VERSION, createQuote, acceptQuote, presentQuote, operationStatus, claimRecurringCharge,

@@ -114,7 +114,7 @@ exports.createOrUpdateReview = asyncHandler(async (req, res) => {
     return res.status(400).json({ msg: 'Title too long (max 100 chars)' });
   }
 
-  const store = await Store.findById(storeId).select('seller storeName storeSlug');
+  const store = await Store.findById(storeId).select('seller storeName storeSlug isActive moderationStatus');
   if (!store) return res.status(404).json({ msg: 'Store not found' });
   if (store.seller.toString() === userId.toString()) {
     return res.status(403).json({ msg: 'You cannot review your own store' });
@@ -142,7 +142,7 @@ exports.createOrUpdateReview = asyncHandler(async (req, res) => {
       .session(session)
       .lean();
     const currentStore = await Store.findById(storeId)
-      .select('seller storeName storeSlug')
+      .select('seller storeName storeSlug isActive moderationStatus')
       .session(session);
     if (!currentStore) {
       const error = new Error('Store not found');

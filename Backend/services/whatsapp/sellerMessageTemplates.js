@@ -11,6 +11,12 @@ const {
 } = require('../../utils/orderPresentation');
 
 const orderCurrency = (order) => getOrderCurrency(order);
+const inlineText = (value, maxLength = 300) => String(value ?? '')
+    .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+    .replace(/[*_~`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
 
 const orderNumber = (order) => order?.orderId || order?._id || 'Unknown';
 
@@ -24,7 +30,7 @@ const itemLines = (order, limit = 8) => {
     const items = order?.orderItems || [];
     const lines = items
         .slice(0, limit)
-        .map(item => orderItemLineText(item, orderCurrency(order)));
+        .map(item => inlineText(orderItemLineText(item, orderCurrency(order))));
     if (items.length > limit) {
         const remaining = items.length - limit;
         lines.push(`...and ${remaining} more item${remaining !== 1 ? 's' : ''}`);
@@ -40,93 +46,93 @@ const orderLinesBlock = (order) => {
 const templates = {
     seller_welcome: (storeName) => {
         const liveLine = storeName
-            ? `Your seller account is created and "${storeName}" is live.`
-            : 'Your seller account is created.';
+            ? `Your seller account and ${inlineText(storeName)} have been created.`
+            : 'Your seller account has been created.';
         return [
-            'Congratulations!',
+            '*Welcome to selling on Rozare*',
             '',
             liveLine,
             '',
-            'You can manage your store directly from the seller dashboard, or chat with me here. I can help add products, update prices and stock, improve descriptions, create coupons, check orders, manage store details, and more.',
+            'Open your seller dashboard to complete store setup, add products and configure shipping. Your dashboard shows whether your store is available to buyers.',
         ].join('\n');
     },
 
     new_order: (order) => {
         const count = order?.orderItems?.length || 0;
         return [
-            'New Order Received',
+            '*New order received*',
             '',
             `Order: #${orderNumber(order)}`,
-            `Item count: ${count}`,
+            `Product lines: ${count}`,
             orderLinesBlock(order),
-            `Total: ${orderTotal(order)}`,
+            `Buyer order total: ${orderTotal(order)}`,
             `Payment: ${paymentMethodLabel(order?.paymentMethod)}`,
             '',
-            'Check your dashboard to process this order.',
+            'Open the order in your seller dashboard to review its details and next steps.',
         ].join('\n');
     },
 
     order_confirmed: (order) => [
-        'Order Confirmed',
+        '*Order confirmed by buyer*',
         '',
         `Order #${orderNumber(order)} has been confirmed by the buyer.`,
         orderLinesBlock(order),
         '',
-        'Please prepare the order for shipping.',
+        'Open the order in your seller dashboard to begin processing it.',
     ].join('\n'),
 
     order_cancelled: (order) => [
-        'Order Cancelled',
+        '*Order cancelled*',
         '',
         `Order #${orderNumber(order)} has been cancelled by the buyer.`,
         orderLinesBlock(order),
     ].join('\n'),
 
     return_requested: (returnRequest) => [
-        'New Return Request',
+        '*New return request*',
         '',
         `Return: #${returnRequest?.returnNumber || 'Unknown'}`,
         `Order: #${returnRequest?.orderId || 'Unknown'}`,
-        `Buyer reason: ${returnRequest?.reasonDetails || 'No reason provided'}`,
+        `Buyer reason: ${inlineText(returnRequest?.reasonDetails, 500) || 'No reason provided'}`,
         '',
-        'Open Seller Dashboard > Orders > Return Orders to review it.',
+        'Open the Returns tab in Order Management to review and respond.',
     ].join('\n'),
 
     return_settled: (returnRequest, amountText) => [
-        'Return Refund Completed',
+        '*Return refund completed*',
         '',
         `Return: #${returnRequest?.returnNumber || 'Unknown'}`,
         `Order: #${returnRequest?.orderId || 'Unknown'}`,
         `Refund: ${amountText}`,
         '',
-        'The buyer wallet was credited and the return is now complete.',
+        'Open the return record in Order Management to review the completed refund.',
     ].join('\n'),
 
     subscription_activated: (planName, freePeriodDays) => {
         const freeStr = freePeriodDays > 0 ? `\nFree period: ${freePeriodDays} days` : '';
-        return `${planName} Activated\n\nYour seller subscription is now active.${freeStr}\n\nYour store is live and visible to customers.`;
+        return `*${inlineText(planName)} activated*\n\nYour seller subscription is active.${freeStr}\n\nOpen Subscription in your seller dashboard to review your plan and next billing date.`;
     },
 
     subscription_ending_soon: (daysLeft) =>
-        `Subscription Ending Soon\n\nYour subscription ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.\n\nPlease ensure your payment method is up to date to avoid service interruption.`,
+        `*Subscription ending soon*\n\nYour subscription ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.\n\nOpen Subscription in your seller dashboard to review your plan and available options.`,
 
     payment_failed: () =>
-        "Payment Failed — Subscription Paused\n\nWe couldn't process your subscription payment, so subscription access is temporarily paused.\n\nPlease update your payment method in the dashboard before your store can be made visible through this subscription again.",
+        "*Subscription payment unsuccessful*\n\nYour subscription payment could not be completed.\n\nOpen Subscription in your seller dashboard to review its status, update your payment method and retry.",
 
     payment_recovered: () =>
-        'Payment Successful\n\nYour subscription payment has been processed successfully. Your account is now in good standing.',
+        '*Subscription payment confirmed*\n\nYour subscription payment was completed. Open Subscription in your seller dashboard to review your plan and next billing date.',
 
     plan_change_action_required: () =>
-        'Payment Authentication Required\n\nYour requested plan change has not been activated because Stripe needs payment authentication. Your current plan remains unchanged.\n\nOpen Subscription in your dashboard and retry the same plan change to continue securely.',
+        '*Complete your plan-change payment*\n\nYour requested plan change is waiting for payment verification. Your current plan remains unchanged.\n\nOpen Subscription in your seller dashboard to complete this payment securely.',
 
     trial_expiring: (daysLeft) =>
-        `Trial Expiring\n\nYour free trial ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.\n\nSubscribe to keep your store active and visible to customers.`,
+        `*Free trial ending soon*\n\nYour free trial ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.\n\nOpen Subscription in your seller dashboard to choose a plan and continue selling.`,
 
     account_blocked: (reason) =>
-        `Store Blocked\n\nYour store has been blocked${reason ? `: ${reason}` : ''}.\n\nCustomers can no longer see your products. Subscribe or contact support to reactivate.`,
+        '*Your store is unavailable*\n\nYour store is currently hidden from buyers.\n\nReview the reason in your seller dashboard. For help, contact support@rozare.com.',
 
-    product_blocked: (productName, reason) =>
-        `Product Blocked\n\n"${productName || 'Your product'}" was blocked because ${reason || 'it looks like test or placeholder content'}.\n\nIt is saved in your Products tab as blocked, but customers cannot see it. Edit it with a real product name and description to make it available again.`,
+    product_blocked: () =>
+        '*Product listing needs changes*\n\nA product listing is hidden from customers. Review its moderation reason in Product Management and update the affected details.',
 
     bonus_expiring: (daysLeft) =>
         `Bonus Features Expiring\n\nYour bonus features expire in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.\n\nUpgrade to Rozare Elite to keep them permanently.`,

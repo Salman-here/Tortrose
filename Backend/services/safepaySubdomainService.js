@@ -83,13 +83,13 @@ async function settle(payment, tracker, session) {
       resourceKey: payment.terms.storeSlug, capturedMinor: payment.amountMinor, grantStart: start, grantEnd: end, effectiveGrantEnd: end }], { session });
   }
   await recomputeSubdomainEntitlement(store._id, { session });
-  const title = 'Subdomain ownership payment received';
-  const message = `Payment of {{money.paid}} protects ${grant.resourceKey}.rozare.com through ${grant.grantEnd.toISOString().slice(0, 10)}. View current ownership in Seller Dashboard > Subdomain.`;
+  const title = 'Your subdomain purchase was confirmed';
+  const message = `Your payment of {{money.paid}} has been received. Your purchase reserved ${grant.resourceKey}.rozare.com for your store through ${grant.grantEnd.toISOString().slice(0, 10)}. Review your current ownership in Subdomain settings. Subdomain ownership does not replace a store subscription.`;
   await enqueueNotificationEvent({ eventKey: `safepay-subdomain:${payment._id}:received:v1`, eventType: 'subdomain.payment_received',
     aggregateType: 'SafepaySubdomainGrant', aggregateId: grant._id, occurredAt: grant.createdAt, financial: true,
     recipient: { kind: 'user', audienceRole: 'seller', user: payment.user, destinationPolicy: 'current_user', allowBlocked: true },
     channels: ['inapp', 'push', 'email', 'whatsapp'],
-    templates: { inapp: { title, body: message }, push: { title, body: message }, email: { subject: title, text: message }, whatsapp: { message } },
+    templates: { inapp: { title, body: message }, push: { title, body: message }, email: { subject: title, text: message }, whatsapp: { message: `*${title}*\n\n${message}` } },
     money: [snapshotMinorMoney({ key: 'paid', label: 'Subdomain ownership payment', amountMinor: payment.amountMinor, currency: 'USD',
       sourceModel: 'SafepaySubdomainGrant', sourceDocumentId: grant._id, sourcePath: 'capturedMinor' })],
     metadata: { category: 'payment', channelId: 'seller', whatsappCategory: 'subdomain_payment', linkTo: '/seller-dashboard/subdomain',

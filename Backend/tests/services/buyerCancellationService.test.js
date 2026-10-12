@@ -10,9 +10,44 @@ const Wallet = require('../../models/Wallet');
 const WalletTransaction = require('../../models/WalletTransaction');
 const ReturnRequest = require('../../models/ReturnRequest');
 const { buildOrderSellerSettlement, buildOrderSellerCurrencyMoney } = require('../../services/orderMoneyService');
-const { cancelBuyerOrder, chooseCancellationSellers } = require('../../services/buyerCancellationService');
+const { cancelBuyerOrder, chooseCancellationSellers, notifyCancellation } = require('../../services/buyerCancellationService');
 const { enqueueNotificationEvent } = require('../../services/notificationOutboxService');
 let replica;
+test.each([
+  ['cash_on_delivery', 'none', 'not_required', false],
+  ['wallet', 'wallet', 'refunded', true],
+  ['safepay', 'original_card', 'pending', false],
+  ['safepay', 'original_card', 'refunded', true],
+])('%s cancellation copy is audience-first with accurate %s refund state', async (paymentMethod, refundDestination, refundStatus, completed) => {
+  const seller = new mongoose.Types.ObjectId(), buyer = new mongoose.Types.ObjectId();
+  const order = { _id: new mongoose.Types.ObjectId(), orderId: 'ORD-COPY',
+    orderItems: [{ seller, name: 'Travel mug <blue>', quantity: 1 }],
+    sellerPolicies: [{ seller, storeName: 'Atlas Aura' }], shippingInfo: { email: 'buyer@example.com', phone: '+923001234567' } };
+  const row = { _id: new mongoose.Types.ObjectId(), buyer, seller, paymentMethod, paymentRail: 'card', refundDestination,
+    refundStatus, amountMinor: 10000, currency: 'PKR', requestedAt: new Date(), refundedAt: completed ? new Date() : null };
+  await notifyCancellation(row, order, { completed });
+  const events = enqueueNotificationEvent.mock.calls.map(([event]) => event);
+  expect(events).toHaveLength(2);
+  const buyerEvent = events.find(event => event.recipient.audienceRole === 'buyer');
+  const sellerEvent = events.find(event => event.recipient.audienceRole === 'seller');
+  expect(buyerEvent.templates.email.html).not.toMatch(/<!doctype|<html|<body/i);
+  expect(buyerEvent.templates.email.html).toContain('&lt;blue&gt;');
+  expect(sellerEvent.templates.email.text).not.toContain('Other seller');
+  expect(buyerEvent.templates.whatsapp.message).not.toContain('the buyer cancelled');
+  expect(buyerEvent.metadata.linkTo).toBe(`/user-dashboard/order/detail/${order._id}`);
+  expect(sellerEvent.metadata.linkTo).toBe(`/seller-dashboard/order/${order._id}`);
+  if (refundDestination === 'wallet') {
+    expect(buyerEvent.templates.email.text).toContain('your Rozare Wallet');
+    expect(sellerEvent.templates.email.text).toContain('the buyer’s Rozare Wallet');
+  } else if (refundDestination === 'original_card' && !completed) {
+    expect(buyerEvent.templates.email.text).toContain('is being verified');
+    expect(buyerEvent.templates.email.text).not.toContain('was refunded');
+  } else if (refundDestination === 'original_card') {
+    expect(buyerEvent.templates.email.text).toContain('bank may take additional time');
+  } else {
+    expect(buyerEvent.templates.email.text).toContain('no refund is needed');
+  }
+});
 beforeEach(() => {
   jest.spyOn(require('../../config/safepay'), 'readSafepayConfig').mockReturnValue({ environment: 'sandbox' });
   jest.spyOn(require('../../services/safepayClient'), 'createSafepayClient').mockReturnValue({
@@ -407,7 +442,8 @@ test.each(['new', 'queued'])('a %s zero-net seller finishes locally while the po
   expect(zero).toMatchObject({ amountMinor: 100, refundAmountMinor: 0, deductionMinor: 100,
     refundDestination: 'original_card', refundStatus: 'not_required', submitStartedAt: null });
   expect(enqueueNotificationEvent.mock.calls.filter(([event]) => String(event.recipient.user) === String(f.sellers[0]))
-    .every(([event]) => event.templates.inapp.body.includes('No payment refund is required.'))).toBe(true);
+    .every(([event]) => event.templates.inapp.body.includes('No card refund is due.')
+      && event.templates.inapp.body.includes('Refund after the processing fee: {{money.refund}}'))).toBe(true);
   if (mode === 'queued') {
     // Reproduce a zero-net row already queued by the earlier implementation.
     await Cancellation.updateOne({ _id: zero._id }, { $set: { refundStatus: 'pending' } });

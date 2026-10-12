@@ -140,14 +140,14 @@ exports.sendUserWhatsAppOTP = async (req, res) => {
         // Generate and send OTP
         const otp = generateOTP();
         const message = [
-            `*Rozare WhatsApp Verification* 🔐`,
+            `*Rozare WhatsApp verification*`,
             ``,
-            `Your verification code is: *${otp}*`,
+            `Your verification code: *${otp}*`,
             ``,
             `This code expires in ${OTP_EXPIRY_MINUTES} minutes.`,
             `Do not share this code with anyone.`,
             ``,
-            `Once verified, you can chat with Rozare AI directly on WhatsApp! 🤖💙`,
+            `Enter this code in Rozare to connect your WhatsApp number. If you did not request this, ignore this message.`,
         ].join('\n');
 
         try {

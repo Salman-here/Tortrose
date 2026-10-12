@@ -171,6 +171,21 @@ describe('seller notification contracts', () => {
     });
   });
 
+  it('takes a durable store-rating notice to the public store reviews screen, not product ratings', () => {
+    const notification = normalizePersistentNotification({
+      _id: 'store-review-notification', targetRole: 'seller', category: 'seller',
+      title: 'New store review', body: 'A verified buyer rated Atlas Aura 5 out of 5.',
+      aggregateType: 'Store', aggregateId: 'store-id',
+      linkTo: '/store/atlas-aura#store-reviews',
+    });
+    expect(notification.orderId).toBeNull();
+    expect(resolveSellerNotificationTarget(notification)).toEqual({
+      screen: 'Store', params: { slug: 'atlas-aura' },
+    });
+    expect(resolveSellerNotificationTarget({ ...notification, targetRole: 'both' })).toBeNull();
+    expect(notification.body).toBe('A verified buyer rated Atlas Aura 5 out of 5.');
+  });
+
   it('keeps outbox subscription and aggregate order records out of the generic system bucket', () => {
     expect(normalizePersistentNotification({
       _id: 'subscription-1',
@@ -244,6 +259,27 @@ describe('seller notification contracts', () => {
 
   it('uses honest unavailable copy for invalid timestamps', () => {
     expect(formatSellerNotificationTime(null)).toBe('Time unavailable');
+  });
+
+  it('honours return navigation before the associated order id', () => {
+    expect(resolveSellerNotificationTarget({
+      persisted: true,
+      targetRole: 'seller',
+      orderId: 'order-1',
+      linkTo: '/seller-dashboard/order-management?tab=returns&returnId=return%2D1',
+    })).toEqual({ screen: 'SellerOrderManagement', params: { tab: 'returns', returnRequestId: 'return-1' } });
+  });
+
+  test.each([
+    'https://evil.example/seller-dashboard/payments',
+    '//evil.example/seller-dashboard/payments',
+    '/%2fexample.test/seller-dashboard/payments',
+    '/seller-dashboard/payments%5cunexpected',
+    '/seller-dashboard/payments%00',
+    '/user-dashboard/order/detail/order-1',
+    '/%61dmin-dashboard/payments',
+  ])('rejects unsafe or another audience link even when an order id exists: %s', (linkTo) => {
+    expect(resolveSellerNotificationTarget({ targetRole: 'seller', orderId: 'order-1', category: 'payment', linkTo })).toBeNull();
   });
 
   it('keys local analytics read state to the alert occurrence, not only its id', () => {

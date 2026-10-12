@@ -2,6 +2,7 @@ const { moderatedStoreInput } = require('../services/catalogModerationService');
 const crypto = require('crypto')
 const User = require('../models/User')
 const { sendEmail } = require('./mailController')
+const { verificationCodeEmail } = require('../utils/accountEmailTemplates')
 const { trackCompleteRegistration } = require('../services/tiktokEventsApi')
 const { trackSellerLead } = require('../services/metaConversionsApi')
 const { normalizeSocialLinks } = require('../services/socialLinksService')
@@ -853,7 +854,7 @@ exports.initiateWhatsAppChange = async (req, res) => {
         }
 
         const otp = crypto.randomInt(100000, 1000000).toString();
-        const message = `*Rozare Verification*\n\nYour verification code is: *${otp}*\n\nThis code expires in 2 minutes.\nDo not share this code with anyone.`;
+        const message = `*Rozare seller WhatsApp change*\n\nYour verification code: *${otp}*\nExpires in 2 minutes.\n\nEnter this code in Rozare to confirm your new seller WhatsApp number. Do not share it. If you did not request this change, ignore the message.`;
 
         try {
             await sellerEvolutionClient.sendText(cleanDigits, message);
@@ -1046,45 +1047,11 @@ exports.initiateEmailChange = async (req, res) => {
         });
         await otpDoc.save();
 
-        // Send professional email
-        const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Verify Email Change</title></head>
-<body style="margin:0;padding:0;background-color:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.6;">
-    <div style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-        <div style="background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 50%,#a78bfa 100%);padding:48px 32px;text-align:center;">
-            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;">Verify Your New Email</h1>
-            <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:15px;">Email change verification</p>
-        </div>
-        <div style="padding:40px 32px;">
-            <p style="color:#334155;font-size:16px;margin:0 0 20px;">Hi <strong>${user.username}</strong>,</p>
-            <p style="color:#475569;font-size:15px;margin:0 0 28px;">
-                You requested to change your email address on Rozare. Enter the code below to verify this new email:
-            </p>
-            <div style="background:linear-gradient(135deg,#f8faff 0%,#f0f4ff 100%);border:2px solid #e0e7ff;border-radius:12px;padding:28px 20px;text-align:center;margin:0 0 28px;">
-                <p style="margin:0 0 12px;color:#64748b;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Verification Code</p>
-                <div style="font-size:38px;font-weight:800;color:#6366f1;letter-spacing:10px;font-family:'Courier New',monospace;padding:8px 0;">${otpCode}</div>
-                <div style="margin-top:12px;display:inline-block;background:#fef3c7;border-radius:20px;padding:6px 14px;">
-                    <span style="color:#92400e;font-size:12px;font-weight:600;">Expires in 10 minutes</span>
-                </div>
-            </div>
-            <div style="border-top:1px solid #e2e8f0;padding-top:20px;">
-                <p style="color:#94a3b8;font-size:13px;margin:0;">If you didn't request this change, please ignore this email. Your account is safe.</p>
-            </div>
-        </div>
-        <div style="background:#f8fafc;padding:24px 32px;text-align:center;border-top:1px solid #e2e8f0;">
-            <p style="margin:0 0 4px;color:#94a3b8;font-size:12px;">&copy; ${new Date().getFullYear()} Rozare. All rights reserved.</p>
-        </div>
-    </div>
-</body>
-</html>`;
+        const emailTemplate = verificationCodeEmail({ name: user.username, code: otpCode, purpose: 'email_change', expiresMinutes: 10 });
 
         await sendEmail({
             to: newEmail,
-            subject: 'Verify Your New Email - Rozare',
-            text: `Your verification code is: ${otpCode}. Valid for 10 minutes.`,
-            html
+            ...emailTemplate
         });
 
         res.status(200).json({ msg: 'Verification code sent to your new email address.' });
@@ -1127,7 +1094,7 @@ exports.verifyEmailChange = async (req, res) => {
         }
 
         // Find the OTP record
-        const otpDoc = await OTP.findOne({ email: newEmail.toLowerCase(), otp });
+        const otpDoc = await OTP.findOne({ email: newEmail.toLowerCase(), otp, createdAt: { $gte: new Date(Date.now() - 10 * 60 * 1000) } });
         if (!otpDoc) {
             return res.status(400).json({ msg: 'Invalid or expired verification code.' });
         }

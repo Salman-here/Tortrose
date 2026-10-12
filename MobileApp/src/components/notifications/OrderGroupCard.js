@@ -34,7 +34,7 @@ export default function OrderGroupCard({ group, onPress, onMarkRead, readIds }) 
 
   return (
     <GlassPanel variant="card" style={[styles.groupCard, unreadCount > 0 && styles.unreadBorder]}>
-      <TouchableOpacity style={styles.header} onPress={toggle} activeOpacity={0.7}>
+      <TouchableOpacity style={styles.header} onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={`Order ${displayOrderId}, ${items.length} updates`}>
         {unreadCount > 0 && <View style={styles.unreadDot} />}
         <View style={[styles.icon, { backgroundColor: latestMeta.bg }]}>
           <Ionicons name="cube-outline" size={22} color={latestMeta.color} />
@@ -67,7 +67,7 @@ export default function OrderGroupCard({ group, onPress, onMarkRead, readIds }) 
                 {idx < items.length - 1 && <View style={styles.timelineLine} />}
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.itemTitle, !isRead && { fontWeight: fontWeight.bold }]}>{item.title}</Text>
-                  <Text style={styles.itemBody} numberOfLines={1}>{item.body}</Text>
+                  <Text style={styles.itemBody}>{item.body}</Text>
                   <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
                 </View>
               </TouchableOpacity>

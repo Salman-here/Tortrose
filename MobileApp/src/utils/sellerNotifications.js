@@ -332,7 +332,28 @@ export function resolveSellerNotificationTarget(notification) {
   if (notification.persisted === true && !isSellerBusinessNotification(notification)) return null;
 
   const linkTo = typeof notification.linkTo === 'string' ? notification.linkTo : '';
-  if (/^\/user-dashboard(?:[/?#]|$)/i.test(linkTo)) return null;
+  const decodedLink = decodeLinkComponent(linkTo);
+  if (linkTo && (
+    linkTo !== linkTo.trim()
+    || linkTo.length > 500
+    || !linkTo.startsWith('/')
+    || linkTo.startsWith('//')
+    || !decodedLink
+    || decodedLink.startsWith('//')
+    || /[\\\u0000-\u001f\u007f]/.test(linkTo + decodedLink)
+  )) return null;
+  if (/^\/(?:user-dashboard|admin-dashboard)(?:[/?#]|$)/i.test(decodedLink)) return null;
+
+  // Return notifications also carry their order id. Honour the explicit
+  // returns destination first so the seller can act on the return itself.
+  if (/^\/seller-dashboard\/order-management(?:[/?#]|$)/i.test(linkTo)
+    && (getQueryParam(linkTo, 'tab') === 'returns' || getQueryParam(linkTo, 'returnId'))) {
+    const returnRequestId = getQueryParam(linkTo, 'returnId');
+    return {
+      screen: 'SellerOrderManagement',
+      params: { tab: 'returns', ...(returnRequestId ? { returnRequestId } : {}) },
+    };
+  }
 
   if (notification.orderId) {
     return { screen: 'OrderDetailManagement', params: { orderId: notification.orderId } };
@@ -343,7 +364,7 @@ export function resolveSellerNotificationTarget(notification) {
     const slug = decodeLinkComponent(publicStoreMatch[1]);
     if (slug) return { screen: 'Store', params: { slug } };
   }
-  const orderMatch = linkTo.match(/\/seller-dashboard\/order\/([^/?#]+)/i);
+  const orderMatch = linkTo.match(/^\/seller-dashboard\/order\/([^/?#]+)/i);
   if (orderMatch) {
     const linkedOrderId = decodeLinkComponent(orderMatch[1]);
     if (linkedOrderId) {
@@ -354,7 +375,7 @@ export function resolveSellerNotificationTarget(notification) {
     }
   }
 
-  if (linkTo.toLowerCase().includes('/seller-dashboard/order-management')) {
+  if (/^\/seller-dashboard\/order-management(?:[/?#]|$)/i.test(linkTo)) {
     const linkedOrderId = getQueryParam(linkTo, 'orderId');
     if (linkedOrderId) {
       return {
@@ -380,7 +401,11 @@ export function resolveSellerNotificationTarget(notification) {
     ['/seller-dashboard/notification-settings', 'NotificationSettings'],
   ];
 
-  const mapping = routeMappings.find(([path]) => linkTo.toLowerCase().includes(path));
+  const mapping = routeMappings.find(([path]) => (
+    linkTo.toLowerCase() === path
+    || linkTo.toLowerCase().startsWith(`${path}?`)
+    || linkTo.toLowerCase().startsWith(`${path}#`)
+  ));
   if (mapping) {
     const params = {};
     const tab = getQueryParam(linkTo, 'tab');

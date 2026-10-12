@@ -143,8 +143,8 @@ async function processCancellationRefund(paymentId) {
           eventKey: `cancellation-refund:${row._id}:review:${admin._id}:v1`, eventType: 'payment.cancellation_refund_review',
           aggregateType: 'OrderCancellation', aggregateId: row._id, occurredAt: row.requestedAt, financial: true,
           recipient: { kind: 'user', audienceRole: 'admin', user: admin._id, destinationPolicy: 'current_user' }, channels: ['inapp', 'email'],
-          templates: { inapp: { title: 'Cancellation refund needs review', body: 'Verify {{money.amount}} against the original Safepay tracker before retrying. No duplicate refund was submitted.' },
-            email: { subject: 'Cancellation refund needs review', text: `Order ${order.orderId}: verify {{money.amount}} against Safepay before retrying.` } },
+          templates: { inapp: { title: 'Cancellation refund needs review', body: 'A cancellation refund of {{money.amount}} needs verification. Check the original Safepay payment outcome before attempting another refund. No duplicate refund was submitted.' },
+            email: { subject: `Cancellation refund needs review — ${order.orderId}`, text: `Order: ${order.orderId}\nRefund amount to verify: {{money.amount}}.\nCheck the original Safepay payment outcome before attempting another refund. No duplicate refund was submitted.` } },
           money: [require('./notificationMoneySnapshotService').snapshotMinorMoney({ key: 'amount', label: 'Cancellation refund', amountMinor: refundMinor(row),
             currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: row.refundAmountMinor === undefined ? 'amountMinor' : 'refundAmountMinor' })],
           metadata: { category: 'payment', linkTo: '/admin-dashboard/payments', data: { type: 'payment_review', orderId: id(order) } }, session });

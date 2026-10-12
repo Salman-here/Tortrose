@@ -5,6 +5,7 @@ const User = require('../models/User');
 const { sendExpoPushStrict } = require('../utils/expoPush');
 const { sendEmail } = require('./mailController');
 const { broadcastEmail } = require('../utils/emailTemplates');
+const { outboundNotificationUrl } = require('../utils/transactionalEmail');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
 const buyerEvolution = require('../services/whatsapp/evolutionClient');
 const sellerEvolution = require('../services/whatsapp/sellerEvolutionClient');
@@ -396,7 +397,7 @@ const dispatchBroadcast = async (job, { leaseToken = '' } = {}) => {
             const batch = emailRecipients.slice(i, i + BATCH_SIZE);
             const results = await Promise.all(
                 batch.map((u) =>
-                    sendEmail({ to: u.email, subject: emailData.subject, html: emailData.html })
+                    sendEmail({ to: u.email, subject: emailData.subject, html: emailData.html, text: emailData.text })
                         .then((delivery) => (
                             delivery?.success === true
                             && typeof delivery.messageId === 'string'
@@ -428,7 +429,8 @@ const dispatchBroadcast = async (job, { leaseToken = '' } = {}) => {
             const connectedConfigKeys = new Set(
                 configEntries.filter(([, config]) => config?.status === 'connected').map(([key]) => key)
             );
-            const waMessage = `*${job.title}*\n\n${job.body}${job.linkTo ? `\n\n🔗 ${process.env.FRONTEND_URL || 'https://rozare.com'}${job.linkTo}` : ''}`;
+            const waLink = outboundNotificationUrl(job.linkTo);
+            const waMessage = `*${job.title}*\n\n${job.body}${waLink ? `\n\n🔗 ${waLink}` : ''}`;
             const WA_CONCURRENCY = 5;
 
             // Await the provider attempts so the job stores successful sends,

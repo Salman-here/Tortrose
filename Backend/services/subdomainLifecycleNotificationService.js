@@ -53,19 +53,19 @@ async function enqueueSubdomainOwnershipExpiredNotification(store, {
   const templates = {
     inapp: {
       title: 'Subdomain ownership expired',
-      body: `Paid ownership of ${hostname} ended on ${dateLabel}. Renew from Seller Dashboard to protect it again.`,
+      body: `Your paid ownership of ${hostname} ended on ${dateLabel}. Renew in Subdomain settings to reserve the address again.`,
     },
     push: {
       title: 'Subdomain ownership expired',
-      body: `${hostname} is no longer protected. Open Seller Dashboard to renew.`,
+      body: `Paid ownership of ${hostname} has expired. Review renewal options in Subdomain settings.`,
     },
     email: {
-      subject: 'Subdomain ownership expired - renewal available',
-      text: `Paid ownership of ${hostname} ended on ${dateLabel}. Renew from Seller Dashboard > Subdomain to protect it again. The current price and currency are shown before checkout.`,
-      html: `<p>Paid ownership of <strong>${escapeHtml(hostname)}</strong> ended on <strong>${escapeHtml(dateLabel)}</strong>.</p><p>Renew from <strong>Seller Dashboard &gt; Subdomain</strong> to protect it again. The current price and currency are shown before checkout.</p>`,
+      subject: 'Your subdomain ownership has expired',
+      text: `Your paid ownership of ${hostname} ended on ${dateLabel}.\n\nRenew in Subdomain settings to reserve the address again. Review the current price before you pay.`,
+      html: `<p>Your paid ownership of <strong>${escapeHtml(hostname)}</strong> ended on <strong>${escapeHtml(dateLabel)}</strong>.</p><p>Renew in <strong>Subdomain settings</strong> to reserve the address again. Review the current price before you pay.</p>`,
     },
     whatsapp: {
-      message: `Subdomain Ownership Expired\n\n${hostname}\nOwnership ended: ${dateLabel}\n\nOpen Seller Dashboard > Subdomain to renew. The current price and currency are shown before checkout.`,
+      message: `*Your subdomain ownership has expired*\n\nStore address: ${hostname}\nOwnership ended: ${dateLabel}\n\nRenew in Subdomain settings to reserve the address again. Review the current price before you pay.`,
     },
   };
   return enqueueNotificationEvent({
@@ -102,19 +102,19 @@ async function enqueueSubdomainRemovedNotification(store, {
   const templates = {
     inapp: {
       title: 'Subdomain removed',
-      body: `${hostname} was released after your inactive-store grace period ended. Reactivate your store before choosing a new subdomain.`,
+      body: `${hostname} was released because your store remained inactive after the grace period. Reactivate your store, then choose an available address in Subdomain settings.`,
     },
     push: {
       title: 'Subdomain removed',
-      body: `${hostname} was released after the inactive-store grace period ended.`,
+      body: `${hostname} was released after the grace period. Reactivate your store to choose another available address.`,
     },
     email: {
-      subject: 'Your Rozare subdomain was removed',
-      text: `${hostname} was released after your inactive-store grace period ended. Reactivate your store, then open Seller Dashboard > Subdomain to choose an available replacement.`,
-      html: `<p><strong>${escapeHtml(hostname)}</strong> was released after your inactive-store grace period ended.</p><p>Reactivate your store, then open <strong>Seller Dashboard &gt; Subdomain</strong> to choose an available replacement.</p>`,
+      subject: 'Your store address has been released',
+      text: `${hostname} was released because your store remained inactive after the grace period.\n\nReactivate your store, then choose an available address in Subdomain settings.`,
+      html: `<p><strong>${escapeHtml(hostname)}</strong> was released because your store remained inactive after the grace period.</p><p>Reactivate your store, then choose an available address in <strong>Subdomain settings</strong>.</p>`,
     },
     whatsapp: {
-      message: `Subdomain Removed\n\n${hostname} was released after your inactive-store grace period ended.\n\nReactivate your store, then open Seller Dashboard > Subdomain to choose an available replacement.`,
+      message: `*Your store address has been released*\n\n${hostname} was released because your store remained inactive after the grace period.\n\nReactivate your store, then choose an available address in Subdomain settings.`,
     },
   };
   return enqueueNotificationEvent({

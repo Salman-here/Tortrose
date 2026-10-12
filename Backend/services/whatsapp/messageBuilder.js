@@ -27,6 +27,12 @@ const {
     requirePresentationMoney,
 } = require('../../utils/orderPresentation');
 const { toMinorUnits } = require('../moneyMath');
+const inlineText = (value, maxLength = 160) => String(value ?? '')
+    .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+    .replace(/[*_~`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
 
 const presentationIntegrityError = (message) => {
     const error = new Error(message);
@@ -109,14 +115,14 @@ const buildProductLine = (it, currency) => {
         lineSubtotal: it.lineSubtotal,
         quantity: qty,
     }), currency);
-    const store = itemStoreName(it);
-    const options = formatItemOptionsText(it);
-    return `- ${orderItemName(it)}${options ? ` (${options})` : ''} x${qty} - ${price}${store ? ` _(from ${store})_` : ''}`;
+    const store = inlineText(itemStoreName(it));
+    const options = inlineText(formatItemOptionsText(it), 240);
+    return `- ${inlineText(orderItemName(it))}${options ? ` (${options})` : ''} x${qty} - ${price}${store ? ` _(from ${store})_` : ''}`;
 };
 
 const buildStoresLine = (order) => {
     const names = Array.from(new Set(
-        (order.orderItems || []).map(itemStoreName).filter(Boolean)
+        (order.orderItems || []).map(item => inlineText(itemStoreName(item))).filter(Boolean)
     ));
     if (names.length === 0) return '';
     if (names.length === 1) return `🏬 Sold by: *${names[0]}*`;
@@ -149,11 +155,11 @@ exports.KEEPCANCEL_BTN_PREFIX = KEEPCANCEL_BTN_PREFIX;
 // ──────────────────────────────────────────────────────────────────────────
 
 exports.buildOrderButtonsPayload = (order) => {
-    const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
+    const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = assertCodConfirmationMoneyIntegrity(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
-    const city = order.shippingInfo?.city || 'your location';
+    const city = inlineText(order.shippingInfo?.city) || 'your location';
 
     // Build product list
     const productLines = (order.orderItems || []).map(it => buildProductLine(it, currency)).slice(0, 5);
@@ -163,9 +169,9 @@ exports.buildOrderButtonsPayload = (order) => {
     return {
         title: `Rozare — Order #${order.orderId}`,
         description: [
-            `Hey ${buyerName}! 👋`,
+            `Hi ${buyerName},`,
             ``,
-            `Thanks for your order with Rozare! 🎉`,
+            `Please confirm your cash on delivery order.`,
             ``,
             ...productLines,
             ``,
@@ -173,9 +179,9 @@ exports.buildOrderButtonsPayload = (order) => {
             `💰 Total: *${total}*`,
             `📍 Shipping to ${city}`,
             ``,
-            `Please tap a button below to confirm or cancel.`,
+            `Review the details, then choose Confirm order or Cancel order below.`,
         ].join('\n'),
-        footer: `Rozare order confirmation · Tap a button to decide`,
+        footer: `Cash on delivery · Confirmation required`,
         buttons: [
             {
                 type: 'reply',
@@ -197,11 +203,11 @@ exports.buildOrderButtonsPayload = (order) => {
 // listType (Evolution's `sendList`, fixed in the homolog/develop build).
 // ──────────────────────────────────────────────────────────────────────────
 exports.buildOrderListPayload = (order) => {
-    const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
+    const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = assertCodConfirmationMoneyIntegrity(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
-    const city = order.shippingInfo?.city || 'your location';
+    const city = inlineText(order.shippingInfo?.city) || 'your location';
 
     const productLines = (order.orderItems || []).map(it => buildProductLine(it, currency)).slice(0, 5);
     if (itemCount > 5) productLines.push(`  _...and ${itemCount - 5} more_`);
@@ -210,9 +216,9 @@ exports.buildOrderListPayload = (order) => {
     return {
         title: `Rozare — Order #${order.orderId}`,
         description: [
-            `Hey ${buyerName}! 👋`,
+            `Hi ${buyerName},`,
             ``,
-            `Thanks for your order with Rozare! 🎉`,
+            `Please confirm your cash on delivery order.`,
             ``,
             ...productLines,
             ``,
@@ -220,21 +226,21 @@ exports.buildOrderListPayload = (order) => {
             `💰 Total: *${total}*`,
             `📍 Shipping to ${city}`,
             ``,
-            `Tap the button below to confirm or cancel your order.`,
+            `Review the details, then choose Confirm order or Cancel order below.`,
         ].join('\n'),
-        buttonText: 'Confirm or Cancel',
-        footerText: 'Rozare order confirmation · choose an option to decide',
+        buttonText: 'Review order',
+        footerText: 'Cash on delivery · Confirmation required',
         sections: [{
             title: 'Your decision',
             rows: [
                 {
                     title: '✅ Confirm order',
-                    description: 'Start processing right away',
+                    description: 'Confirm your cash on delivery order',
                     rowId: exports.buildConfirmButtonId(order.orderId),
                 },
                 {
                     title: '❌ Cancel order',
-                    description: 'Nothing will be charged',
+                    description: 'Cancel this order',
                     rowId: exports.buildCancelButtonId(order.orderId),
                 },
             ],
@@ -245,20 +251,20 @@ exports.buildOrderListPayload = (order) => {
 // Plain text summary retained for legacy display/tests. The live queue does
 // not use this as a decision fallback.
 exports.buildOrderConfirmationMessage = (order) => {
-    const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
+    const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = assertCodConfirmationMoneyIntegrity(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
-    const city = order.shippingInfo?.city || 'your location';
+    const city = inlineText(order.shippingInfo?.city) || 'your location';
 
     const productLines = (order.orderItems || []).map(it => buildProductLine(it, currency)).slice(0, 5);
     if (itemCount > 5) productLines.push(`  _...and ${itemCount - 5} more_`);
     const storesLine = buildStoresLine(order);
 
     return [
-        `Hey ${buyerName}! 👋`,
+            `Hi ${buyerName},`,
         ``,
-        `Thanks for your order with Rozare! 🎉`,
+            `Please confirm your cash on delivery order.`,
         ``,
         `📦 *Order #${order.orderId}*`,
         ``,
@@ -268,9 +274,7 @@ exports.buildOrderConfirmationMessage = (order) => {
         `💰 Total: *${total}*`,
         `📍 Shipping to ${city}`,
         ``,
-        `Please confirm your order from the WhatsApp buttons message.`,
-        ``,
-        `Typed replies are not accepted for order confirmation.`,
+        `Use the Confirm order or Cancel order buttons in your latest order message.`,
     ].join('\n');
 };
 
@@ -323,25 +327,25 @@ exports.buildPollPayload = (order) => ({
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Info-only message for online-paid (Stripe) orders. The buyer already
+// Info-only message for online-paid orders. The buyer already
 // committed by paying, so we DON'T ask them to confirm again — we just let
 // them know the order is placed, list the items + stores, and thank them.
 // ──────────────────────────────────────────────────────────────────────────
 exports.buildOrderPlacedInfoMessage = (order) => {
-    const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
+    const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = orderCurrency(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
-    const city = order.shippingInfo?.city || 'your location';
+    const city = inlineText(order.shippingInfo?.city) || 'your location';
 
     const productLines = (order.orderItems || []).map(it => buildProductLine(it, currency)).slice(0, 5);
     if (itemCount > 5) productLines.push(`  _...and ${itemCount - 5} more_`);
     const storesLine = buildStoresLine(order);
 
     return [
-        `Hey ${buyerName}! 👋`,
+        `Hi ${buyerName},`,
         ``,
-        `Your payment was successful — your order is confirmed! 🎉`,
+        `Thank you for your order. Your payment is confirmed.`,
         ``,
         `📦 *Order #${order.orderId}*`,
         ``,
@@ -351,8 +355,8 @@ exports.buildOrderPlacedInfoMessage = (order) => {
         `💰 Total paid: *${total}*`,
         `📍 Shipping to ${city}`,
         ``,
-        `We'll keep you posted as your order is prepared and shipped.`,
-        `Thank you for shopping with Rozare! 💜`,
+        `You will receive updates as your items are prepared and shipped.`,
+        `Track your order: https://rozare.com/track-order`,
     ].join('\n');
 };
 
@@ -363,24 +367,24 @@ exports.buildOrderPlacedInfoMessage = (order) => {
 // ──────────────────────────────────────────────────────────────────────────
 const STATUS_UPDATE_LINES = {
     confirmed: {
-        headline: `Your order has been confirmed! ✅`,
-        detail: `The seller has accepted your order and will start preparing it soon.`,
+        headline: `Your order is confirmed ✅`,
+        detail: `You will receive updates as your items are prepared and shipped.`,
     },
     processing: {
-        headline: `Your order is being prepared! 📦`,
-        detail: `The seller is packing your items now — shipping is next.`,
+        headline: `Your order is being prepared 📦`,
+        detail: `Check your order for the latest preparation and delivery updates.`,
     },
     shipped: {
-        headline: `Your order is on the way! 🚚`,
-        detail: `It has been handed to the courier and is heading to you.`,
+        headline: `Your order is on the way 🚚`,
+        detail: `Check your order for shipment and tracking details.`,
     },
     delivered: {
-        headline: `Your order has been delivered! 🎉`,
-        detail: `We hope you love it. Need to return something? You can request a return from your Rozare account.`,
+        headline: `Your order was marked delivered`,
+        detail: `Review your order for delivery details and any available return options.`,
     },
     cancelled: {
         headline: `Your order has been cancelled. ❌`,
-        detail: `Nothing more is needed from you. If this is unexpected, please contact Rozare support or the store.`,
+        detail: `Check your order for cancellation and any refund details.`,
     },
 };
 
@@ -388,11 +392,11 @@ exports.buildOrderStatusUpdateMessage = (order, status) => {
     const lines = STATUS_UPDATE_LINES[String(status || '').toLowerCase()];
     if (!lines) return '';
 
-    const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
+    const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const storesLine = buildStoresLine(order);
 
     return [
-        `Hey ${buyerName}! 👋`,
+        `Hi ${buyerName},`,
         ``,
         lines.headline,
         ``,
@@ -401,7 +405,7 @@ exports.buildOrderStatusUpdateMessage = (order, status) => {
         ``,
         lines.detail,
         ``,
-        `Track it anytime in your Rozare account. 💜`,
+        `Track your order: https://rozare.com/track-order`,
     ].join('\n');
 };
 
@@ -409,7 +413,7 @@ exports.buildOrderStatusUpdateMessage = (order, status) => {
 // Re-confirm buttons payload — sent when buyer taps confirm on a cancelled order
 // ──────────────────────────────────────────────────────────────────────────
 exports.buildReconfirmButtonsPayload = (order, contextMessage) => {
-    const buyerName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
+    const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const currency = orderCurrency(order);
     const total = formatMoney(order.orderSummary?.totalAmount, currency);
     const itemCount = order.orderItems?.length || 0;
@@ -419,17 +423,17 @@ exports.buildReconfirmButtonsPayload = (order, contextMessage) => {
     const storesLine = buildStoresLine(order);
 
     return {
-        title: `Re-confirm Order #${order.orderId}?`,
+        title: `Confirm Order #${order.orderId} again?`,
         description: [
-            contextMessage || `Hey ${buyerName}! This order was cancelled.`,
+            contextMessage || `Hi ${buyerName}, this order was cancelled.`,
             ``,
-            `Here's what was in your order:`,
+            `Review the order details:`,
             ...productLines,
             ``,
             ...(storesLine ? [storesLine] : []),
             `💰 Total: *${total}*`,
             ``,
-            `Are you sure you want to confirm this order again?`,
+            `Choose whether to confirm this cash on delivery order again or keep it cancelled.`,
         ].join('\n'),
         footer: `Rozare · Tap a button to decide`,
         buttons: [

@@ -2,8 +2,8 @@
  * Email HTML templates for order-related notifications.
  */
 
-const brandColor = '#6366f1';
-const bgColor = '#f8fafc';
+const brandColor = '#4f46e5';
+const { outboundNotificationUrl, renderTransactionalEmail, trustedRozareUrl } = require('./transactionalEmail');
 
 const {
   escapeHtml,
@@ -15,26 +15,12 @@ const {
   paymentMethodLabel,
 } = require('./orderPresentation');
 
-const frontendUrl = () => process.env.FRONTEND_URL || 'https://rozare.com';
+const frontendUrl = () => {
+  const configured = trustedRozareUrl(process.env.FRONTEND_URL || 'https://rozare.com');
+  return configured ? new URL(configured).origin : 'https://rozare.com';
+};
 
-const wrapper = (content) => `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:${bgColor};font-family:Arial,Helvetica,sans-serif;">
-<div style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-  <div style="background:linear-gradient(135deg,${brandColor},#8b5cf6);padding:32px;text-align:center;">
-    <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">Rozare</h1>
-  </div>
-  <div style="padding:32px 28px;">
-    ${content}
-  </div>
-  <div style="background:#f1f5f9;padding:20px 28px;text-align:center;">
-    <p style="margin:0;color:#94a3b8;font-size:12px;">&copy; ${new Date().getFullYear()} Rozare. All rights reserved.</p>
-  </div>
-</div>
-</body>
-</html>`;
+const wrapper = (content) => renderTransactionalEmail({ body: content, preheader: 'A personal update from Rozare' });
 
 const orderMoneyForEmail = (order) => {
   const currency = getOrderCurrency(order);
@@ -119,11 +105,11 @@ exports.orderConfirmationEmail = (order) => ({
 
 exports.orderStatusUpdateEmail = (order, newStatus) => {
   const statusLabels = {
-    confirmed: { label: 'Confirmed', color: '#22c55e', msg: 'Your order has been confirmed and is being prepared.' },
-    processing: { label: 'Processing', color: '#f59e0b', msg: 'Your order is now being processed.' },
-    shipped: { label: 'Shipped', color: '#3b82f6', msg: 'Your order has been shipped and is on its way.' },
-    delivered: { label: 'Delivered', color: '#22c55e', msg: 'Your order has been delivered successfully.' },
-    cancelled: { label: 'Cancelled', color: '#ef4444', msg: 'Your order has been cancelled.' },
+    confirmed: { label: 'Confirmed', color: '#22c55e', msg: 'Your order is confirmed. You will receive updates as your items are prepared and shipped.' },
+    processing: { label: 'Processing', color: '#f59e0b', msg: 'Your order is being prepared. Watch for a shipping update.' },
+    shipped: { label: 'Shipped', color: '#3b82f6', msg: 'Your order was marked as shipped. Check your order details for delivery progress.' },
+    delivered: { label: 'Delivered', color: '#22c55e', msg: 'Your order was marked as delivered. Check its details for any available return options.' },
+    cancelled: { label: 'Cancelled', color: '#ef4444', msg: 'Your order was cancelled. Check its details for any applicable refund update.' },
   };
 
   const info = statusLabels[newStatus] || {
@@ -173,11 +159,11 @@ exports.newOrderSellerEmail = (order, sellerName) => ({
 });
 
 exports.sellerAccountCreatedEmail = (userName) => ({
-  subject: 'Your Seller Account is Ready!',
+  subject: 'Your Rozare seller account was created',
   html: wrapper(`
     <div style="text-align:center;margin-bottom:24px;">
-      <h2 style="color:#1e293b;margin:12px 0 8px;">Welcome, Seller ${escapeHtml(userName)}!</h2>
-      <p style="color:#64748b;margin:0 0 24px;">Your seller account has been successfully created on Rozare.</p>
+      <h2 style="color:#1e293b;margin:12px 0 8px;">Welcome, ${escapeHtml(userName)}!</h2>
+      <p style="color:#64748b;margin:0 0 24px;">Your seller account was created. Complete your store setup before you start receiving orders. Store visibility depends on your settings, content checks and subscription status.</p>
     </div>
     <div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:24px;">
       <h3 style="color:#1e293b;margin:0 0 12px;font-size:15px;">What's Next?</h3>
@@ -185,11 +171,11 @@ exports.sellerAccountCreatedEmail = (userName) => ({
         <li>Set up your store from the Seller Dashboard</li>
         <li>Add your first products</li>
         <li>Configure shipping methods</li>
-        <li>Start receiving orders</li>
+        <li>Review your store visibility and subscription</li>
       </ul>
     </div>
     <div style="text-align:center;">
-      <a href="${escapeHtml(`${frontendUrl()}/seller-dashboard`)}" style="display:inline-block;background:linear-gradient(135deg,${brandColor},#8b5cf6);color:#fff;padding:12px 32px;border-radius:10px;text-decoration:none;font-weight:600;">Go to Seller Dashboard</a>
+      <a href="${escapeHtml(`${frontendUrl()}/seller-dashboard`)}" style="display:inline-block;background:#0ea5e9;background-image:linear-gradient(110deg,#14b8a6,#0ea5e9,#6366f1);color:#fff;padding:12px 32px;border-radius:10px;text-decoration:none;font-weight:600;">Continue store setup</a>
     </div>
   `),
 });
@@ -231,22 +217,18 @@ exports.sellerOrderConfirmedByBuyerEmail = (order, sellerName) => ({
     <p style="color:#64748b;margin:0;line-height:1.6;">
       <strong style="color:#1e293b;">Customer:</strong> ${escapeHtml(order.shippingInfo?.fullName)}<br/>
       <strong style="color:#1e293b;">Total:</strong> ${orderMoneyForEmail(order)(order.orderSummary?.totalAmount)}<br/>
-      <strong style="color:#1e293b;">Confirmed at:</strong> ${escapeHtml(new Date(order.confirmation?.confirmedAt || Date.now()).toLocaleString())}
+      ${order.confirmation?.confirmedAt && Number.isFinite(new Date(order.confirmation.confirmedAt).getTime()) ? `<strong style="color:#1e293b;">Confirmed at:</strong> ${escapeHtml(new Date(order.confirmation.confirmedAt).toISOString().replace('T', ' ').slice(0, 16))} UTC` : ''}
     </p>
     <p style="color:#64748b;margin:20px 0 0;font-size:13px;text-align:center;">The order status is now <strong>Confirmed</strong>. You can begin processing it.</p>
   `),
 });
 
 exports.welcomeEmail = (userName) => ({
-  subject: 'Welcome to Rozare!',
-  html: wrapper(`
-    <h2 style="color:#1e293b;margin:0 0 8px;">Welcome, ${escapeHtml(userName)}!</h2>
-    <p style="color:#64748b;margin:0 0 24px;">Thanks for joining Rozare. We're excited to have you on board.</p>
-    <p style="color:#64748b;margin:0 0 24px;">Browse products from independent sellers and brands, with secure checkout and helpful order updates.</p>
-    <div style="text-align:center;">
-      <a href="${escapeHtml(frontendUrl())}" style="display:inline-block;background:linear-gradient(135deg,${brandColor},#8b5cf6);color:#fff;padding:12px 32px;border-radius:10px;text-decoration:none;font-weight:600;">Start Shopping</a>
-    </div>
-  `),
+  subject: 'Welcome to Rozare',
+  text: `Hello ${String(userName || 'there').replace(/[\r\n\t]+/g, ' ').trim()},\n\nYour Rozare account is ready. Discover products and stores, save your favourites, and follow your orders from your account.\n\nStart shopping: ${frontendUrl()}/products`,
+  html: renderTransactionalEmail({ title: 'Welcome to Rozare', preheader: 'Your account is ready. Find your next favourite.',
+    body: `<p>Hello ${escapeHtml(userName || 'there')},</p><p>Your Rozare account is ready. Discover products and stores, save your favourites, and follow your orders from your account.</p>`,
+    actionUrl: `${frontendUrl()}/products`, actionLabel: 'Start shopping' }),
 });
 
 exports.broadcastEmail = (title, body, category, linkTo) => {
@@ -254,24 +236,19 @@ exports.broadcastEmail = (title, body, category, linkTo) => {
     announcement: 'Announcement',
     promo: 'Promotion',
     system: 'System Update',
+    order: 'Order update',
+    seller: 'Seller update',
   };
-  const safeTitle = escapeHtml(title);
   const safeBody = escapeHtml(body).replace(/\n/g, '<br/>');
   const label = labelMap[category] || 'Message';
-  const href = linkTo ? `${frontendUrl()}${linkTo}` : '';
-  const ctaButton = href
-    ? `<div style="text-align:center;margin-top:24px;">
-        <a href="${escapeHtml(href)}" style="display:inline-block;background:linear-gradient(135deg,${brandColor},#8b5cf6);color:#fff;padding:12px 32px;border-radius:10px;text-decoration:none;font-weight:600;">View Details</a>
-      </div>`
-    : '';
+  const href = outboundNotificationUrl(linkTo);
 
   return {
     subject: title,
-    html: wrapper(`
+    text: `${title}\n\n${body}${href ? `\n\nView details: ${href}` : ''}`,
+    html: renderTransactionalEmail({ title, body: `
       <p style="color:#94a3b8;margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${label}</p>
-      <h2 style="color:#1e293b;margin:0 0 16px;">${safeTitle}</h2>
       <p style="color:#64748b;margin:0 0 24px;line-height:1.6;">${safeBody}</p>
-      ${ctaButton}
-    `),
+    `, actionUrl: href, actionLabel: 'View details' }),
   };
 };

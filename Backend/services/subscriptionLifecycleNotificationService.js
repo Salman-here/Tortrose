@@ -85,12 +85,12 @@ async function enqueueTrialExpiringNotification(subscription, {
   }
   const freePeriodDays = requirePeriodDays(pricing.starterFreePeriodDays, 'Starter introductory period');
   const endDate = dateLabel(trialEnd);
-  const introAvailable = !subscription?.hasUsedFreePeriod;
+  const introAvailable = !subscription?.hasUsedFreePeriod && freePeriodDays > 0;
   const introText = introAvailable
-    ? ` A one-time ${freePeriodDays}-day Starter introductory period is still available after Checkout.`
-    : ' This seller has already used the one-time introductory period.';
-  const stateText = `Your seller trial ends on ${endDate}. Subscribe to keep your store visible.${introText} Starter is {{money.starter_standard}} per month. If FIRST100 is available and accepted at Checkout, the founder rate is {{money.starter_founder}} per month.`;
-  const title = 'Seller trial ending soon';
+    ? ` You can still start a one-time ${freePeriodDays}-day free introductory period on Starter.`
+    : subscription?.hasUsedFreePeriod ? ' Your one-time introductory period has already been used.' : '';
+  const stateText = `Your seller trial ends on ${endDate}. Choose a subscription to keep your store visible.${introText} Starter costs {{money.starter_standard}} per month. If you qualify for the FIRST100 offer at checkout, your monthly rate will be {{money.starter_founder}}.`;
+  const title = 'Your seller trial is ending soon';
   return enqueueNotificationEvent({
     eventKey: `subscription:${id}:trial-expiring:${eventHash(trialEnd.toISOString())}:seller:v2`,
     eventType: 'subscription.trial_expiring',
@@ -105,10 +105,10 @@ async function enqueueTrialExpiringNotification(subscription, {
       push: { title, body: stateText },
       email: {
         subject: title,
-        text: `${stateText} Open Seller Dashboard > Subscription to subscribe.`,
-        html: `<p>${escapeHtml(stateText)}</p><p>Open <strong>Seller Dashboard &gt; Subscription</strong> to subscribe.</p>`,
+        text: `${stateText}\n\nReview your plans in Subscription.`,
+        html: `<p>${escapeHtml(stateText)}</p><p>Review your plans in <strong>Subscription</strong>.</p>`,
       },
-      whatsapp: { message: `Trial Ending Soon\n\n${stateText}\n\nOpen Seller Dashboard > Subscription to subscribe.` },
+      whatsapp: { message: `*Your seller trial is ending soon*\n\n${stateText}\n\nReview your plans in Subscription.` },
     },
     metadata: {
       category: 'subscription',
@@ -151,10 +151,10 @@ async function enqueueTrialBlockedNotification(subscription, {
   const id = stringId(subscription?._id);
   const trialEnd = requireDate(subscription?.trialEndDate, 'Trial end');
   const introText = subscription?.hasUsedFreePeriod
-    ? 'The one-time subscription introductory period was already used.'
-    : 'Your one-time Starter introductory period remains available at Checkout.';
+    ? 'Your one-time introductory period has already been used.'
+    : 'Your one-time Starter introductory period is still available when you subscribe.';
   const stateText = `Your seller trial ended and your store is hidden until you subscribe. ${introText}`;
-  const title = 'Store blocked - seller trial ended';
+  const title = 'Your seller trial has ended';
   return enqueueNotificationEvent({
     eventKey: `subscription:${id}:trial-blocked:${eventHash(trialEnd.toISOString())}:seller:v2`,
     eventType: 'subscription.trial_blocked',
@@ -169,10 +169,10 @@ async function enqueueTrialBlockedNotification(subscription, {
       push: { title, body: stateText },
       email: {
         subject: title,
-        text: `${stateText} Open Seller Dashboard > Subscription to reactivate your store.`,
-        html: `<p>${escapeHtml(stateText)}</p><p>Open <strong>Seller Dashboard &gt; Subscription</strong> to reactivate your store.</p>`,
+        text: `${stateText}\n\nChoose a plan in Subscription to reactivate your store.`,
+        html: `<p>${escapeHtml(stateText)}</p><p>Choose a plan in <strong>Subscription</strong> to reactivate your store.</p>`,
       },
-      whatsapp: { message: `Store Blocked\n\n${stateText}\n\nOpen Seller Dashboard > Subscription to reactivate your store.` },
+      whatsapp: { message: `*Your seller trial has ended*\n\n${stateText}\n\nChoose a plan in Subscription to reactivate your store.` },
     },
     metadata: {
       category: 'subscription',
@@ -229,9 +229,9 @@ async function enqueueSubscriptionEndingNotification(subscription, {
     providerData = { stripeSubscriptionId };
   }
   const founderText = subscription?.founderOffer?.active
-    ? ' The FIRST100 founder rate is forfeited only when this subscription actually ends.'
+    ? ' Your FIRST100 founder rate will end with this subscription.'
     : '';
-  const stateText = `Your subscription is scheduled to end on ${dateLabel(periodEnd)}. Your store will be hidden after the current access period ends.${founderText}`;
+  const stateText = `Your subscription is scheduled to end on ${dateLabel(periodEnd)} because automatic renewal is turned off. Your store will be hidden when this period ends.${founderText}`;
   const title = 'Subscription ending soon';
   return enqueueNotificationEvent({
     eventKey: `subscription:${id}:ending:${identity}:seller:v2`,
@@ -247,10 +247,10 @@ async function enqueueSubscriptionEndingNotification(subscription, {
       push: { title, body: stateText },
       email: {
         subject: title,
-        text: `${stateText} Open Seller Dashboard > Subscription if you want to resume.`,
-        html: `<p>${escapeHtml(stateText)}</p><p>Open <strong>Seller Dashboard &gt; Subscription</strong> if you want to resume.</p>`,
+        text: `${stateText}\n\nResume automatic renewal in Subscription before the end date to keep your plan.`,
+        html: `<p>${escapeHtml(stateText)}</p><p>Resume automatic renewal in <strong>Subscription</strong> before the end date to keep your plan.</p>`,
       },
-      whatsapp: { message: `Subscription Ending Soon\n\n${stateText}\n\nOpen Seller Dashboard > Subscription if you want to resume.` },
+      whatsapp: { message: `*Subscription ending soon*\n\n${stateText}\n\nResume automatic renewal in Subscription before the end date to keep your plan.` },
     },
     metadata: {
       category: 'subscription',
@@ -289,21 +289,21 @@ async function enqueueBonusLifecycleNotification(subscription, {
     throw outboxError('Bonus lifecycle pricing does not own this transition.', 'SUBSCRIPTION_LIFECYCLE_PRICE_STALE');
   }
   const freePeriodDays = requirePeriodDays(pricing.eliteFreePeriodDays, 'Elite introductory period');
-  const introText = subscription?.hasUsedFreePeriod
-    ? 'No new introductory period will be added.'
-    : `A one-time ${freePeriodDays}-day Elite introductory period remains available at Checkout.`;
+  const introText = subscription?.hasUsedFreePeriod || freePeriodDays === 0
+    ? ''
+    : ` A one-time ${freePeriodDays}-day Elite introductory period is still available when you subscribe.`;
   const titleByKind = {
     expiring: 'Bonus features ending soon',
     expired: 'Bonus features expired',
-    removed: 'Bonus features permanently removed',
+    removed: 'Starter bonus features no longer available',
   };
   const stateByKind = {
-    expiring: `Your Starter bonus features end on ${dateLabel(anchor)}.`,
-    expired: 'Your Starter bonus features ended; core Starter features remain available while the subscription is active.',
-    removed: 'The bonus grace period ended. Bonus features are no longer available on Starter.',
+    expiring: `Your included Starter bonus features end on ${dateLabel(anchor)}. Your core Starter features will remain available while your subscription is active.`,
+    expired: 'Your Starter bonus features have ended. Your core Starter features remain available while your subscription is active.',
+    removed: 'The grace period for your Starter bonus features has ended. These features are no longer available on Starter.',
   };
   const title = titleByKind[kind];
-  const stateText = `${stateByKind[kind]} Rozare Elite is {{money.elite_price}} per month for your persisted pricing eligibility. ${introText}`;
+  const stateText = `${stateByKind[kind]} You can access these features with Rozare Elite at {{money.elite_price}} per month.${introText}`;
   return enqueueNotificationEvent({
     eventKey: `subscription:${id}:bonus-${kind}:${eventHash(anchor.toISOString())}:seller:v2`,
     eventType: `subscription.bonus_${kind}`,
@@ -318,10 +318,10 @@ async function enqueueBonusLifecycleNotification(subscription, {
       push: { title, body: stateText },
       email: {
         subject: title,
-        text: `${stateText} Open Seller Dashboard > Subscription to review Elite.`,
-        html: `<p>${escapeHtml(stateText)}</p><p>Open <strong>Seller Dashboard &gt; Subscription</strong> to review Elite.</p>`,
+        text: `${stateText}\n\nReview the Elite plan in Subscription.`,
+        html: `<p>${escapeHtml(stateText)}</p><p>Review the Elite plan in <strong>Subscription</strong>.</p>`,
       },
-      whatsapp: { message: `${title}\n\n${stateText}\n\nOpen Seller Dashboard > Subscription to review Elite.` },
+      whatsapp: { message: `*${title}*\n\n${stateText}\n\nReview the Elite plan in Subscription.` },
     },
     metadata: {
       category: 'subscription',
@@ -374,8 +374,8 @@ async function enqueuePlanChangeNotification(subscription, {
   );
   const title = kind === 'completed' ? `${planName} activated` : 'Payment authentication required';
   const stateText = kind === 'completed'
-    ? `Your ${planName} plan change is active at {{money.target_monthly_price}} per month.`
-    : `Your requested ${planName} change at {{money.target_monthly_price}} per month is waiting for Stripe payment authentication. Your current plan remains unchanged.`;
+    ? `Your ${planName} plan is now active at {{money.target_monthly_price}} per month.`
+    : `Complete the payment verification to switch to ${planName} at {{money.target_monthly_price}} per month. Your current plan has not changed.`;
   const eventIdentity = kind === 'completed' ? attemptToken : `${attemptToken}:${invoiceId}`;
   return enqueueNotificationEvent({
     eventKey: `subscription:${id}:plan-change-${kind}:${eventHash(eventIdentity)}:seller:v2`,
@@ -391,10 +391,10 @@ async function enqueuePlanChangeNotification(subscription, {
       push: { title, body: stateText },
       email: {
         subject: title,
-        text: `${stateText} Open Seller Dashboard > Subscription for details.`,
-        html: `<p>${escapeHtml(stateText)}</p><p>Open <strong>Seller Dashboard &gt; Subscription</strong> for details.</p>`,
+        text: `${stateText}\n\nReview your plan in Subscription.`,
+        html: `<p>${escapeHtml(stateText)}</p><p>Review your plan in <strong>Subscription</strong>.</p>`,
       },
-      whatsapp: { message: `${title}\n\n${stateText}\n\nOpen Seller Dashboard > Subscription for details.` },
+      whatsapp: { message: `*${title}*\n\n${stateText}\n\nReview your plan in Subscription.` },
     },
     metadata: {
       category: 'subscription',
@@ -434,7 +434,7 @@ async function enqueueSubscriptionPaymentFailureNotification(subscription, {
   ) throw outboxError('Payment-failure notification no longer owns subscription risk.', 'SUBSCRIPTION_PAYMENT_FAILURE_STALE');
   const occurredAt = requireDate(failure?.occurredAt, 'Payment failure timestamp');
   const planName = safeText(failure?.planName || 'Rozare subscription', 120);
-  const stateText = `Stripe could not collect {{money.amount_outstanding}} for your ${planName} subscription. Subscription access is paused until payment succeeds.`;
+  const stateText = `Your payment of {{money.amount_outstanding}} for ${planName} was unsuccessful. Subscription access is paused until payment is completed.`;
   const title = 'Subscription payment failed';
   return enqueueNotificationEvent({
     eventKey: `subscription:${id}:payment-failed:${eventHash(invoiceId)}:seller:v2`,
@@ -450,10 +450,10 @@ async function enqueueSubscriptionPaymentFailureNotification(subscription, {
       push: { title, body: stateText },
       email: {
         subject: title,
-        text: `${stateText} Open Seller Dashboard > Subscription to update payment.`,
-        html: `<p>${escapeHtml(stateText)}</p><p>Open <strong>Seller Dashboard &gt; Subscription</strong> to update payment.</p>`,
+        text: `${stateText}\n\nReview your payment method and retry in Subscription.`,
+        html: `<p>${escapeHtml(stateText)}</p><p>Review your payment method and retry in <strong>Subscription</strong>.</p>`,
       },
-      whatsapp: { message: `Subscription Payment Failed\n\n${stateText}\n\nOpen Seller Dashboard > Subscription to update payment.` },
+      whatsapp: { message: `*Subscription payment unsuccessful*\n\n${stateText}\n\nReview your payment method and retry in Subscription.` },
     },
     metadata: {
       category: 'subscription',
@@ -522,21 +522,21 @@ async function enqueueSubscriptionActivationNotification(subscription, {
     ? `Switched to ${planName}`
     : `${planName} activated`;
   const stateText = freePeriodDays > 0
-    ? `Your ${planName} subscription is active with a ${freePeriodDays}-day introductory period. The recurring price afterward is {{money.recurring_price}} per month.`
+    ? `Your ${planName} subscription is active with a ${freePeriodDays}-day free introductory period. Your monthly price afterward will be {{money.recurring_price}}.`
     : `Your ${planName} subscription is active at {{money.recurring_price}} per month.`;
   const templates = {
     inapp: { title, body: stateText },
     push: { title, body: stateText },
     email: {
       subject: title,
-      text: `${stateText} Open Seller Dashboard > Subscription for billing details.`,
+      text: `${stateText}\n\nReview your billing dates and payment method in Subscription.`,
       html: `<p>${escapeHtml(stateText).replace(
         escapeHtml('{{money.recurring_price}}'),
         '<strong>{{money.recurring_price}}</strong>'
-      )}</p><p>Open <strong>Seller Dashboard &gt; Subscription</strong> for billing details.</p>`,
+      )}</p><p>Review your billing dates and payment method in <strong>Subscription</strong>.</p>`,
     },
     whatsapp: {
-      message: `${title}\n\n${stateText}\n\nOpen Seller Dashboard > Subscription for billing details.`,
+      message: `*${title}*\n\n${stateText}\n\nReview your billing dates and payment method in Subscription.`,
     },
   };
   const sourceHash = crypto.createHash('sha256').update(sourceReference).digest('hex');
@@ -629,12 +629,12 @@ async function enqueueSubscriptionDowngradeScheduledNotification(subscription, {
 
   const planName = safeText(pending?.targetPlanName, 120);
   const founderSentence = pending.founderRateApplied
-    ? ` Your locked founder-rate basis (${pending.founderDiscountPercent}% offer) is included in this quote.`
+    ? ` Your ${pending.founderDiscountPercent}% founder discount is included.`
     : '';
   const bonusSentence = pending.starterBonusEligible
     ? ' Your one-time six-month Starter bonus will begin only after the first Starter payment succeeds.'
-    : ' No new Starter bonus period will be added because the one-time bonus was already used.';
-  const stateText = `Your downgrade from Rozare Elite to ${planName} is scheduled for the end of the current Elite billing period. The frozen Starter recurring price is {{money.recurring_price}} per month.${founderSentence}${bonusSentence}`;
+    : ' Your one-time Starter bonus has already been used.';
+  const stateText = `Your plan will switch from Rozare Elite to ${planName} at the end of your current billing period. Your new monthly price will be {{money.recurring_price}}.${founderSentence}${bonusSentence}`;
   const title = 'Downgrade to Starter scheduled';
   const templates = {
     inapp: { title, body: stateText },
@@ -648,7 +648,7 @@ async function enqueueSubscriptionDowngradeScheduledNotification(subscription, {
       )}</p><p>You can cancel the downgrade from <strong>Seller Dashboard &gt; Subscription</strong> before the Elite period ends.</p>`,
     },
     whatsapp: {
-      message: `Downgrade Scheduled\n\n${stateText}\n\nOpen Seller Dashboard > Subscription to review or cancel it.`,
+      message: `*Downgrade to Starter scheduled*\n\n${stateText}\n\nReview or cancel this change in Subscription before your Elite period ends.`,
     },
   };
   const operationHash = crypto.createHash('sha256').update(operationKey).digest('hex');

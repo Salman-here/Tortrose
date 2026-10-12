@@ -8,6 +8,7 @@ const { cancelUnpaidOrderLocally } = require('./orderCancellationService');
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { externalRefundCapability, requireExternalRefundRail } = require('./safepayRefundCapabilityService');
+const { escapeHtml } = require('../utils/orderPresentation');
 
 const isFulfillmentFailure = error => ['ORDER_STOCK_CHANGED', 'CHECKOUT_REPRICE_REQUIRED', 'STORE_DELIVERY_UNAVAILABLE',
   'SAFEPAY_SELLER_UNAVAILABLE', 'SAFEPAY_OPTIONS_CHANGED', 'SAFEPAY_ORDER_INTENT_CLOSED', 'SAFEPAY_ORDER_SETTLEMENT_CONFLICT'].includes(error?.code)
@@ -30,11 +31,11 @@ async function schedule(paymentId, reasonCode) {
     // provider checkout is closed; the captured amount has a durable refund.
     const external = externalRefundCapability(payment.paymentRail);
     await cancelUnpaidOrderLocally({ orderId: order._id, externalPaymentClosed: true, session,
-      reason: external.available ? 'The payment arrived after the order could no longer be fulfilled. A refund is being verified.'
-        : 'The payment arrived after the order could no longer be fulfilled. The refund requires support review.',
+      reason: external.available ? 'Payment was received, but this order could not be fulfilled. A refund is being verified.'
+        : 'Payment was received, but this order could not be fulfilled. Rozare needs to review the refund.',
       paymentFailure: { code: 'SAFEPAY_SAFETY_REFUND_PENDING', message: external.available
-        ? 'Your payment could not complete this order. A refund to the original card is being verified.'
-        : 'Your payment could not complete this order. The captured amount is owed back to you and requires support review; no bank refund has been confirmed.' } });
+        ? 'Your payment was received, but this order could not be fulfilled. A refund to your original card is being verified.'
+        : 'Your payment was received, but this order could not be fulfilled. You are owed a refund. Rozare needs to review how to return it; no bank refund has been confirmed.' } });
     return payment;
   });
 }
@@ -87,12 +88,13 @@ async function notifyRefundReview(payment, { notSubmitted = false } = {}) {
     for (const admin of admins) await enqueueNotificationEvent({ eventKey: `safepay:${payment._id}:refund-review:${admin._id}:v1`,
       eventType: 'payment.refund_review_required', aggregateType: 'SafepayPayment', aggregateId: payment._id, occurredAt: at,
       financial: true, recipient: { kind: 'user', audienceRole: 'admin', user: admin._id, destinationPolicy: 'current_user' },
-      channels: ['inapp', 'email'], templates: { inapp: { title: 'Safepay refund needs verification', body: notSubmitted
-        ? 'Payment {{money.amount}} is owed back to the buyer. Automatic refund was not submitted; review the original method and arrange a supported resolution.'
-        : 'Payment {{money.amount}} needs refund reconciliation. Do not submit another refund until its provider outcome is checked.' },
-        email: { subject: 'Safepay refund needs verification', text: notSubmitted
-          ? `Payment ${payment._id} for {{money.amount}} is owed back to the buyer. No automatic bank refund was submitted. Review and arrange a supported resolution.`
-          : `Payment ${payment._id} for {{money.amount}} requires reconciliation. No duplicate refund was attempted.` } },
+      channels: ['inapp', 'email'], templates: { inapp: { title: 'Payment refund needs review', body: notSubmitted
+        ? 'A buyer is owed {{money.amount}}. No automatic bank refund was submitted. Review the original payment method and arrange an appropriate refund.'
+        : 'A buyer refund of {{money.amount}} needs verification. Check the Safepay payment outcome before attempting another refund.' },
+        email: { subject: 'Payment refund needs review', text: notSubmitted
+          ? `Payment: ${payment._id}\nAmount owed to the buyer: {{money.amount}}.\nNo automatic bank refund was submitted. Review the original payment method and arrange an appropriate refund.`
+          : `Payment: ${payment._id}\nAmount to verify: {{money.amount}}.\nCheck the Safepay refund outcome before attempting another refund. No duplicate refund was attempted.`,
+          html: `<p>Payment: <strong>${escapeHtml(String(payment._id))}</strong></p><p>${notSubmitted ? 'Amount owed to the buyer' : 'Amount to verify'}: <strong>{{money.amount}}</strong>.</p><p>${notSubmitted ? 'No automatic bank refund was submitted. Review the original payment method and arrange an appropriate refund.' : 'Check the Safepay refund outcome before attempting another refund. No duplicate refund was attempted.'}</p>` } },
       money: [snapshotMinorMoney({ key: 'amount', label: 'Original payment', amountMinor: payment.amountMinor, currency: payment.currency,
         sourceModel: 'SafepayPayment', sourceDocumentId: payment._id, sourcePath: 'amountMinor' })],
       metadata: { category: 'payment', linkTo: '/admin-dashboard/payments', data: { type: 'payment_review', paymentId: String(payment._id) } } });

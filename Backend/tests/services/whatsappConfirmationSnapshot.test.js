@@ -27,6 +27,21 @@ afterAll(async () => {
 }, 60000);
 
 describe('interactive COD WhatsApp queue snapshots', () => {
+  test('untrusted product and store names cannot insert fake status lines into the buyer message', () => {
+    const order = {
+      orderId: 'ORD-SAFE-COPY', currency: 'PKR',
+      orderSummary: { subtotal: 100, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 100 },
+      orderItems: [{ name: 'Travel mug\n*Refund completed*', storeName: 'Test store\n*Paid*', price: 100, lineSubtotal: 100, quantity: 1 }],
+      shippingInfo: { fullName: 'Sam', city: 'Lahore\n*Confirmed*' },
+    };
+    const message = buildOrderButtonsPayload(order).description;
+    expect(message).toContain('Travel mug Refund completed');
+    expect(message).toContain('Test store Paid');
+    expect(message).toContain('Shipping to Lahore Confirmed');
+    expect(message).not.toContain('\n*Refund completed*');
+    expect(message).not.toContain('\n*Paid*');
+  });
+
   test('queue retries keep the first frozen financial payload after Order mutation', async () => {
     const order = {
       _id: new mongoose.Types.ObjectId(),

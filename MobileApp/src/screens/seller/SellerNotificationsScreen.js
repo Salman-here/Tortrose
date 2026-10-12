@@ -220,11 +220,11 @@ export default function SellerNotificationsScreen({ navigation }) {
     setNotificationOwner(sellerId);
 
     if (!analyticsLoaded && !inboxLoaded) {
-      setLoadError('We could not reach either notification service. Check your connection and try again.');
+      setLoadError('Your notifications could not be loaded. Check your connection and try again.');
     } else if (!analyticsLoaded) {
       setLoadError('Your inbox loaded, but live order and stock alerts are temporarily unavailable.');
     } else if (!inboxLoaded) {
-      setLoadError('Live seller alerts loaded, but saved announcements are temporarily unavailable.');
+      setLoadError('Live seller alerts loaded, but your saved notifications are temporarily unavailable.');
     }
 
     setLoading(false);
@@ -448,8 +448,8 @@ export default function SellerNotificationsScreen({ navigation }) {
               <Text style={styles.notificationTime}>{formatSellerNotificationTime(item.createdAt)}</Text>
               {!item.read && <View style={styles.unreadDot} accessibilityLabel="Unread" />}
             </View>
-            <Text style={styles.notificationTitle} numberOfLines={2}>{item.title}</Text>
-            {!!item.body && <Text style={styles.notificationBody} numberOfLines={3}>{item.body}</Text>}
+            <Text style={styles.notificationTitle}>{item.title}</Text>
+            {!!item.body && <Text style={styles.notificationBody}>{item.body}</Text>}
             <View style={styles.notificationFooter}>
               <Text style={styles.sourceLabel}>
                 {item.persisted ? 'Seller inbox' : 'Live seller activity'}
@@ -507,7 +507,7 @@ export default function SellerNotificationsScreen({ navigation }) {
               <Text style={styles.summaryTitle}>
                 {unreadCount > 0 ? `${unreadCount} unread update${unreadCount === 1 ? '' : 's'}` : 'You are all caught up'}
               </Text>
-              <Text style={styles.summarySubtitle}>Live activity and saved announcements in one place.</Text>
+              <Text style={styles.summarySubtitle}>Order, payment and store updates in one place.</Text>
             </View>
             <TouchableOpacity
               style={[styles.markAllButton, (unreadCount === 0 || markingAll) && styles.buttonDisabled]}

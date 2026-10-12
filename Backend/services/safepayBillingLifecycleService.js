@@ -63,7 +63,7 @@ async function notify(sub, kind, at, title, message, session) {
     aggregateType: 'SellerSubscription', aggregateId: sub._id, occurredAt: at, financial: true,
     recipient: { kind: 'user', audienceRole: 'seller', user: sub.seller, destinationPolicy: 'current_user', allowBlocked: true },
     channels: ['inapp', 'push', 'email', 'whatsapp'],
-    templates: { inapp: { title, body: message }, push: { title, body: message }, email: { subject: title, text: message }, whatsapp: { message: `${title}\n\n${message}` } },
+    templates: { inapp: { title, body: message }, push: { title, body: message }, email: { subject: title, text: message }, whatsapp: { message: `*${title}*\n\n${message}` } },
     money: [snapshotMinorMoney({ key: 'monthly', label: 'Monthly subscription rate', amountMinor: value, currency: 'USD',
       sourceModel: 'SellerSubscription', sourceDocumentId: sub._id, sourcePath: 'safepayBilling.notification.monthlyMinor' })],
     metadata: { category: 'subscription', channelId: 'seller', whatsappCategory: kind === 'downgrade_scheduled' ? 'downgrade_scheduled'
@@ -103,7 +103,7 @@ async function cancel(sellerId) {
     }
     await sub.save({ session });
     if (sub.safepayBilling.monthlyMinor !== null) await notify(sub, 'cancel_scheduled', at, 'Subscription renewal cancelled',
-      `Renewal of your {{money.monthly}}/month plan is cancelled. Current funded access remains until its period ends.${currentPaymentMayComplete ? ' A payment already in progress may still complete; this cancellation stops subsequent renewals.' : ''}`, session);
+      `Automatic renewal of your plan ({{money.monthly}} per month) is turned off.${['active', 'free_period'].includes(sub.status) && sub.currentPeriodEnd && Number.isFinite(new Date(sub.currentPeriodEnd).getTime()) ? ` You can use your current plan until ${date(sub.currentPeriodEnd).toISOString().slice(0, 10)}.` : ''}${currentPaymentMayComplete ? ' A payment already in progress may still complete. No further renewals will be started.' : ''} Review your subscription details if you want to resume.`, session);
     return { msg: 'Subscription renewal is cancelled. Current funded access remains until period end.', currentPaymentMayComplete };
   });
 }
@@ -120,7 +120,7 @@ async function resume(sellerId) {
     sub.safepayBilling.autoRenew = true; sub.safepayBilling.nextChargeAt = sub.currentPeriodEnd;
     sub.safepayBilling.version += 1;
     await sub.save({ session });
-    await notify(sub, 'resumed', new Date(), 'Subscription renewal resumed', 'Automatic renewal of your {{money.monthly}}/month plan is active again.', session);
+    await notify(sub, 'resumed', new Date(), 'Automatic renewal resumed', 'Automatic renewal of your plan ({{money.monthly}} per month) is turned on again. Review your next billing date and payment method in Subscription.', session);
     return { msg: 'Subscription renewal resumed.' };
   });
 }
@@ -141,7 +141,7 @@ async function scheduleDowngrade(sellerId) {
     sub.cancelledAt = at;
     sub.safepayBilling.autoRenew = true; sub.safepayBilling.nextChargeAt = sub.currentPeriodEnd; sub.safepayBilling.version += 1;
     await sub.save({ session });
-    await notify(sub, 'downgrade_scheduled', at, 'Starter plan scheduled', 'Your current {{money.monthly}}/month Elite plan remains active through this period. The Starter price shown in your subscription settings will apply from the next period.', session);
+    await notify(sub, 'downgrade_scheduled', at, 'Downgrade to Starter scheduled', 'Your current Elite plan at {{money.monthly}} per month remains active until this billing period ends. Your plan will then switch to Starter after its payment is completed. Review the new price or cancel this change in Subscription.', session);
     return { msg: 'Your plan will switch to Starter at the end of the current period.' };
   });
 }
@@ -154,7 +154,7 @@ async function cancelDowngrade(sellerId) {
     sub.pendingDowngrade = { toPlan: null }; sub.cancelledAt = null;
     sub.safepayBilling.autoRenew = true; sub.safepayBilling.nextChargeAt = sub.currentPeriodEnd; sub.safepayBilling.version += 1;
     await sub.save({ session });
-    await notify(sub, 'downgrade_cancelled', new Date(), 'Scheduled downgrade cancelled', 'Your {{money.monthly}}/month plan will continue. No downgrade is scheduled.', session);
+    await notify(sub, 'downgrade_cancelled', new Date(), 'Scheduled downgrade cancelled', 'Your downgrade to Starter has been cancelled. Automatic renewal of your current plan ({{money.monthly}} per month) will continue.', session);
     return { msg: 'The scheduled downgrade was cancelled.' };
   });
 }
@@ -229,7 +229,7 @@ async function closeEndedSubscription(subscriptionId, at = new Date()) {
       }
       await store.save({ session });
     }
-    await notify(sub, 'ended', endedAt, 'Subscription ended', 'Your {{money.monthly}}/month subscription has ended. Your seller data remains available in Rozare.', session);
+    await notify(sub, 'ended', endedAt, 'Your subscription has ended', 'Your subscription ({{money.monthly}} per month) has ended and your store is hidden from customers. Your seller data remains available. Choose a plan in Subscription to reactivate your store.', session);
     return true;
   });
 }

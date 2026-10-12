@@ -177,6 +177,18 @@ describe('financial notification category and tap routing', () => {
     expect(resolveNotificationTarget(notification, buyer)).toBeNull();
   });
 
+  it('maps durable store-review navigation to the registered screen that actually renders store reviews', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../src/screens/StoreScreen.js'), 'utf8');
+    expect(source).toContain("import StoreReviews from '../components/common/StoreReviews'");
+    expect(source).toContain('<StoreReviews storeId={store._id}');
+    expect(resolveNotificationTarget({
+      data: { type: 'persistent_system', targetRole: 'seller', aggregateType: 'Store',
+        linkTo: '/store/atlas-aura#store-reviews' },
+    }, seller)).toEqual({ screen: 'Store', params: { slug: 'atlas-aura' } });
+  });
+
   it('never turns external or cross-role web links into native privileged routes', () => {
     expect(resolveNotificationTarget({ linkTo: 'https://evil.example/seller-dashboard/payments' }, seller)).toBeNull();
     expect(resolveNotificationTarget({ linkTo: '/seller-dashboard/payments' }, buyer)).toBeNull();
@@ -185,5 +197,25 @@ describe('financial notification category and tap routing', () => {
       params: {},
     });
     expect(resolveNotificationTarget({ linkTo: '/admin-dashboard/payments' }, admin)).toBeNull();
+  });
+
+  test.each([
+    'https://evil.example/seller-dashboard/payments',
+    '//evil.example/seller-dashboard/payments',
+    '/%2fexample.test/seller-dashboard/payments',
+    '/seller-dashboard/payments%5cunexpected',
+    '/seller-dashboard/payments%00',
+    ' /seller-dashboard/payments',
+  ])('does not recover an unsafe explicit link through a type fallback: %s', (linkTo) => {
+    expect(resolveNotificationTarget({ type: 'withdrawal_status_changed', linkTo }, seller)).toBeNull();
+  });
+
+  it('does not let cross-role links fall back to shopper order screens', () => {
+    expect(resolveNotificationTarget({
+      type: 'order_paid', orderId: 'order-1', linkTo: '/seller-dashboard/order/order-1',
+    }, buyer)).toBeNull();
+    expect(resolveNotificationTarget({
+      type: 'order_paid', orderId: 'order-1', targetRole: 'seller',
+    }, buyer)).toBeNull();
   });
 });

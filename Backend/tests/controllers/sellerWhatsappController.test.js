@@ -85,7 +85,7 @@ describe('seller WhatsApp verification', () => {
     await sendWhatsAppOTP(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(sellerEvolutionClient.sendText).toHaveBeenCalledWith('923001112222', expect.stringContaining('Rozare Verification'));
+    expect(sellerEvolutionClient.sendText).toHaveBeenCalledWith('923001112222', expect.stringContaining('Rozare seller WhatsApp verification'));
     await expect(WhatsAppOTP.findOne({ number: '923001112222', sellerId: seller._id })).resolves.toBeTruthy();
   });
 

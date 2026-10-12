@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcrypt')
 const { sendEmail } = require('./mailController')
 const { welcomeEmail } = require('../utils/emailTemplates');
+const { verificationCodeEmail } = require('../utils/accountEmailTemplates');
 const { trackCompleteRegistration } = require('../services/tiktokEventsApi');
 const { trackSellerLead } = require('../services/metaConversionsApi');
 const { normalizeSocialLinks } = require('../services/socialLinksService');
@@ -20,7 +21,6 @@ const {
 const { normalizePhoneDigits, toE164PhoneNumber } = require('../utils/phoneNumber');
 const { MAX_STORE_SLUG_LENGTH, safeGeneratedStoreSlugBase } = require('../utils/storeSlug');
 const { generateSixDigitOTP, signAuthToken } = require('../utils/authSecurity');
-const { escapeHtml } = require('../utils/orderPresentation');
 
 
 // Step 1: Send OTP to email
@@ -54,82 +54,7 @@ exports.sendOTP = async (req, res) => {
         });
         await otpDoc.save();
 
-        // Send OTP email with professional branded template
-        const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verify Your Email</title>
-</head>
-<body style="margin:0;padding:0;background-color:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.6;">
-    <div style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-        
-        <!-- Header with Logo -->
-        <div style="background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 50%,#a78bfa 100%);padding:48px 32px;text-align:center;">
-            <div style="margin-bottom:16px;">
-                <div style="display:inline-block;width:56px;height:56px;background:rgba(255,255,255,0.2);border-radius:16px;line-height:56px;text-align:center;">
-                    <span style="font-size:28px;color:#ffffff;">&#9993;</span>
-                </div>
-            </div>
-            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Verify Your Email</h1>
-            <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:15px;">One more step to get started</p>
-        </div>
-        
-        <!-- Body Content -->
-        <div style="padding:40px 32px;">
-            <p style="color:#334155;font-size:16px;margin:0 0 20px;">Hi <strong>${escapeHtml(username)}</strong>,</p>
-            
-            <p style="color:#475569;font-size:15px;margin:0 0 28px;">
-                Thanks for signing up for Rozare! Please enter the verification code below to confirm your email address and activate your account.
-            </p>
-            
-            <!-- OTP Code Box -->
-            <div style="background:linear-gradient(135deg,#f8faff 0%,#f0f4ff 100%);border:2px solid #e0e7ff;border-radius:12px;padding:28px 20px;text-align:center;margin:0 0 28px;">
-                <p style="margin:0 0 12px;color:#64748b;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Verification Code</p>
-                <div style="font-size:38px;font-weight:800;color:#6366f1;letter-spacing:10px;font-family:'Courier New',monospace;padding:8px 0;">${otp}</div>
-                <div style="margin-top:12px;display:inline-block;background:#fef3c7;border-radius:20px;padding:6px 14px;">
-                    <span style="color:#92400e;font-size:12px;font-weight:600;">&#9202; Expires in 10 minutes</span>
-                </div>
-            </div>
-            
-            <!-- Instructions -->
-            <div style="background:#f8fafc;border-radius:10px;padding:16px 20px;margin:0 0 24px;">
-                <p style="color:#475569;font-size:14px;margin:0;line-height:1.7;">
-                    <strong style="color:#334155;">How to use:</strong><br/>
-                    Enter this 6-digit code on the verification page to complete your registration.
-                </p>
-            </div>
-            
-            <!-- Security Notice -->
-            <div style="border-top:1px solid #e2e8f0;padding-top:20px;margin-top:24px;">
-                <p style="color:#94a3b8;font-size:13px;margin:0 0 8px;">
-                    <strong style="color:#64748b;">&#128274; Security Notice</strong>
-                </p>
-                <p style="color:#94a3b8;font-size:13px;margin:0;line-height:1.6;">
-                    If you didn't create an account with Rozare, please ignore this email. Never share this code with anyone — our team will never ask for it.
-                </p>
-            </div>
-        </div>
-        
-        <!-- Footer -->
-        <div style="background:#f8fafc;padding:24px 32px;text-align:center;border-top:1px solid #e2e8f0;">
-            <p style="margin:0 0 8px;color:#6366f1;font-size:16px;font-weight:700;">Rozare</p>
-            <p style="margin:0 0 4px;color:#94a3b8;font-size:12px;">&copy; ${new Date().getFullYear()} Rozare. All rights reserved.</p>
-            <p style="margin:0;color:#cbd5e1;font-size:11px;">This is an automated message — please do not reply.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-
-        await sendEmail({
-            to: email,
-            subject: 'Verify Your Email - Rozare',
-            text: `Your OTP for email verification is: ${otp}. Valid for 10 minutes.`,
-            html: html
-        });
+        await sendEmail({ to: email, ...verificationCodeEmail({ name: username, code: otp, purpose: 'buyer_signup', expiresMinutes: 10 }) });
 
         res.status(200).json({ 
             msg: 'OTP sent to your email. Please verify to complete registration.',
@@ -154,7 +79,7 @@ exports.verifyOTPAndRegister = async (req, res) => {
 
     try {
         // Find OTP document
-        const otpDoc = await OTP.findOne({ email, otp });
+        const otpDoc = await OTP.findOne({ email, otp, createdAt: { $gte: new Date(Date.now() - 10 * 60 * 1000) } });
 
         if (!otpDoc || otpDoc.userData?.role !== 'user') {
             return res.status(400).json({ msg: 'Invalid or expired OTP.' });
@@ -352,76 +277,7 @@ exports.sendSellerOTP = async (req, res) => {
         otpDoc._sellerInfo = { phoneNumber, address, city, state, stateCode, country, countryCode, businessName };
         await otpDoc.save();
 
-        // Professional seller OTP email template
-        const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verify Your Seller Account</title>
-</head>
-<body style="margin:0;padding:0;background-color:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.6;">
-    <div style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-        
-        <!-- Header -->
-        <div style="background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 50%,#a78bfa 100%);padding:48px 32px;text-align:center;">
-            <div style="margin-bottom:16px;">
-                <div style="display:inline-block;width:56px;height:56px;background:rgba(255,255,255,0.2);border-radius:16px;line-height:56px;text-align:center;">
-                    <span style="font-size:28px;color:#ffffff;">&#127979;</span>
-                </div>
-            </div>
-            <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Verify Your Seller Account</h1>
-            <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:15px;">Almost ready to start selling</p>
-        </div>
-        
-        <!-- Body Content -->
-        <div style="padding:40px 32px;">
-            <p style="color:#334155;font-size:16px;margin:0 0 20px;">Hi <strong>${escapeHtml(username)}</strong>,</p>
-            
-            <p style="color:#475569;font-size:15px;margin:0 0 28px;">
-                Thank you for signing up as a seller on Rozare! Enter the verification code below to confirm your email and complete your seller registration.
-            </p>
-            
-            <!-- OTP Code Box -->
-            <div style="background:linear-gradient(135deg,#f8faff 0%,#f0f4ff 100%);border:2px solid #e0e7ff;border-radius:12px;padding:28px 20px;text-align:center;margin:0 0 28px;">
-                <p style="margin:0 0 12px;color:#64748b;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Verification Code</p>
-                <div style="font-size:38px;font-weight:800;color:#6366f1;letter-spacing:10px;font-family:'Courier New',monospace;padding:8px 0;">${otp}</div>
-                <div style="margin-top:12px;display:inline-block;background:#fef3c7;border-radius:20px;padding:6px 14px;">
-                    <span style="color:#92400e;font-size:12px;font-weight:600;">&#9202; Expires in 10 minutes</span>
-                </div>
-            </div>
-            
-            <!-- What's Next -->
-            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px 20px;margin:0 0 24px;">
-                <p style="color:#166534;font-size:14px;margin:0;font-weight:600;">&#127881; What happens next?</p>
-                <p style="color:#15803d;font-size:13px;margin:8px 0 0;line-height:1.6;">
-                    After verification, you'll be able to set up your store, list products, and start selling to customers worldwide — all for free!
-                </p>
-            </div>
-            
-            <!-- Security Notice -->
-            <div style="border-top:1px solid #e2e8f0;padding-top:20px;margin-top:24px;">
-                <p style="color:#94a3b8;font-size:13px;margin:0 0 8px;">
-                    <strong style="color:#64748b;">&#128274; Security Notice</strong>
-                </p>
-                <p style="color:#94a3b8;font-size:13px;margin:0;line-height:1.6;">
-                    If you didn't sign up as a seller on Rozare, please ignore this email. Never share this code with anyone — our team will never ask for it.
-                </p>
-            </div>
-        </div>
-        
-        <!-- Footer -->
-        <div style="background:#f8fafc;padding:24px 32px;text-align:center;border-top:1px solid #e2e8f0;">
-            <p style="margin:0 0 8px;color:#6366f1;font-size:16px;font-weight:700;">Rozare</p>
-            <p style="margin:0 0 4px;color:#94a3b8;font-size:12px;">&copy; ${new Date().getFullYear()} Rozare. All rights reserved.</p>
-            <p style="margin:0;color:#cbd5e1;font-size:11px;">This is an automated message — please do not reply.</p>
-        </div>
-    </div>
-</body>
-</html>`;
-
-        await sendEmail({ to: email, subject: 'Verify Your Seller Account - Rozare', text: `Your OTP: ${otp}. Valid for 10 minutes.`, html });
+        await sendEmail({ to: email, ...verificationCodeEmail({ name: username, code: otp, purpose: 'seller_signup', expiresMinutes: 10 }) });
 
         res.status(200).json({ msg: 'OTP sent to your email. Please verify to complete seller registration.', email });
     } catch (error) {
@@ -436,7 +292,7 @@ exports.verifySellerOTPAndRegister = async (req, res) => {
     const { email, otp, phoneNumber, address, city, state, stateCode, country, countryCode, businessName, storeName, storeDescription, socialLinks, sellerType, whatsappNumber } = req.body;
 
     try {
-        const otpDoc = await OTP.findOne({ email, otp });
+        const otpDoc = await OTP.findOne({ email, otp, createdAt: { $gte: new Date(Date.now() - 10 * 60 * 1000) } });
         // A seller code must never be interchangeable with the ordinary buyer
         // signup code. Otherwise the buyer verifier could create a seller
         // without the WhatsApp/store transaction, or a buyer code could enter

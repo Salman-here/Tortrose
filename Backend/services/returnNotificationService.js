@@ -93,7 +93,7 @@ const notifySellerReturnRequested = async (returnRequest, order, { session = nul
   const occurredAt = returnRequest.requestedAt || returnRequest.createdAt;
   const buyerName = order?.shippingInfo?.fullName || 'A buyer';
   const body = notificationBody(
-    `${buyerName} requested a return for order #${returnRequest.orderId}. Reason: ${returnRequest.reasonDetails}`
+    `${buyerName} requested return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${returnRequest.reasonDetails ? ` Reason: ${returnRequest.reasonDetails}` : ''}`
   );
   const eventKey = `return:${returnRequest._id}:requested:seller:${returnRequest.seller}`;
   const records = await enqueueNotificationEvent({
@@ -111,11 +111,11 @@ const notifySellerReturnRequested = async (returnRequest, order, { session = nul
     channels: ['inapp', 'push', 'email', 'whatsapp'],
     templates: {
       inapp: { title: 'New return request', body },
-      push: { title: 'New return request', body },
+      push: { title: 'New return request', body: `Return #${returnRequest.returnNumber} for order #${returnRequest.orderId} is awaiting your review.` },
       email: {
         subject: `New return request for order #${returnRequest.orderId}`,
-        text: `${body}\n\nSign in to Rozare to review and respond to this request.`,
-        html: `<p>${escapeHtml(body)}</p><p>Sign in to Rozare to review and respond to this request.</p>`,
+        text: `${body}\n\nReview the return request in Seller Dashboard and respond to the buyer.`,
+        html: `<p>${escapeHtml(body)}</p><p>Review the return request in Seller Dashboard and respond to the buyer.</p>`,
       },
       whatsapp: { message: sellerTemplates.return_requested(returnRequest) },
     },
@@ -155,10 +155,10 @@ const enqueueReturnCancellationNotifications = async (
   const cleanNote = String(occurrence.note || '').trim().slice(0, 500);
   const noteLine = cleanNote ? ` Note: ${cleanNote}` : '';
   const buyerBody = notificationBody(
-    `Your return #${returnRequest.returnNumber} for order #${returnRequest.orderId} was cancelled.${noteLine}`
+    `You cancelled return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
   );
   const sellerBody = notificationBody(
-    `Buyer cancelled return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
+    `The buyer cancelled return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
   );
   const eventRoot = `return:${returnRequest._id}:cancelled:${occurrence.occurredAt.getTime()}`;
   const aggregate = {
@@ -190,19 +190,19 @@ const enqueueReturnCancellationNotifications = async (
       push: { title: 'Return request cancelled', body: sellerBody },
       email: {
         subject: `Return #${returnRequest.returnNumber} was cancelled`,
-        text: `${sellerBody}\n\nSign in to Rozare to view the return record.`,
-        html: `<p>${escapeHtml(sellerBody)}</p><p>Sign in to Rozare to view the return record.</p>`,
+        text: `${sellerBody}\n\nView the return in Seller Dashboard for details.`,
+        html: `<p>${escapeHtml(sellerBody)}</p><p>View the return in Seller Dashboard for details.</p>`,
       },
       whatsapp: {
         message: [
-          'Rozare Return Update',
+          '*Buyer cancelled a return request*',
           '',
           `Return: #${returnRequest.returnNumber}`,
           `Order: #${returnRequest.orderId}`,
           'Status: Cancelled by buyer',
           cleanNote ? `Note: ${cleanNote}` : '',
           '',
-          'Open Seller Dashboard > Orders > Return Orders for details.',
+          'View the return in Seller Dashboard for details.',
         ].filter(Boolean).join('\n'),
       },
     },
@@ -228,21 +228,21 @@ const enqueueReturnCancellationNotifications = async (
   if (email) {
     buyerTemplates.email = {
       subject: `Return #${returnRequest.returnNumber} cancelled`,
-      text: `${buyerBody}\n\nSign in to Rozare to view the return details.`,
-      html: `<p>${escapeHtml(buyerBody)}</p><p>Sign in to Rozare to view the return details.</p>`,
+      text: `${buyerBody}\n\nThis cancels the return request, not your original purchase. View your order in Rozare for details.`,
+      html: `<p>${escapeHtml(buyerBody)}</p><p>This cancels the return request, not your original purchase. View your order in Rozare for details.</p>`,
     };
   }
   if (phone) {
     buyerTemplates.whatsapp = {
       message: [
-        'Rozare Return Update',
+        '*Your return request is cancelled*',
         '',
         `Return: #${returnRequest.returnNumber}`,
         `Order: #${returnRequest.orderId}`,
         'Status: Cancelled',
         cleanNote ? `Note: ${cleanNote}` : '',
         '',
-        'Your cancellation has been recorded.',
+        'This cancels the return request, not your original purchase. View your order in Rozare for details.',
       ].filter(Boolean).join('\n'),
     };
   }
@@ -270,6 +270,20 @@ const enqueueReturnCancellationNotifications = async (
   return { buyer, seller };
 };
 
+const RETURN_NOTIFICATION_COPY = Object.freeze({
+  requested: { title: 'Return request received', detail: 'Your return request was received and is awaiting the seller’s review.' },
+  approved: { title: 'Return request approved', detail: 'Your return request was approved. View the return details for the next steps.' },
+  pickup_scheduled: { title: 'Return pickup scheduled', detail: 'Pickup has been scheduled for your return. View the return details for instructions.' },
+  picked_up: { title: 'Return picked up', detail: 'Your return has been marked as picked up.' },
+  in_transit_to_seller: { title: 'Your return is on its way', detail: 'Your returned items are on their way to the seller.' },
+  received_by_seller: { title: 'Return received by seller', detail: 'Your returned items have been marked as received by the seller.' },
+  under_review: { title: 'Your return is being reviewed', detail: 'Your returned items are being reviewed. We will notify you when the return is resolved.' },
+  accepted_pending_payment: { title: 'Return accepted — refund pending', detail: 'Your return was accepted. The refund has not been credited yet; we will notify you when it is completed.' },
+  replacement_approved: { title: 'Replacement approved', detail: 'A replacement was approved for your return. View the return details for the next steps.' },
+  rejected: { title: 'Return request declined', detail: 'Your return request was declined. View the return details for the reason.' },
+  cancelled_by_buyer: { title: 'Return request cancelled', detail: 'You cancelled this return request. Your original purchase is unchanged.' },
+});
+
 const notifyBuyerReturnStatus = async (
   returnRequest,
   order,
@@ -292,20 +306,21 @@ const notifyBuyerReturnStatus = async (
   if (!current?._id || !current?.buyer || !current?.order) return false;
   const occurrence = statusNotificationOccurrence(current);
   const cleanNote = String(occurrence.note ?? note ?? '').trim().slice(0, 500);
-  const label = RETURN_STATUS_LABELS[current.status] || current.status;
+  const copy = RETURN_NOTIFICATION_COPY[current.status];
+  const label = copy?.title || RETURN_STATUS_LABELS[current.status] || 'Return update';
   const noteLine = cleanNote ? ` Note: ${cleanNote}` : '';
   const body = notificationBody(
-    `Return #${current.returnNumber} for order #${current.orderId} is now ${label.toLowerCase()}.${noteLine}`
+    `Return #${current.returnNumber} for order #${current.orderId}: ${copy?.detail || 'Your return status has been updated.'}${noteLine}`
   );
   const whatsappMessage = [
-      'Rozare Return Update',
+      `*${label}*`,
       '',
       `Return: #${current.returnNumber}`,
       `Order: #${current.orderId}`,
-      `Status: ${label}`,
+      copy?.detail || 'Your return status has been updated.',
       cleanNote ? `Note: ${cleanNote}` : '',
       '',
-      'Open your Rozare account for details.',
+      'View your return in Rozare for details.',
     ].filter(Boolean).join('\n');
   const phone = snapshotPhone(order);
   const email = snapshotEmail(order);
@@ -319,8 +334,8 @@ const notifyBuyerReturnStatus = async (
   if (email) {
     templates.email = {
       subject: `${label}: return #${current.returnNumber}`,
-      text: `${body}\n\nSign in to Rozare to view the return details.`,
-      html: `<p>${escapeHtml(body)}</p><p>Sign in to Rozare to view the return details.</p>`,
+      text: `${body}\n\nView your return in Rozare for details.`,
+      html: `<p>${escapeHtml(body)}</p><p>View your return in Rozare for details.</p>`,
     };
   }
   if (phone) templates.whatsapp = { message: whatsappMessage };

@@ -139,7 +139,7 @@ test('the real dispatcher authorizes all four channels without leaking to real t
   expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: seller.email, subject: 'Subscription ending soon' }));
   expect(mockSendPush).toHaveBeenCalledTimes(1);
   expect(mockNotifySeller).toHaveBeenCalledTimes(1);
-  expect(mockNotifySeller).toHaveBeenCalledWith(seller._id, 'subscription_ending', expect.stringContaining('Subscription Ending Soon'));
+  expect(mockNotifySeller).toHaveBeenCalledWith(seller._id, 'subscription_ending', expect.stringContaining('*Subscription ending soon*'));
 });
 
 test('replay, parallel attempts and unrelated billing-version changes share the same frozen ending event', async () => {

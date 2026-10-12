@@ -2,18 +2,37 @@
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { escapeHtml } = require('../utils/orderPresentation');
 
+const MODERATION_NOTICE_REASONS = Object.freeze({
+  profanity: 'Remove offensive or profane wording.',
+  sexual_goods: 'Products intended for sexual activity are not permitted on Rozare.',
+  explicit_sexual_content: 'Remove explicit sexual content.',
+  hate_or_threats: 'Remove hateful or threatening content.',
+  insufficient_details: 'Add clear, complete information about your listing.',
+  image_invalid: 'Use a publicly accessible HTTPS image for your listing.',
+  content_limit: 'Shorten excessive text or options and use no more than 12 images.',
+});
+
+const moderationNoticeReason = notice => {
+  const violations = Array.isArray(notice?.violations) ? notice.violations : [];
+  const reasons = [...new Set(violations.map(violation => Object.hasOwn(MODERATION_NOTICE_REASONS, violation?.code)
+    ? MODERATION_NOTICE_REASONS[violation.code] : '').filter(Boolean))];
+  return reasons.length ? reasons.join(' ') : 'The submitted content does not meet Rozare\'s content guidelines.';
+};
+
 async function ensureCatalogModerationNotification(kind, entity, { session = null } = {}) {
   const Model = require(kind === 'store' ? '../models/Store' : '../models/Product');
   if (entity?._id && !entity.catalogModeration) entity = await Model.findById(entity._id).select('seller +catalogModeration').lean();
   const notice = entity?.catalogModeration;
   if (!entity?.seller || !notice?.noticeId || !notice.noticeAt || notice.noticeEnqueuedAt) return [];
   const label = kind === 'store' ? 'Store' : 'Product';
-  const title = `${label} ${notice.noticeStatus === 'approved' ? 'content approved' : notice.noticeStatus === 'blocked' ? 'needs changes' : 'checks delayed'}`;
+  const title = `${label} ${notice.noticeStatus === 'approved' ? 'content approved' : notice.noticeStatus === 'blocked' ? 'needs changes' : 'review in progress'}`;
   // Do not repeat a rejected title/name (or an offensive image caption) in
   // email subjects, notification banners or WhatsApp messages.
   const body = notice.noticeStatus === 'approved'
-    ? `Your ${kind} passed the local content rules. You can view its current status in your seller dashboard.`
-    : `${notice.noticeReason} ${notice.noticeStatus === 'blocked' ? 'Edit the flagged content to submit it for automatic checks again.' : 'It remains hidden while we retry automatically.'}`.slice(0, 1000);
+    ? `Your ${kind} content has been approved. View its publishing status in your seller dashboard.`
+    : notice.noticeStatus === 'blocked'
+      ? `Your ${kind} is hidden from customers. ${moderationNoticeReason(notice)} Review the details in your seller dashboard and update the affected content to have it checked again.`
+      : `Your ${kind} remains hidden while the checks are completed. No action is needed unless we ask for an update.`;
   const linkTo = kind === 'store' ? '/seller-dashboard/store-settings' : '/seller-dashboard/product-management';
   const id = String(entity._id);
   const records = await enqueueNotificationEvent({
@@ -24,8 +43,8 @@ async function ensureCatalogModerationNotification(kind, entity, { session = nul
     channels: notice.noticeStatus === 'pending' ? ['inapp', 'push'] : ['inapp', 'push', 'email', 'whatsapp'],
     templates: {
       inapp: { title, body }, push: { title, body },
-      email: { subject: title, text: `${body}\nOpen your seller dashboard to review the details.`, html: `<p>${escapeHtml(body)}</p><p>Open your seller dashboard to review the details.</p>` },
-      whatsapp: { message: `${title}\n\n${body}` },
+      email: { subject: title, text: body, html: `<p>${escapeHtml(body)}</p>` },
+      whatsapp: { message: `*${title}*\n\n${body}` },
     },
     metadata: { category: 'seller', channelId: 'seller', linkTo, whatsappCategory: 'product_blocked',
       data: { type: 'catalog_moderation', catalogKind: kind, audienceRole: 'seller', aggregateId: id, noticeId: notice.noticeId, status: notice.noticeStatus } },

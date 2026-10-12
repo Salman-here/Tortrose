@@ -42,6 +42,16 @@ afterAll(async () => {
 });
 
 describe('seller profile email replacement session', () => {
+  test('rejects an email-change code after the stated ten-minute window', async () => {
+    const seller = await createSeller('expired');
+    const newEmail = 'seller-expired-new@example.com';
+    await OTP.create({ email: newEmail, otp: '123456', createdAt: new Date(Date.now() - 11 * 60 * 1000), userData: { sellerId: seller._id, type: 'email-change' } });
+    const res = resMock();
+    await verifyEmailChange({ user: { id: seller._id.toString(), role: 'seller' }, body: { newEmail, otp: '123456' } }, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    await expect(User.findById(seller._id).then(user => user.email)).resolves.toBe('seller-expired@example.com');
+  });
+
   test('binds the OTP to its seller and returns a seven-day replacement token', async () => {
     const seller = await createSeller('one');
     const newEmail = 'seller-one-new@example.com';

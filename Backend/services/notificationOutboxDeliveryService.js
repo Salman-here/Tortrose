@@ -14,6 +14,8 @@ const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
 const { isSafepayNotification, verifySafepayNotificationAuthority } = require('./safepayNotificationAuthority');
 const { sendEmail } = require('../controllers/mailController');
+const { notificationActionLabel, outboundNotificationUrl } = require('../utils/transactionalEmail');
+const { storefrontNotificationUrl } = require('../utils/storefrontNotificationUrl');
 const { sendExpoPushStrict } = require('../utils/expoPush');
 const {
   enqueueOrderConfirmation,
@@ -631,13 +633,22 @@ const verifySellerOperationalNotificationAuthority = async record => {
     if (record.aggregateType !== 'Store') {
       return notificationNoLongerActionable('The store-created alert has an invalid aggregate owner.');
     }
-    const store = await Store.findById(record.aggregateId).select('seller createdAt').lean();
+    const store = await Store.findById(record.aggregateId).select('seller createdAt storeName storeSlug moderationStatus').lean();
     if (
       !store
       || String(store.seller || '') !== recipientId
       || !sameInstant(store.createdAt, record.occurredAt)
     ) {
       return notificationNoLongerActionable('The created store no longer belongs to this seller.');
+    }
+    const data = record.payload?.data || {};
+    if (data.storePresentationVersion === 1) {
+      const held = ['pending', 'blocked'].includes(store.moderationStatus);
+      if (data.storeModerationStatusAtCreation !== (store.moderationStatus || 'approved')
+        || data.storefrontUrlAtCreation !== (held ? '' : storefrontNotificationUrl(store))
+        || data.storeNameAtCreation !== (held ? '' : String(store.storeName || '').trim().replace(/\s+/g, ' '))) {
+        return notificationNoLongerActionable('The store details changed before this creation notice could be delivered.');
+      }
     }
     return null;
   }
@@ -684,9 +695,19 @@ const verifySellerOperationalNotificationAuthority = async record => {
         'The related store review no longer matches the exact rating described by this alert.'
       );
     }
-    const store = await Store.findById(review.store).select('seller').lean();
+    const store = await Store.findById(review.store).select('seller storeName storeSlug isActive moderationStatus').lean();
     if (!store || String(store.seller || '') !== recipientId) {
       return notificationNoLongerActionable('The related store no longer belongs to this seller.');
+    }
+    const data = record.payload?.data || {};
+    if (data.storeReviewPresentationVersion === 1) {
+      const held = ['pending', 'blocked'].includes(store.moderationStatus);
+      const storeUrl = store.isActive === true ? storefrontNotificationUrl(store) : '';
+      const reviewUrl = storeUrl ? `${storeUrl}#store-reviews` : '';
+      const name = held ? 'your store' : String(store.storeName || '').trim().replace(/\s+/g, ' ');
+      if (data.reviewStoreName !== name || data.reviewStorefrontUrl !== reviewUrl) {
+        return notificationNoLongerActionable('The store details changed before this review notification could be delivered.');
+      }
     }
   }
   return null;
@@ -1071,6 +1092,8 @@ const deliverEmail = async (record, user) => {
     subject: record.payload.subject,
     text: record.payload.text || undefined,
     html: record.payload.html || undefined,
+    actionUrl: outboundNotificationUrl(record.payload.linkTo) || undefined,
+    actionLabel: notificationActionLabel(record.payload.linkTo),
   });
   return delivered(response?.messageId);
 };

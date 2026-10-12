@@ -1,5 +1,6 @@
 const axios = require('axios');
 const mailConfig = require('../config/mail');
+const { prepareTransactionalEmail } = require('../utils/transactionalEmail');
 
 /**
  * Send a transactional email via Brevo API
@@ -13,7 +14,7 @@ const mailConfig = require('../config/mail');
  * }
  */
 exports.sendEmail = async (data) => {
-    const { to, subject, text, html } = data;
+    const { to, subject, text, html, actionUrl, actionLabel } = data;
 
     if (!mailConfig.isConfigured) {
         throw new Error('Email service not configured. Please set BREVO_API_KEY in your .env file.');
@@ -25,7 +26,7 @@ exports.sendEmail = async (data) => {
         sender: mailConfig.BREVO_SENDER,
         to: [{ email: to }],
         subject: subject,
-        htmlContent: html
+        htmlContent: prepareTransactionalEmail({ subject, text, html, actionUrl, actionLabel })
     };
 
     if (text) {

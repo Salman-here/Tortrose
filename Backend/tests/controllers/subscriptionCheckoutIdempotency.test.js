@@ -4676,8 +4676,8 @@ describe('subscription billing idempotency', () => {
       [row.payload.body, row.payload.text, row.payload.html, row.payload.message].join(' ')
     )).join(' ');
     expect(content).toContain('$9.99');
-    expect(content).toContain('already used the one-time introductory period');
-    expect(content).not.toContain('still available after Checkout');
+    expect(content).toContain('Your one-time introductory period has already been used');
+    expect(content).not.toContain('You can still start a one-time');
     expect(sendEmail).not.toHaveBeenCalled();
     expect(notifySeller).not.toHaveBeenCalled();
     const current = await SellerSubscription.findById(subscription._id);
@@ -4817,8 +4817,8 @@ describe('subscription billing idempotency', () => {
     )).join(' ');
     expect(content).toContain('$12.99');
     expect(content).not.toContain('$21.65');
-    expect(content).toContain('No new introductory period will be added');
-    expect(content).not.toContain('45-day Elite introductory period remains available');
+    expect(content).not.toContain('Elite introductory period is still available');
+    expect(content).not.toContain('45-day Elite introductory period');
     expect(sendEmail).not.toHaveBeenCalled();
     expect(notifySeller).not.toHaveBeenCalled();
     const current = await SellerSubscription.findById(subscription._id);
@@ -4874,7 +4874,7 @@ describe('subscription billing idempotency', () => {
     expect(rows.every(row => row.recipient.audienceRole === 'seller')).toBe(true);
     expect(rows.map(row => (
       [row.payload.body, row.payload.text, row.payload.html, row.payload.message].join(' ')
-    )).join(' ')).toContain('founder rate is forfeited only when this subscription actually ends');
+    )).join(' ')).toContain('Your FIRST100 founder rate will end with this subscription');
     expect((await SellerSubscription.findById(subscription._id)).warningEmailSent).toBe(true);
     expect(sendEmail).not.toHaveBeenCalled();
     expect(notifySeller).not.toHaveBeenCalled();
@@ -5001,8 +5001,8 @@ describe('subscription billing idempotency', () => {
     const content = rows.map(row => (
       [row.payload.body, row.payload.text, row.payload.html, row.payload.message].join(' ')
     )).join(' ');
-    expect(content).toContain('already used');
-    expect(content).not.toContain('remains available at Checkout');
+    expect(content).toContain('Your one-time introductory period has already been used');
+    expect(content).not.toContain('introductory period is still available');
     expect(sendEmail).not.toHaveBeenCalled();
     expect(notifySeller).not.toHaveBeenCalled();
   });

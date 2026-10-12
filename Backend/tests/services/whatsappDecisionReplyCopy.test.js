@@ -12,6 +12,9 @@ test.each([true,false])('decision reply %s reports the decision without inventin
   const text=sendText.mock.calls[0][1];
   expect(text).toContain(confirmed?'is confirmed':'has been cancelled');
   expect(text).not.toMatch(/cart is still saved|nothing is charged|packing it up now/);
-  if(confirmed)expect(text).toContain('each seller prepares and ships');
-  else expect(text).toContain('place a new order at rozare.com');
+  if(confirmed)expect(text).toContain('updates as your items are prepared and shipped');
+  else {
+    expect(text).toContain('Track your order: https://rozare.com/track-order');
+    expect(text).not.toMatch(/paid online|refund update/);
+  }
 });

@@ -176,6 +176,13 @@ describe('store reviews and verified purchase eligibility', () => {
     });
     expect(storeAReview.body.review.order).toBeTruthy();
     expect(storeAReview.body.summary).toMatchObject({ average: 5, count: 1 });
+    const ratingNotices = await NotificationOutbox.find({ eventType: 'store.review_created',
+      'recipient.user': sellerA._id }).lean();
+    expect(ratingNotices).toHaveLength(4);
+    const reviewsUrl = `https://${storeA.storeSlug}.rozare.com/#store-reviews`;
+    expect(ratingNotices.find(row => row.channel === 'email').payload.html).toContain(`href="${reviewsUrl}"`);
+    expect(ratingNotices.find(row => row.channel === 'whatsapp').payload.message).toContain(reviewsUrl);
+    expect(ratingNotices.every(row => row.payload.linkTo === `/store/${storeA.storeSlug}#store-reviews`)).toBe(true);
 
     const storeBReview = await request(app)
       .post(`/api/store-reviews/${storeB._id}`)

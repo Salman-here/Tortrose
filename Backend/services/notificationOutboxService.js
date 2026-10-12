@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundNotificationUrl } = require('../utils/transactionalEmail');
+
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const NotificationOutbox = require('../models/NotificationOutbox');
@@ -354,6 +356,14 @@ const normalizeChannelPayload = ({ channel, templates, metadata, money, financia
     base.message = renderMoneyText(template.message, moneyByKey, usedKeys, 'Notification WhatsApp message', 4000);
     if (audienceRole === 'seller' && !base.whatsappCategory) {
       throw outboxError('Seller WhatsApp notifications require a category.');
+    }
+    if (base.linkTo) {
+      const destination = outboundNotificationUrl(base.linkTo);
+      const linkedMessage = destination && base.message.includes(destination) ? base.message : `${base.message}\n\nView details: ${destination}`;
+      if (!destination || linkedMessage.length > 4000) {
+        throw outboxError('Notification WhatsApp link is invalid.');
+      }
+      base.message = linkedMessage;
     }
   }
   if (financial && usedKeys.size === 0) {

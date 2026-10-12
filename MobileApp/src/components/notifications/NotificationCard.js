@@ -13,13 +13,14 @@ import { formatTime } from '../../hooks/useNotificationInbox';
 export const getNotificationMeta = (palette) => {
   const c = palette.colors;
   return {
-    order:    { icon: 'receipt-outline', color: c.primary,   bg: c.primarySubtle },
-    delivery: { icon: 'bicycle-outline', color: c.success,   bg: c.successSubtle },
-    promo:    { icon: 'pricetag-outline', color: c.warning,  bg: c.warningSubtle },
-    payment:  { icon: 'wallet-outline', color: c.success,    bg: c.successSubtle },
-    seller:   { icon: 'storefront-outline', color: c.secondary, bg: c.secondarySubtle },
-    system:   { icon: 'information-circle-outline', color: c.info, bg: c.infoSubtle },
-    alert:    { icon: 'alert-circle-outline', color: c.error, bg: c.errorSubtle },
+    order:    { label: 'Order', icon: 'receipt-outline', color: c.primary, bg: c.primarySubtle },
+    delivery: { label: 'Delivery', icon: 'bicycle-outline', color: c.success, bg: c.successSubtle },
+    promo:    { label: 'Offer', icon: 'pricetag-outline', color: c.warning, bg: c.warningSubtle },
+    payment:  { label: 'Payment', icon: 'wallet-outline', color: c.success, bg: c.successSubtle },
+    seller:   { label: 'Store', icon: 'storefront-outline', color: c.secondary, bg: c.secondarySubtle },
+    subscription: { label: 'Subscription', icon: 'diamond-outline', color: c.secondary, bg: c.secondarySubtle },
+    system:   { label: 'Account', icon: 'information-circle-outline', color: c.info, bg: c.infoSubtle },
+    alert:    { label: 'Alert', icon: 'alert-circle-outline', color: c.error, bg: c.errorSubtle },
   };
 };
 
@@ -29,23 +30,22 @@ export const NOTIFICATION_META = getNotificationMeta(lightPalette);
 
 export default function NotificationCard({ item, onPress }) {
   const { palette } = useTheme();
-  const colors = palette.colors;
   const styles = makeStyles(palette);
   const meta = getNotificationMeta(palette)[item.category] || getNotificationMeta(palette).system;
   return (
-    <TouchableOpacity onPress={() => onPress(item)} activeOpacity={0.75}>
+    <TouchableOpacity onPress={() => onPress(item)} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel={`${item.read ? '' : 'Unread. '}${item.title}. ${item.body}`}>
       <GlassPanel variant="card" style={[styles.card, !item.read && styles.cardUnread]}>
         {!item.read && <View style={styles.unreadDot} />}
         <View style={[styles.icon, { backgroundColor: meta.bg }]}>
           <Ionicons name={meta.icon} size={22} color={meta.color} />
         </View>
         <View style={styles.content}>
-          <Text style={[styles.title, !item.read && { fontWeight: fontWeight.bold }]} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.body} numberOfLines={2}>{item.body}</Text>
+          <Text style={[styles.title, !item.read && { fontWeight: fontWeight.bold }]}>{item.title}</Text>
+          <Text style={styles.body}>{item.body}</Text>
           <View style={styles.footer}>
             <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
             <View style={[styles.tag, { backgroundColor: meta.bg }]}>
-              <Text style={[styles.tagText, { color: meta.color }]}>{item.category}</Text>
+              <Text style={[styles.tagText, { color: meta.color }]}>{meta.label}</Text>
             </View>
           </View>
         </View>

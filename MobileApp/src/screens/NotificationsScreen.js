@@ -210,7 +210,7 @@ export default function NotificationsScreen({ navigation }) {
                 <View style={styles.emptyContainer}>
                   <View style={styles.emptyIconWrap}><Ionicons name="notifications-off-outline" size={56} color={palette.colors.primaryLight} /></View>
                   <Text style={styles.emptyTitle}>{loadError ? 'Notifications unavailable' : (activeCategory === 'all' ? 'No notifications yet' : `No ${activeCategory} notifications`)}</Text>
-                  <Text style={styles.emptySubtitle}>{loadError || "We'll notify you about orders, deals, and more"}</Text>
+                  <Text style={styles.emptySubtitle}>{loadError || 'Your order, payment and account updates will appear here.'}</Text>
                 </View>
               }
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}

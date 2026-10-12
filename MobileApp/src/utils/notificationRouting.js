@@ -107,8 +107,17 @@ function decodePathPart(value) {
 
 function safeRelativeLink(value) {
   if (typeof value !== 'string') return '';
-  const link = value.trim();
-  return link.startsWith('/') && !link.startsWith('//') ? link : '';
+  if (value !== value.trim() || value.length > 500) return '';
+  const link = value;
+  const decoded = decodePathPart(link);
+  return link.startsWith('/')
+    && !link.startsWith('//')
+    && !decoded.startsWith('//')
+    && !/[\\\u0000-\u001f\u007f]/.test(link)
+    && !/[\\\u0000-\u001f\u007f]/.test(decoded)
+    && decoded
+    ? link
+    : '';
 }
 
 function queryParam(link, key) {
@@ -174,6 +183,15 @@ export function resolveNotificationTarget(notification, roleOrUser) {
 
   const type = normalizeType(data.type);
   const linkTo = safeRelativeLink(data.linkTo);
+  // Explicit navigation metadata must not turn into an unrelated type-based
+  // fallback when its URL is unsafe or belongs to another audience.
+  if (data.linkTo && !linkTo) return null;
+  if (normalizeType(data.targetRole) === 'seller' && role !== 'seller') return null;
+  if (normalizeType(data.audienceRole) === 'seller' && role !== 'seller') return null;
+  if (normalizeType(data.targetRole) === 'admin' && role !== 'admin') return null;
+  const decodedLink = decodePathPart(linkTo);
+  if (role !== 'admin' && /^\/admin-dashboard(?:[/?#]|$)/i.test(decodedLink)) return null;
+  if (role !== 'seller' && /^\/(?:seller-dashboard|seller)(?:[/?#]|$)/i.test(decodedLink)) return null;
   const orderId = data.orderObjectId || data.orderId || '';
   const returnRequestId = data.returnRequestId || data.returnId || '';
   const transactionId = data.transactionId || '';

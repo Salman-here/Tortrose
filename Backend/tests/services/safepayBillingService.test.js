@@ -66,6 +66,10 @@ test('Starter introductory period activates once, with original pricing and a si
   expect(await Outbox.countDocuments()).toBe(notices);
   expect(await Payment.countDocuments()).toBe(0);
   expect(submit).not.toHaveBeenCalled();
+  const receipt = await Outbox.findOne({ aggregateType: 'SafepayBillingOperation', channel: 'email' }).lean();
+  expect(receipt.payload.text).toContain('30-day free introductory period');
+  expect(receipt.payload.text).toContain('Amount due at activation: $0.00');
+  expect(receipt.payload.text).not.toMatch(/payment received|charged|frozen|persisted/i);
 });
 test('FIRST100 uses the shared capacity and records a Safepay claim without fake Stripe IDs', async () => {
   const q = await quote({ couponCode: 'FIRST100' });
@@ -151,6 +155,10 @@ test('cancel and resume change future renewal only, without extending existing a
   let current = await Subscription.findById(sub._id);
   expect(current.status).toBe('free_period'); expect(current.currentPeriodEnd).toEqual(before.currentPeriodEnd);
   expect(current.safepayBilling.autoRenew).toBe(false); expect(current.safepayBilling.nextChargeAt).toBeNull();
+  const cancellationNotice = await Outbox.findOne({ eventType: 'subscription.cancelled', channel: 'email' }).lean();
+  expect(cancellationNotice.payload.text).toContain(before.currentPeriodEnd.toISOString().slice(0, 10));
+  expect(cancellationNotice.payload.text).toContain('Automatic renewal');
+  expect(cancellationNotice.payload.text).not.toContain('funded access');
   await lifecycle.resume(seller._id);
   current = await Subscription.findById(sub._id);
   expect(current.safepayBilling.autoRenew).toBe(true); expect(current.currentPeriodEnd).toEqual(before.currentPeriodEnd);

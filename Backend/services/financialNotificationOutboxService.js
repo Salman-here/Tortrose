@@ -83,15 +83,15 @@ const buyerOrderRecipient = order => {
 const ORDER_LIFECYCLE_STATUS_COPY = Object.freeze({
   confirmed: {
     title: 'Order confirmed',
-    detail: 'Your order has been confirmed and is being prepared.',
+    detail: 'Your order is confirmed. You will receive updates as your items are prepared and shipped.',
   },
   processing: {
-    title: 'Order processing',
-    detail: 'Your order is now being prepared for shipment.',
+    title: 'Your order is being prepared',
+    detail: 'Your order is being prepared. We will let you know when it ships.',
   },
   shipped: {
     title: 'Order shipped',
-    detail: 'Your order has been handed to the courier and is on the way.',
+    detail: 'Your order has been marked as shipped. View your order for delivery updates.',
   },
   delivered: {
     title: 'Order delivered',
@@ -99,7 +99,7 @@ const ORDER_LIFECYCLE_STATUS_COPY = Object.freeze({
   },
   cancelled: {
     title: 'Order cancelled',
-    detail: 'Your order has been cancelled. This status does not by itself record or promise a refund.',
+    detail: 'Your order was cancelled. Check the order details for any applicable payment or refund update.',
   },
 });
 const ORDER_LIFECYCLE_ACTOR_ROLES = new Set(['buyer', 'seller', 'admin', 'system']);
@@ -113,9 +113,9 @@ const ORDER_CANCELLATION_BUYER_DETAIL = Object.freeze({
 const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole } = {}) => {
   const copy = ORDER_LIFECYCLE_STATUS_COPY[status];
   const detail = status === 'cancelled'
-    ? `${ORDER_CANCELLATION_BUYER_DETAIL[actorRole]} This status does not by itself record or promise a refund.`
+    ? `${ORDER_CANCELLATION_BUYER_DETAIL[actorRole]} View your order for payment and refund details.`
     : copy.detail;
-  const totalSentence = 'Frozen order total: {{money.order_total}}.';
+  const totalSentence = 'Order total: {{money.order_total}}.';
   return {
     inapp: {
       title: copy.title,
@@ -127,11 +127,11 @@ const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole } = {}) =
     },
     email: {
       subject: `${copy.title} - ${orderNumber}`,
-      text: `Order #${orderNumber}: ${detail} ${totalSentence} Open your Rozare account for details.`,
-      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p><p>${totalSentence}</p><p>Open your Rozare account for details.</p>`,
+      text: `Order #${orderNumber}: ${detail}\n\n${totalSentence}`,
+      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p><p>${totalSentence}</p>`,
     },
     whatsapp: {
-      message: `${copy.title}\n\nOrder: #${orderNumber}\n${detail}\n${totalSentence}\n\nOpen your Rozare account for details.`,
+      message: `*${copy.title}*\n\nOrder: #${orderNumber}\n${detail}\n${totalSentence}\n\nView your order in Rozare for details.`,
     },
   };
 };
@@ -188,7 +188,7 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
     templates: orderLifecycleBuyerTemplates(orderNumber, status, { actorRole }),
     metadata: {
       category: 'order',
-      linkTo: `/user-dashboard/order/detail/${id}`,
+      linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
       channelId: 'orders',
       relatedOrder: id,
       data: {
@@ -207,10 +207,10 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
 }
 
 const SELLER_FULFILLMENT_STATUS_COPY = Object.freeze({
-  confirmed: { title: 'Seller confirmed your items', detail: 'confirmed and accepted your items' },
-  processing: { title: 'Seller is preparing your items', detail: 'is preparing your items' },
-  shipped: { title: 'Seller shipped your items', detail: 'shipped your items' },
-  delivered: { title: 'Seller delivered your items', detail: 'marked your items delivered' },
+  confirmed: { title: 'Your items are confirmed', detail: 'confirmed your items' },
+  processing: { title: 'Your items are being prepared', detail: 'is preparing your items' },
+  shipped: { title: 'Your items have shipped', detail: 'marked your items as shipped' },
+  delivered: { title: 'Your items were marked delivered', detail: 'marked your items as delivered' },
 });
 
 const sellerFulfillmentBuyerMoneySnapshot = (order, sellerId) => {
@@ -245,18 +245,18 @@ const sellerFulfillmentBuyerTemplates = ({
 }) => {
   const copy = SELLER_FULFILLMENT_STATUS_COPY[status];
   const detail = `${storeName} ${copy.detail}: ${itemSummary}.`;
-  const money = 'This seller portion totals {{money.seller_order_total}} in your frozen checkout currency.';
+  const money = 'Your total for this store is {{money.seller_order_total}}.';
   const shipping = shippingSummary ? ` ${shippingSummary}` : '';
   return {
     inapp: { title: copy.title, body: `Order #${orderNumber}: ${detail}${shipping} ${money}` },
     push: { title: copy.title, body: `${storeName}: ${itemSummary}. ${money}` },
     email: {
       subject: `${copy.title} - ${orderNumber}`,
-      text: `Order #${orderNumber}: ${detail}${shipping} ${money} Open your Rozare order to track every seller separately.`,
-      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p>${shipping ? `<p>${escapeHtml(shippingSummary)}</p>` : ''}<p>${money}</p><p>Open your Rozare order to track every seller separately.</p>`,
+      text: `Order #${orderNumber}: ${detail}${shipping}\n\n${money}\nView your order for delivery updates.`,
+      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p>${shipping ? `<p>${escapeHtml(shippingSummary)}</p>` : ''}<p>${money}</p><p>View your order for delivery updates.</p>`,
     },
     whatsapp: {
-      message: `${copy.title}\n\nOrder: #${orderNumber}\nStore: ${storeName}\nItems: ${itemSummary}\nStatus: ${status}${shippingSummary ? `\n${shippingSummary}` : ''}\n${money}\n\nOpen your Rozare order to track every seller separately.`,
+      message: `*${copy.title}*\n\nOrder: #${orderNumber}\nStore: ${storeName}\nItems: ${itemSummary}${shippingSummary ? `\n${shippingSummary}` : ''}\n${money}\n\nView your order in Rozare for delivery updates.`,
     },
   };
 };
@@ -438,7 +438,7 @@ async function enqueueOrderStockRefundBuyerNotifications(order, {
     templates: orderStockRefundBuyerTemplates(orderNumber),
     metadata: {
       category: 'payment',
-      linkTo: `/user-dashboard/order/detail/${id}`,
+      linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
       channelId: 'orders',
       relatedOrder: id,
       data: {
@@ -454,7 +454,7 @@ async function enqueueOrderStockRefundBuyerNotifications(order, {
 const paidBuyerTemplates = orderNumber => ({
   inapp: {
     title: 'Payment received',
-    body: `Payment for order #${orderNumber} is complete. Charged total: {{money.order_total}}.`,
+    body: `Your payment for order #${orderNumber} was successful. Amount paid: {{money.order_total}}.`,
   },
   push: {
     title: 'Payment received',
@@ -462,11 +462,11 @@ const paidBuyerTemplates = orderNumber => ({
   },
   email: {
     subject: `Payment received for order ${orderNumber}`,
-    text: `Your payment for order #${orderNumber} was successful. Charged total: {{money.order_total}}.`,
-    html: `<p>Your payment for order <strong>#${escapeHtml(orderNumber)}</strong> was successful.</p><p>Charged total: <strong>{{money.order_total}}</strong></p>`,
+    text: `Your payment for order #${orderNumber} was successful.\n\nAmount paid: {{money.order_total}}.\nWe will keep you updated as your items are prepared and shipped.`,
+    html: `<p>Your payment for order <strong>#${escapeHtml(orderNumber)}</strong> was successful.</p><p>Amount paid: <strong>{{money.order_total}}</strong>.</p><p>We will keep you updated as your items are prepared and shipped.</p>`,
   },
   whatsapp: {
-    message: `Rozare Payment Received\n\nOrder: #${orderNumber}\nCharged total: {{money.order_total}}\n\nOpen your Rozare account for order details.`,
+    message: `*Payment received*\n\nOrder: #${orderNumber}\nAmount paid: {{money.order_total}}\n\nWe will keep you updated as your items are prepared and shipped. View your order in Rozare for details.`,
   },
 });
 
@@ -495,7 +495,7 @@ async function enqueuePaidOrderBuyerNotifications(order, {
     templates: paidBuyerTemplates(orderNumber),
     metadata: {
       category: 'order',
-      linkTo: `/user-dashboard/order/detail/${id}`,
+      linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
       channelId: 'orders',
       relatedOrder: id,
       data: { type: 'order_paid', orderId: id },
@@ -508,19 +508,19 @@ async function enqueuePaidOrderBuyerNotifications(order, {
 const paidSellerTemplates = orderNumber => ({
   inapp: {
     title: 'Paid order received',
-    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}; buyer checkout equivalent {{money.seller_order_total}}.`,
+    body: `You received paid order #${orderNumber}. Store total: {{money.seller_store_total}}. Payment received: {{money.seller_order_total}} (checkout currency).`,
   },
   push: {
     title: 'Paid order received',
-    body: `Order #${orderNumber}: your frozen store-currency total is {{money.seller_store_total}}.`,
+    body: `Order #${orderNumber}. Store total: {{money.seller_store_total}}. Payment received: {{money.seller_order_total}} (checkout currency).`,
   },
   email: {
     subject: `Paid order received - ${orderNumber}`,
-    text: `You received paid order #${orderNumber}. Frozen store-currency total: {{money.seller_store_total}}. Buyer checkout equivalent: {{money.seller_order_total}}. Open Seller Dashboard to process it.`,
-    html: `<p>You received paid order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p><p>Both values are frozen at checkout; neither is a live-FX bank-payout estimate.</p>`,
+    text: `You received paid order #${orderNumber}.\n\nStore total: {{money.seller_store_total}}.\nPayment received: {{money.seller_order_total}} (checkout currency).\nView the order in Seller Dashboard to begin fulfillment. Payout eligibility is shown in Payments.`,
+    html: `<p>You received paid order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Store total: <strong>{{money.seller_store_total}}</strong>.</p><p>Payment received: <strong>{{money.seller_order_total}}</strong> (checkout currency).</p><p>View the order in Seller Dashboard to begin fulfillment. Payout eligibility is shown in Payments.</p>`,
   },
   whatsapp: {
-    message: `Paid Order Received\n\nOrder: #${orderNumber}\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}\n\nBoth values were frozen at checkout. Open Seller Dashboard to process the order.`,
+    message: `*Paid order received*\n\nOrder: #${orderNumber}\nStore total: {{money.seller_store_total}}\nPayment received: {{money.seller_order_total}} (checkout currency)\n\nView the order in Seller Dashboard to begin fulfillment. Payout eligibility is shown in Payments.`,
   },
 });
 
@@ -549,7 +549,7 @@ async function enqueuePaidOrderSellerNotifications(order, sellerId, {
     templates: paidSellerTemplates(orderNumber),
     metadata: {
       category: 'order',
-      linkTo: `/seller-dashboard/order-management?orderId=${encodeURIComponent(id)}`,
+      linkTo: `/seller-dashboard/order/${encodeURIComponent(id)}`,
       channelId: 'seller',
       whatsappCategory: 'new_order',
       relatedOrder: id,
@@ -582,7 +582,7 @@ const noChargeBuyerTemplates = orderNumber => ({
     html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong> is confirmed.</p><p>Order total: <strong>{{money.order_total}}</strong>.</p><p>No payment was required or charged.</p>`,
   },
   whatsapp: {
-    message: `Rozare Order Confirmed\n\nOrder: #${orderNumber}\nTotal: {{money.order_total}}\nNo payment was required or charged.\n\nOpen your Rozare account for order details.`,
+    message: `*Your order is confirmed*\n\nOrder: #${orderNumber}\nTotal: {{money.order_total}}\nNo payment was required or charged.\n\nView your order in Rozare.`,
   },
 });
 
@@ -614,7 +614,7 @@ async function enqueueNoChargeOrderBuyerNotifications(order, {
     templates: noChargeBuyerTemplates(orderNumber),
     metadata: {
       category: 'order',
-      linkTo: `/user-dashboard/order/detail/${id}`,
+      linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
       channelId: 'orders',
       relatedOrder: id,
       data: { type: 'order_no_charge_confirmed', orderId: id },
@@ -627,19 +627,19 @@ async function enqueueNoChargeOrderBuyerNotifications(order, {
 const noChargeSellerTemplates = orderNumber => ({
   inapp: {
     title: 'No-charge order received',
-    body: `Order #${orderNumber} is confirmed. Store total {{money.seller_store_total}}; buyer equivalent {{money.seller_order_total}}. No payment was required.`,
+    body: `You received confirmed order #${orderNumber}. Store total: {{money.seller_store_total}}. Order total: {{money.seller_order_total}} (checkout currency). No payment was required.`,
   },
   push: {
     title: 'No-charge order received',
-    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}. No buyer payment was required.`,
+    body: `Order #${orderNumber}. Store total: {{money.seller_store_total}}. Order total: {{money.seller_order_total}} (checkout currency). No payment was required.`,
   },
   email: {
     subject: `No-charge order received - ${orderNumber}`,
-    text: `Order #${orderNumber} is confirmed. Frozen store-currency total: {{money.seller_store_total}}. Buyer checkout equivalent: {{money.seller_order_total}}. No buyer payment was required or collected.`,
-    html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong> is confirmed.</p><p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p><p>No buyer payment was required or collected.</p>`,
+    text: `You received confirmed order #${orderNumber}.\n\nStore total: {{money.seller_store_total}}.\nOrder total: {{money.seller_order_total}} (checkout currency).\nNo buyer payment was required or collected. View the order in Seller Dashboard to begin fulfillment.`,
+    html: `<p>You received confirmed order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Store total: <strong>{{money.seller_store_total}}</strong>.</p><p>Order total: <strong>{{money.seller_order_total}}</strong> (checkout currency).</p><p>No buyer payment was required or collected.</p><p>View the order in Seller Dashboard to begin fulfillment.</p>`,
   },
   whatsapp: {
-    message: `No-Charge Order Received\n\nOrder: #${orderNumber}\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}\nNo buyer payment was required or collected.`,
+    message: `*No-charge order received*\n\nOrder: #${orderNumber}\nStore total: {{money.seller_store_total}}\nOrder total: {{money.seller_order_total}} (checkout currency)\nNo buyer payment was required or collected.\n\nView the order in Seller Dashboard to begin fulfillment.`,
   },
 });
 
@@ -671,7 +671,7 @@ async function enqueueNoChargeOrderSellerNotifications(order, sellerId, {
     templates: noChargeSellerTemplates(orderNumber),
     metadata: {
       category: 'order',
-      linkTo: `/seller-dashboard/order-management?orderId=${encodeURIComponent(id)}`,
+      linkTo: `/seller-dashboard/order/${encodeURIComponent(id)}`,
       channelId: 'seller',
       whatsappCategory: 'new_order',
       relatedOrder: id,
@@ -685,19 +685,19 @@ async function enqueueNoChargeOrderSellerNotifications(order, sellerId, {
 const codSellerPlacedTemplates = orderNumber => ({
   inapp: {
     title: 'New cash on delivery order',
-    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}; buyer equivalent {{money.seller_order_total}}. Payment is uncollected.`,
+    body: `You received cash on delivery order #${orderNumber}. Store total: {{money.seller_store_total}}. Cash due: {{money.seller_order_total}}. Awaiting buyer confirmation.`,
   },
   push: {
     title: 'New cash on delivery order',
-    body: `Order #${orderNumber}: store-currency total {{money.seller_store_total}}. Await buyer confirmation.`,
+    body: `Order #${orderNumber}. Store total: {{money.seller_store_total}}. Cash due: {{money.seller_order_total}}. Awaiting buyer confirmation.`,
   },
   email: {
     subject: `New cash on delivery order - ${orderNumber}`,
-    text: `You received cash on delivery order #${orderNumber}. Frozen store-currency total: {{money.seller_store_total}}. Buyer checkout equivalent: {{money.seller_order_total}}. Payment has not been collected.`,
-    html: `<p>You received cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p><p>Payment has not been collected.</p>`,
+    text: `You received cash on delivery order #${orderNumber}.\n\nStore total: {{money.seller_store_total}}.\nCash due for this order: {{money.seller_order_total}}.\nPlease wait for buyer confirmation before fulfillment. Payment is due on delivery.`,
+    html: `<p>You received cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Store total: <strong>{{money.seller_store_total}}</strong>.</p><p>Cash due for this order: <strong>{{money.seller_order_total}}</strong>.</p><p>Please wait for buyer confirmation before fulfillment. Payment is due on delivery.</p>`,
   },
   whatsapp: {
-    message: `New Cash on Delivery Order\n\nOrder: #${orderNumber}\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}\nPayment has not been collected.\n\nOpen Seller Dashboard to review your items.`,
+    message: `*New cash on delivery order*\n\nOrder: #${orderNumber}\nStore total: {{money.seller_store_total}}\nCash due for this order: {{money.seller_order_total}}\n\nPlease wait for buyer confirmation before fulfillment. Payment is due on delivery. View the order in Seller Dashboard.`,
   },
 });
 
@@ -725,7 +725,7 @@ async function enqueueCodOrderSellerNotifications(order, sellerId, {
     templates: codSellerPlacedTemplates(orderNumber),
     metadata: {
       category: 'order',
-      linkTo: `/seller-dashboard/order-management?orderId=${encodeURIComponent(id)}`,
+      linkTo: `/seller-dashboard/order/${encodeURIComponent(id)}`,
       channelId: 'seller',
       whatsappCategory: 'new_order',
       relatedOrder: id,
@@ -769,11 +769,11 @@ async function enqueueCodOrderBuyerConfirmationNotification(order, {
     },
     email: {
       subject: `Confirm cash on delivery order ${orderNumber}`,
-      text: `Review cash on delivery order #${orderNumber}. Order total: {{money.order_total}}. Confirm Order: ${confirmIntentUrl} Cancel Order: ${cancelIntentUrl}`,
-      html: `<p>Please confirm or cancel cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Order total: <strong>{{money.order_total}}</strong>.</p><div style="margin:24px 0"><a href="${escapeHtml(confirmIntentUrl)}" style="display:inline-block;background:#16a34a;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700;margin:0 10px 10px 0">Confirm Order</a><a href="${escapeHtml(cancelIntentUrl)}" style="display:inline-block;background:#dc2626;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700;margin:0 0 10px">Cancel Order</a></div><p style="color:#64748b;font-size:13px">For security, either button opens Rozare's decision page so email scanners cannot confirm or cancel your order automatically.</p>`,
+      text: `Your cash on delivery order #${orderNumber} is awaiting confirmation.\n\nAmount due on delivery: {{money.order_total}}.\nPlease review and confirm your order so fulfillment can begin.\nConfirm order: ${confirmIntentUrl}\nCancel order: ${cancelIntentUrl}`,
+      html: `<p>Your cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong> is awaiting confirmation.</p><p>Amount due on delivery: <strong>{{money.order_total}}</strong>.</p><p>Please review and confirm your order so fulfillment can begin.</p><div style="margin:24px 0"><a href="${escapeHtml(confirmIntentUrl)}" style="display:inline-block;background:#13b6bb;background-image:linear-gradient(110deg,#13b6bb,#5866f3);color:#fff;padding:12px 22px;border-radius:12px;text-decoration:none;font-weight:700;margin:0 10px 10px 0">Confirm order</a><a href="${escapeHtml(cancelIntentUrl)}" style="display:inline-block;background:#f3f0fa;color:#49566d;padding:12px 22px;border:1px solid #e0e4ef;border-radius:12px;text-decoration:none;font-weight:700;margin:0 0 10px">Cancel order</a></div><p style="color:#64748b;font-size:13px">Either button opens Rozare, where you can review and confirm your choice.</p>`,
     },
     whatsapp: {
-      message: `Rozare Cash on Delivery Order\n\nOrder: #${orderNumber}\nTotal: {{money.order_total}}\n\nReview and confirm: ${confirmUrl}`,
+      message: `*Confirm your cash on delivery order*\n\nOrder: #${orderNumber}\nAmount due on delivery: {{money.order_total}}\n\nPlease review and confirm your order so fulfillment can begin:\n${confirmUrl}`,
     },
   };
   const whatsappInteractive = selectedChannels.includes('whatsapp') ? {
@@ -813,46 +813,46 @@ const codSellerDecisionTemplates = (
   const cancellationCopy = {
     buyer: {
       title: 'Buyer cancelled order',
-      action: `The buyer cancelled order #${orderNumber}. Stop fulfillment for your items.`,
+      action: `The buyer cancelled order #${orderNumber}. Do not fulfill this cancelled order.`,
     },
     seller: {
       title: 'Seller cancelled order',
-      action: `A seller cancelled order #${orderNumber}. Stop fulfillment for your items.`,
+      action: `Order #${orderNumber} was cancelled by a seller. Do not fulfill this cancelled order.`,
     },
     admin: {
       title: 'Administrator cancelled order',
-      action: `An administrator cancelled order #${orderNumber}. Stop fulfillment for your items.`,
+      action: `Rozare cancelled order #${orderNumber}. Do not fulfill this cancelled order.`,
     },
     system: {
       title: 'Order cancelled automatically',
-      action: `Rozare automatically cancelled order #${orderNumber}. Stop fulfillment for your items.`,
+      action: `Rozare automatically cancelled order #${orderNumber}. Do not fulfill this cancelled order.`,
     },
   };
   const title = confirmed
-    ? (reconfirmed ? 'Buyer re-confirmed order' : 'Buyer confirmed order')
+    ? (reconfirmed ? 'Buyer reconfirmed order' : 'Buyer confirmed order')
     : cancellationCopy[actorRole].title;
   const action = confirmed
-    ? `The buyer ${reconfirmed ? 're-confirmed' : 'confirmed'} order #${orderNumber}. Prepare only your items after checking Seller Dashboard.`
+    ? `The buyer ${reconfirmed ? 'reconfirmed' : 'confirmed'} order #${orderNumber}. View the order in Seller Dashboard to begin fulfillment.`
     : cancellationCopy[actorRole].action;
   const settlementMeaning = confirmed
     ? 'Cash on delivery has not been collected yet.'
     : 'No cash on delivery payment was collected.';
   const allocationSentence = includeMoney
-    ? ' Your frozen store-currency total is {{money.seller_store_total}}; buyer checkout equivalent {{money.seller_order_total}}.'
+    ? ` Store total: {{money.seller_store_total}}. ${confirmed ? 'Cash due' : 'Original cash total'}: {{money.seller_order_total}}.`
     : '';
   const allocationLine = includeMoney
-    ? '\nStore-currency total: {{money.seller_store_total}}\nBuyer checkout equivalent: {{money.seller_order_total}}'
+    ? `\nStore total: {{money.seller_store_total}}\n${confirmed ? 'Cash due' : 'Original cash total'}: {{money.seller_order_total}}`
     : '';
   return {
     inapp: { title, body: `${action}${allocationSentence} ${settlementMeaning}` },
     push: { title, body: `Order #${orderNumber}.${allocationSentence} ${settlementMeaning}` },
     email: {
       subject: `${title} - ${orderNumber}`,
-      text: `${action}${includeMoney ? ' Your frozen store-currency total is {{money.seller_store_total}}; buyer checkout equivalent {{money.seller_order_total}}.' : ''} ${settlementMeaning}`,
-      html: `<p>${escapeHtml(action)}</p>${includeMoney ? '<p>Frozen store-currency total: <strong>{{money.seller_store_total}}</strong>.</p><p>Buyer checkout equivalent: <strong>{{money.seller_order_total}}</strong>.</p>' : ''}<p>${escapeHtml(settlementMeaning)}</p>`,
+      text: `${action}${allocationSentence}\n\n${settlementMeaning}`,
+      html: `<p>${escapeHtml(action)}</p>${includeMoney ? `<p>Store total: <strong>{{money.seller_store_total}}</strong>.</p><p>${confirmed ? 'Cash due' : 'Original cash total'}: <strong>{{money.seller_order_total}}</strong>.</p>` : ''}<p>${escapeHtml(settlementMeaning)}</p>`,
     },
     whatsapp: {
-      message: `${title}\n\nOrder: #${orderNumber}${allocationLine}\n${settlementMeaning}\n\nOpen Seller Dashboard for your items.`,
+      message: `*${title}*\n\nOrder: #${orderNumber}${allocationLine}\n${settlementMeaning}\n\n${confirmed ? 'View the order in Seller Dashboard to begin fulfillment.' : 'Do not fulfill this cancelled order. View the order in Seller Dashboard for details.'}`,
     },
   };
 };
@@ -910,7 +910,7 @@ async function enqueueCodOrderDecisionSellerNotifications(order, sellerId, {
     }),
     metadata: {
       category: 'order',
-      linkTo: `/seller-dashboard/order-management?orderId=${encodeURIComponent(id)}`,
+      linkTo: `/seller-dashboard/order/${encodeURIComponent(id)}`,
       channelId: 'seller',
       whatsappCategory: 'order_update',
       relatedOrder: id,
@@ -924,24 +924,24 @@ async function enqueueCodOrderDecisionSellerNotifications(order, sellerId, {
 const returnBuyerTemplates = (returnNumber, orderNumber, liabilityApplied) => liabilityApplied ? ({
   inapp: {
     title: 'Return refund completed',
-    body: `Return #${returnNumber} for order #${orderNumber} is complete. Refund total: {{money.refund_total}}. Available Wallet credit: {{money.refund_wallet_available}}. Applied to outstanding Wallet liability: {{money.refund_liability_applied}}. Remaining liability: {{money.refund_remaining_liability}}.`,
+    body: `Your return #${returnNumber} for order #${orderNumber} is complete. Refund: {{money.refund_total}}. Available Wallet credit: {{money.refund_wallet_available}}. Applied to your outstanding Wallet balance owed: {{money.refund_liability_applied}}. Balance still owed: {{money.refund_remaining_liability}}.`,
   },
   push: {
     title: 'Return refund completed',
-    body: `Refund {{money.refund_total}} processed: {{money.refund_wallet_available}} available and {{money.refund_liability_applied}} applied to Wallet liability. Remaining liability: {{money.refund_remaining_liability}}.`,
+    body: `Return #${returnNumber}: refund {{money.refund_total}} processed. Available credit: {{money.refund_wallet_available}}. Applied to your Wallet balance owed: {{money.refund_liability_applied}}. Still owed: {{money.refund_remaining_liability}}.`,
   },
   email: {
     subject: `Return refund completed - ${returnNumber}`,
-    text: `Return #${returnNumber} for order #${orderNumber} is complete. Refund total: {{money.refund_total}}. Available Wallet credit: {{money.refund_wallet_available}}. Applied to outstanding Wallet liability: {{money.refund_liability_applied}}. Remaining liability: {{money.refund_remaining_liability}}.`,
-    html: `<p>Return <strong>#${escapeHtml(returnNumber)}</strong> for order <strong>#${escapeHtml(orderNumber)}</strong> is complete.</p><p>Refund total: <strong>{{money.refund_total}}</strong>.</p><p>Available Wallet credit: <strong>{{money.refund_wallet_available}}</strong>.</p><p>Applied to outstanding Wallet liability: <strong>{{money.refund_liability_applied}}</strong>.</p><p>Remaining liability: <strong>{{money.refund_remaining_liability}}</strong>.</p>`,
+    text: `Your return #${returnNumber} for order #${orderNumber} is complete.\n\nRefund total: {{money.refund_total}}.\nAvailable Wallet credit: {{money.refund_wallet_available}}.\nApplied to your outstanding Wallet balance owed: {{money.refund_liability_applied}}.\nBalance still owed: {{money.refund_remaining_liability}}.`,
+    html: `<p>Your return <strong>#${escapeHtml(returnNumber)}</strong> for order <strong>#${escapeHtml(orderNumber)}</strong> is complete.</p><p>Refund total: <strong>{{money.refund_total}}</strong>.</p><p>Available Wallet credit: <strong>{{money.refund_wallet_available}}</strong>.</p><p>Applied to your outstanding Wallet balance owed: <strong>{{money.refund_liability_applied}}</strong>.</p><p>Balance still owed: <strong>{{money.refund_remaining_liability}}</strong>.</p>`,
   },
   whatsapp: {
-    message: `Rozare Return Refund Completed\n\nReturn: #${returnNumber}\nOrder: #${orderNumber}\nRefund total: {{money.refund_total}}\nAvailable Wallet credit: {{money.refund_wallet_available}}\nApplied to Wallet liability: {{money.refund_liability_applied}}\nRemaining liability: {{money.refund_remaining_liability}}\n\nOpen your Rozare account for details.`,
+    message: `*Your return refund is complete*\n\nReturn: #${returnNumber}\nOrder: #${orderNumber}\nRefund total: {{money.refund_total}}\nAvailable Wallet credit: {{money.refund_wallet_available}}\nApplied to your outstanding Wallet balance owed: {{money.refund_liability_applied}}\nBalance still owed: {{money.refund_remaining_liability}}\n\nView your return in Rozare for details.`,
   },
 }) : ({
   inapp: {
     title: 'Return refund completed',
-    body: `Return #${returnNumber} for order #${orderNumber} is complete. Wallet credit: {{money.refund_total}}.`,
+    body: `Your return #${returnNumber} for order #${orderNumber} is complete. {{money.refund_total}} was credited to your Rozare Wallet.`,
   },
   push: {
     title: 'Return refund completed',
@@ -949,18 +949,18 @@ const returnBuyerTemplates = (returnNumber, orderNumber, liabilityApplied) => li
   },
   email: {
     subject: `Return refund completed - ${returnNumber}`,
-    text: `Return #${returnNumber} for order #${orderNumber} is complete. Wallet credit: {{money.refund_total}}.`,
-    html: `<p>Return <strong>#${escapeHtml(returnNumber)}</strong> for order <strong>#${escapeHtml(orderNumber)}</strong> is complete.</p><p>Wallet credit: <strong>{{money.refund_total}}</strong>.</p>`,
+    text: `Your return #${returnNumber} for order #${orderNumber} is complete.\n\n{{money.refund_total}} was credited to your Rozare Wallet. You can use it for your next purchase.`,
+    html: `<p>Your return <strong>#${escapeHtml(returnNumber)}</strong> for order <strong>#${escapeHtml(orderNumber)}</strong> is complete.</p><p><strong>{{money.refund_total}}</strong> was credited to your Rozare Wallet. You can use it for your next purchase.</p>`,
   },
   whatsapp: {
-    message: `Rozare Return Refund Completed\n\nReturn: #${returnNumber}\nOrder: #${orderNumber}\nWallet credit: {{money.refund_total}}\n\nOpen your Rozare account for details.`,
+    message: `*Your return refund is complete*\n\nReturn: #${returnNumber}\nOrder: #${orderNumber}\nWallet refund: {{money.refund_total}}\n\nThe refund is available in your Rozare Wallet for your next purchase. View your return in Rozare for details.`,
   },
 });
 
 const returnSellerTemplates = (returnNumber, orderNumber) => ({
   inapp: {
     title: 'Return refund completed',
-    body: `Refund {{money.refund_total}} was processed for return #${returnNumber}, order #${orderNumber}. Buyer Wallet allocation details remain private.`,
+    body: `Return #${returnNumber} for order #${orderNumber} is complete. The buyer's refund of {{money.refund_total}} has been processed.`,
   },
   push: {
     title: 'Return refund completed',
@@ -968,11 +968,11 @@ const returnSellerTemplates = (returnNumber, orderNumber) => ({
   },
   email: {
     subject: `Return completed - ${returnNumber}`,
-    text: `Refund {{money.refund_total}} was processed for return #${returnNumber}, order #${orderNumber}. Buyer Wallet allocation details remain private.`,
-    html: `<p>Refund <strong>{{money.refund_total}}</strong> was processed for return <strong>#${escapeHtml(returnNumber)}</strong>, order <strong>#${escapeHtml(orderNumber)}</strong>.</p><p>Buyer Wallet allocation details remain private.</p>`,
+    text: `Return #${returnNumber} for order #${orderNumber} is complete.\n\nThe buyer's refund of {{money.refund_total}} has been processed to their Rozare Wallet. The amount is shown in the original order currency. View the return in Seller Dashboard for details.`,
+    html: `<p>Return <strong>#${escapeHtml(returnNumber)}</strong> for order <strong>#${escapeHtml(orderNumber)}</strong> is complete.</p><p>The buyer's refund of <strong>{{money.refund_total}}</strong> has been processed to their Rozare Wallet.</p><p>The amount is shown in the original order currency. View the return in Seller Dashboard for details.</p>`,
   },
   whatsapp: {
-    message: `Return Refund Completed\n\nReturn: #${returnNumber}\nOrder: #${orderNumber}\nRefund processed: {{money.refund_total}}\n\nBuyer Wallet allocation details remain private. Open Seller Dashboard for details.`,
+    message: `*Return completed*\n\nReturn: #${returnNumber}\nOrder: #${orderNumber}\nBuyer refund: {{money.refund_total}} (order currency)\n\nThe refund has been processed to the buyer's Rozare Wallet. View the return in Seller Dashboard for details.`,
   },
 });
 
@@ -1116,23 +1116,24 @@ const withdrawalTemplates = ({
   statusLabel,
   statusMeaning = '',
   note = '',
+  reference = '',
   requestedAndPayout = true,
 }) => {
   const noteText = note ? ` Note: ${note}` : '';
   const meaningText = statusMeaning ? ` ${statusMeaning}` : '';
   const amountText = requestedAndPayout
-    ? 'Requested: {{money.requested_amount}}. Frozen bank payout: {{money.payout_amount}}.'
+    ? 'Requested amount: {{money.requested_amount}}. Bank transfer amount: {{money.payout_amount}}.'
     : 'Amount: {{money.requested_amount}}.';
   return {
     inapp: { title, body: `${amountText} Status: ${statusLabel}.${meaningText}${noteText}` },
     push: { title, body: `${amountText} Status: ${statusLabel}.${meaningText}` },
     email: {
       subject: title,
-      text: `${amountText} Status: ${statusLabel}.${meaningText}${noteText}`,
-      html: `<p>${amountText}</p><p>Status: <strong>${escapeHtml(statusLabel)}</strong>.</p>${statusMeaning ? `<p>${escapeHtml(statusMeaning)}</p>` : ''}${note ? `<p>Note: ${escapeHtml(note)}</p>` : ''}`,
+      text: `${amountText}\nStatus: ${statusLabel}.${meaningText}${noteText}${reference ? `\nWithdrawal reference: ${reference}` : ''}`,
+      html: `<p>${amountText}</p><p>Status: <strong>${escapeHtml(statusLabel)}</strong>.</p>${statusMeaning ? `<p>${escapeHtml(statusMeaning)}</p>` : ''}${note ? `<p>Note: ${escapeHtml(note)}</p>` : ''}${reference ? `<p>Withdrawal reference: ${escapeHtml(reference)}</p>` : ''}`,
     },
     whatsapp: {
-      message: `${title}\n\n${amountText.replace(/\. /g, '\n')}\nStatus: ${statusLabel}${statusMeaning ? `\n${statusMeaning}` : ''}${note ? `\nNote: ${note}` : ''}\n\nOpen Seller Dashboard > Payments for details.`,
+      message: `*${title}*\n\n${amountText.replace(/\. /g, '\n')}\nStatus: ${statusLabel}${statusMeaning ? `\n${statusMeaning}` : ''}${note ? `\nNote: ${note}` : ''}${reference ? `\nWithdrawal reference: ${reference}` : ''}\n\nView Payments in Seller Dashboard for details.`,
     },
   };
 };
@@ -1160,7 +1161,9 @@ async function enqueueWithdrawalRequestedSellerNotifications(withdrawal, {
     channels,
     templates: withdrawalTemplates({
       title: 'Withdrawal request received',
-      statusLabel: 'Pending admin review',
+      statusLabel: 'Pending review',
+      statusMeaning: 'Your request was received. The requested funds are reserved while Rozare reviews it.',
+      reference: id,
     }),
     metadata: {
       category: 'payment',
@@ -1204,14 +1207,14 @@ async function enqueueWithdrawalStatusSellerNotifications(withdrawal, {
   }
   const operationHash = crypto.createHash('sha256').update(operationKey).digest('hex');
   const statusMeanings = {
-    pending: 'The request is awaiting admin review; no payout has been sent.',
-    approved: 'The funds are reserved, but no bank payout has been sent yet.',
-    processing: 'The bank transfer is processing and is not yet recorded as paid.',
-    manual_review: 'The transfer outcome requires manual review and the full reservation remains held.',
-    failed: 'The transfer definitively failed with no payout, so the reservation was released.',
-    paid: 'The bank payout is recorded as paid with administrator-supplied transfer proof.',
-    rejected: 'The request was rejected and its reservation was released.',
-    cancelled: 'The request was cancelled and its reservation was released.',
+    pending: 'Your request is awaiting review. The requested funds remain reserved; no bank transfer has been sent.',
+    approved: 'Your request was approved. The requested funds remain reserved until the bank transfer is completed.',
+    processing: 'Your bank transfer is being processed. We will notify you when its status is updated.',
+    manual_review: 'Rozare is checking the transfer outcome. The requested funds remain reserved until this review is resolved.',
+    failed: 'The bank transfer failed and the withdrawal reservation was released. View Payments for your current withdrawable balance.',
+    paid: 'Your bank transfer has been recorded as paid. View Payments for the transfer details.',
+    rejected: 'Your request was rejected and the withdrawal reservation was released. View Payments for your current withdrawable balance.',
+    cancelled: 'Your request was cancelled and the withdrawal reservation was released. View Payments for your current withdrawable balance.',
   };
   const statusMeaning = statusMeanings[status];
   if (!statusMeaning) throw outboxError('Withdrawal notification status is unsupported.');
@@ -1231,6 +1234,7 @@ async function enqueueWithdrawalStatusSellerNotifications(withdrawal, {
       statusLabel,
       statusMeaning,
       note,
+      reference: id,
     }),
     metadata: {
       category: 'payment',
@@ -1253,16 +1257,16 @@ async function enqueueWithdrawalRequestedAdminNotifications(withdrawal, adminIds
   const templates = {
     inapp: {
       title: 'New seller withdrawal request',
-      body: `${safeSeller} requested {{money.requested_amount}}. Transfer exactly {{money.payout_amount}} only to this request's frozen payout destination after approval.`,
+      body: `${safeSeller} requested {{money.requested_amount}}. Bank transfer amount: {{money.payout_amount}}. Review the request and use its saved payout details if approved.`,
     },
     push: {
       title: 'New seller withdrawal request',
-      body: `${safeSeller}: {{money.requested_amount}} requested; frozen bank payout {{money.payout_amount}}.`,
+      body: `${safeSeller} requested {{money.requested_amount}}. Bank transfer amount: {{money.payout_amount}}.`,
     },
     email: {
       subject: 'New seller withdrawal request',
-      text: `${safeSeller} requested {{money.requested_amount}}. If approved, transfer exactly {{money.payout_amount}} only to the frozen payout destination on this request.`,
-      html: `<p><strong>${escapeHtml(safeSeller)}</strong> requested <strong>{{money.requested_amount}}</strong>.</p><p>If approved, transfer exactly <strong>{{money.payout_amount}}</strong> only to the frozen payout destination on this request.</p>`,
+      text: `${safeSeller} requested a withdrawal.\n\nRequested amount: {{money.requested_amount}}.\nBank transfer amount: {{money.payout_amount}}.\nWithdrawal reference: ${id}\nReview the request. If approved, send the exact bank transfer amount to the payout destination saved on this request.`,
+      html: `<p><strong>${escapeHtml(safeSeller)}</strong> requested a withdrawal.</p><p>Requested amount: <strong>{{money.requested_amount}}</strong>.</p><p>Bank transfer amount: <strong>{{money.payout_amount}}</strong>.</p><p>Withdrawal reference: ${escapeHtml(id)}</p><p>Review the request. If approved, send the exact bank transfer amount to the payout destination saved on this request.</p>`,
     },
   };
   const uniqueAdmins = [...new Set((adminIds || []).map(stringId).filter(Boolean))];
@@ -1318,24 +1322,24 @@ async function enqueueWalletTransactionNotification(transaction, {
     money = liabilityApplied
       ? [breakdown.total, breakdown.available, breakdown.liabilityApplied, breakdown.remainingLiability]
       : [breakdown.total];
-    const title = liabilityApplied ? 'Wallet credit allocated' : 'Wallet credited';
+    const title = liabilityApplied ? 'Wallet credit processed' : 'Wallet credited';
     templates = liabilityApplied ? {
       inapp: {
         title,
-        body: `Incoming credit: {{money.wallet_amount}}. Available Wallet credit: {{money.wallet_available_credit}}. Applied to outstanding Wallet liability: {{money.wallet_liability_applied}}. Remaining liability: {{money.wallet_remaining_liability}}.`,
+        body: `Your Wallet credit of {{money.wallet_amount}} was processed. Available credit: {{money.wallet_available_credit}}. Applied to your outstanding Wallet balance owed: {{money.wallet_liability_applied}}. Balance still owed: {{money.wallet_remaining_liability}}.`,
       },
       push: {
         title,
-        body: `{{money.wallet_amount}} processed: {{money.wallet_available_credit}} available and {{money.wallet_liability_applied}} applied to Wallet liability.`,
+        body: `Wallet credit: {{money.wallet_amount}}. Available: {{money.wallet_available_credit}}. Applied to your Wallet balance owed: {{money.wallet_liability_applied}}. Still owed: {{money.wallet_remaining_liability}}.`,
       },
       email: {
         subject: title,
-        text: `Incoming credit: {{money.wallet_amount}}. Available Wallet credit: {{money.wallet_available_credit}}. Applied to outstanding Wallet liability: {{money.wallet_liability_applied}}. Remaining liability: {{money.wallet_remaining_liability}}. Reference: ${safeText(transaction?.referenceId, 120)}.`,
-        html: `<p>Incoming credit: <strong>{{money.wallet_amount}}</strong>.</p><p>Available Wallet credit: <strong>{{money.wallet_available_credit}}</strong>.</p><p>Applied to outstanding Wallet liability: <strong>{{money.wallet_liability_applied}}</strong>.</p><p>Remaining liability: <strong>{{money.wallet_remaining_liability}}</strong>.</p><p>Reference: ${escapeHtml(safeText(transaction?.referenceId, 120))}</p>`,
+        text: `Your Wallet credit was processed.\n\nTotal credit: {{money.wallet_amount}}.\nAvailable Wallet credit: {{money.wallet_available_credit}}.\nApplied to your outstanding Wallet balance owed: {{money.wallet_liability_applied}}.\nBalance still owed: {{money.wallet_remaining_liability}}.\nReference: ${safeText(transaction?.referenceId, 120)}.`,
+        html: `<p>Your Wallet credit was processed.</p><p>Total credit: <strong>{{money.wallet_amount}}</strong>.</p><p>Available Wallet credit: <strong>{{money.wallet_available_credit}}</strong>.</p><p>Applied to your outstanding Wallet balance owed: <strong>{{money.wallet_liability_applied}}</strong>.</p><p>Balance still owed: <strong>{{money.wallet_remaining_liability}}</strong>.</p><p>Reference: ${escapeHtml(safeText(transaction?.referenceId, 120))}</p>`,
       },
     } : {
       inapp: { title, body: '{{money.wallet_amount}} was credited to your Rozare Wallet.' },
-      push: { title, body: '{{money.wallet_amount}} was credited to your wallet.' },
+      push: { title, body: '{{money.wallet_amount}} was credited to your Rozare Wallet.' },
       email: {
         subject: title,
         text: `{{money.wallet_amount}} was credited to your Rozare Wallet. Reference: ${safeText(transaction?.referenceId, 120)}.`,
@@ -1343,15 +1347,19 @@ async function enqueueWalletTransactionNotification(transaction, {
       },
     };
   } else {
-    const title = 'Wallet payment completed';
+    const isOrderPayment = transaction.type === 'order_payment';
+    const title = isOrderPayment ? 'Wallet payment completed' : 'Wallet balance updated';
+    const debitText = isOrderPayment
+      ? 'You paid {{money.wallet_amount}} from your Rozare Wallet.'
+      : '{{money.wallet_amount}} was deducted from your Rozare Wallet. View your transaction history for the reason.';
     money = [walletTransactionSnapshot(transaction)];
     templates = {
-      inapp: { title, body: '{{money.wallet_amount}} was debited from your Rozare Wallet.' },
-      push: { title, body: '{{money.wallet_amount}} was debited from your wallet.' },
+      inapp: { title, body: debitText },
+      push: { title, body: debitText },
       email: {
         subject: title,
-        text: `{{money.wallet_amount}} was debited from your Rozare Wallet. Reference: ${safeText(transaction?.referenceId, 120)}.`,
-        html: `<p><strong>{{money.wallet_amount}}</strong> was debited from your Rozare Wallet.</p><p>Reference: ${escapeHtml(safeText(transaction?.referenceId, 120))}</p>`,
+        text: `${debitText}\n\nReference: ${safeText(transaction?.referenceId, 120)}.`,
+        html: `<p>${debitText}</p><p>Reference: ${escapeHtml(safeText(transaction?.referenceId, 120))}</p>`,
       },
     };
   }

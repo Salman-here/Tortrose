@@ -230,7 +230,7 @@ exports.sendWhatsAppOTP = async (req, res) => {
         // Generate OTP and send it FIRST; persist only on success to avoid
         // burning the per-hour quota when the gateway fails.
         const otp = generateOTP();
-        const message = `*Rozare Verification*\n\nYour verification code is: *${otp}*\n\nThis code expires in ${OTP_EXPIRY_MINUTES} minutes.\nDo not share this code with anyone.`;
+        const message = `*Rozare seller WhatsApp verification*\n\nYour verification code: *${otp}*\nExpires in ${OTP_EXPIRY_MINUTES} minutes.\n\nEnter this code in Rozare to connect your seller WhatsApp number. Do not share it. If you did not request this, ignore the message.`;
 
         try {
             await sellerEvolutionClient.sendText(digits, message);

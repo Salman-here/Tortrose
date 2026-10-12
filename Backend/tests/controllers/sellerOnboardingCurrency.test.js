@@ -255,6 +255,7 @@ describe('seller onboarding currency controllers', () => {
       get: () => '',
     }, sellerResponse.res);
     expect(sellerResponse.statusCode).toBe(400);
+    expect(mockOtpFindOne.mock.calls[0][0].createdAt.$gte).toBeInstanceOf(Date);
     expect(mockConstructedUsers).toHaveLength(0);
     expect(mockConsumeWhatsApp).not.toHaveBeenCalled();
 
@@ -274,6 +275,7 @@ describe('seller onboarding currency controllers', () => {
       body: { email: 'seller@example.com', otp: '123456' },
     }, buyerResponse.res);
     expect(buyerResponse.statusCode).toBe(400);
+    expect(mockOtpFindOne.mock.calls[1][0].createdAt.$gte).toBeInstanceOf(Date);
     expect(mockConstructedUsers).toHaveLength(0);
     expect(mockOtpDeleteOne).not.toHaveBeenCalled();
   });

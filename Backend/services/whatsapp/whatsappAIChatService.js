@@ -397,21 +397,15 @@ async function loadWhatsAppConversation(userId) {
 
 async function handleUnlinkedUserOnMainInstance(recipient) {
     const msg = [
-        `Hey there! 👋`,
+        `*Connect WhatsApp to Rozare*`,
         ``,
-        `I'm *Rozare AI* — your personal shopping assistant! 🤖`,
+        `Link your WhatsApp number to your Rozare account to use your shopping assistant here.`,
         ``,
-        `To chat with me on WhatsApp, you'll need to link your WhatsApp number on your Rozare account first.`,
+        `Sign in at ${SITE_URL}/user-dashboard/whatsapp`,
         ``,
-        `Here's how:`,
-        `1️⃣ Log in at ${SITE_URL}`,
-        `2️⃣ Go to your Dashboard → WhatsApp AI`,
-        `3️⃣ Link your WhatsApp number`,
-        `4️⃣ Verify with the OTP code`,
+        `Open WhatsApp AI, enter your number and verify it with the code sent to you.`,
         ``,
-        `Once verified, you can search products, place orders, check status, and more — all from WhatsApp! 💙`,
-        ``,
-        `Visit: ${SITE_URL}`,
+        `Once connected, you can find products, manage your cart and check your orders from WhatsApp.`,
     ].join('\n');
 
     try {
@@ -438,29 +432,27 @@ async function handleNonSellerOnSellerInstance(phone, recipient = phone) {
     let msg;
     if (user && user.role === 'user') {
         msg = [
-            `Hey ${user.username || 'there'}! 👋`,
+            `Hi ${user.username || 'there'},`,
             ``,
-            `I'm the *Rozare Seller Assistant* — I help Rozare sellers manage their stores. 🏪`,
+            `*Rozare Seller Assistant*`,
             ``,
-            `It looks like you're a Rozare shopper, not a seller.`,
+            `This assistant is for seller accounts.`,
             ``,
-            `To chat with Rozare AI on WhatsApp as a shopper, link and verify your WhatsApp number from your User Dashboard.`,
-            `You can also use the web chat here: ${SITE_URL}/ai-chat`,
+            `For shopping help, connect WhatsApp in your account: ${SITE_URL}/user-dashboard/whatsapp`,
             ``,
-            `Want to become a seller? Visit: ${SITE_URL}/become-seller 🚀`,
+            `To start selling: ${SITE_URL}/become-seller`,
         ].join('\n');
     } else {
         msg = [
-            `Hey there! 👋`,
+            `*Connect your seller account*`,
             ``,
-            `I'm the *Rozare Seller Assistant* — I help Rozare sellers manage their stores. 🏪`,
+            `Link and verify your seller WhatsApp number to manage your store with Rozare Seller Assistant.`,
             ``,
-            `This number is not registered as a Rozare seller account.`,
+            `This WhatsApp number is not linked to a seller account.`,
             ``,
-            `If you're a Rozare seller, make sure your WhatsApp number is verified in your seller dashboard.`,
+            `Open WhatsApp Settings in your seller dashboard: ${SITE_URL}/seller-dashboard/whatsapp-settings`,
             ``,
-            `If you're looking to shop, visit: ${SITE_URL}`,
-            `Want to become a seller? Visit: ${SITE_URL}/become-seller 🚀`,
+            `To start selling: ${SITE_URL}/become-seller`,
         ].join('\n');
     }
 
@@ -534,12 +526,11 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
         const rateCheck = await checkRateLimit(user._id, matchedPhone || primaryPhone, effectiveInstanceType);
         if (!rateCheck.allowed) {
             const msg = [
-                `Hey ${user.username || 'there'}! 😅`,
+                `Hi ${user.username || 'there'},`,
                 ``,
-                `You've sent a lot of messages this hour. To keep things running smoothly, please try again in about ${rateCheck.resetInMinutes} minutes.`,
+                `You have reached the hourly WhatsApp chat limit. Please try again in about ${rateCheck.resetInMinutes} minutes.`,
                 ``,
-                `In the meantime, you can use the web chat at:`,
-                `${SITE_URL}/ai-chat`,
+                `You can continue using your Rozare account at ${SITE_URL}.`,
             ].join('\n');
             await sendResponse(finalReplyTo, msg, effectiveInstanceType);
             return;
@@ -643,11 +634,11 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
             sendStartedAt = Date.now();
             if (result.responseText) {
                 const responseText = sanitizeVisibleAIResponse(result.responseText) ||
-                    "Done. I processed that, but I do not have a written update to send.";
+                    "I couldn't provide a clear update. Check the relevant page in Rozare before retrying an order or payment action.";
                 await sendResponse(finalReplyTo, responseText, effectiveInstanceType);
             } else {
                 // AI returned empty response — send a fallback
-                await sendResponse(finalReplyTo, "I'm sorry, I couldn't process that. Could you try rephrasing? 🤔", effectiveInstanceType);
+                await sendResponse(finalReplyTo, "I couldn't provide a clear update. Check your Rozare account for any changes before retrying, or rephrase your question.", effectiveInstanceType);
             }
 
             textSentAt = Date.now();
@@ -661,7 +652,7 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
                     } catch (imgErr) {
                         console.error(`[wa-ai-chat] Failed to send product image to ${matchedPhone || primaryPhone}:`, imgErr.message);
                         // Fallback: send image URL as text
-                        await client.sendText(finalReplyTo, `📸 Image: ${img.imageUrl}\n${img.caption}`).catch(() => {});
+                        await client.sendText(finalReplyTo, `View product image: ${img.imageUrl}\n${img.caption}`).catch(() => {});
                     }
                 }
             }
@@ -680,10 +671,10 @@ async function processIncomingWhatsAppMessageNow(phone, messageText, instanceTyp
             // suppress this so the same failed event cannot produce duplicate replies.
             try {
                 const errorMsg = err.message?.includes('rate limit')
-                    ? "I'm a bit busy right now. Please try again in a moment! 🙏"
+                    ? "Rozare AI is busy right now. Please try again shortly."
                     : err.message?.includes('credits')
-                        ? "I'm temporarily unavailable. Please try again later or use the web chat at " + SITE_URL + "/ai-chat"
-                        : "Oops! Something went wrong on my end. Please try again or visit " + SITE_URL + "/ai-chat 💙";
+                        ? "Rozare AI is temporarily unavailable. Please try again later. You can continue using your account at " + SITE_URL
+                        : "I couldn't confirm the result of your request. Check your Rozare account before retrying: " + SITE_URL;
                 await sendResponse(replyTo, errorMsg, instanceType);
             } catch (sendErr) {
                 console.error('[wa-ai-chat] Failed to send error message:', sendErr.message);

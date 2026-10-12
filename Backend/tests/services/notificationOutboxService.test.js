@@ -126,6 +126,9 @@ describe('durable notification outbox enqueue contracts', () => {
         currency: 'PKR',
         sourcePath: 'orderSummary.totalAmount',
       }));
+      if (record.channel === 'whatsapp') {
+        expect(record.payload.message).toContain(`View details: https://rozare.com/user-dashboard/order/detail/${input.aggregateId}`);
+      }
     }
   });
 

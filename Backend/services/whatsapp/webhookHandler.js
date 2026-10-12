@@ -170,22 +170,20 @@ const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName) => {
 
         const message = isConfirmed
             ? [
-                `🎉 Awesome, ${firstName}!`,
+                `Hi ${firstName},`,
                 ``,
-                `Your order *#${orderId}* is confirmed! ✅`,
+                `Your order *#${orderId}* is confirmed.`,
                 ``,
-                `You'll get updates here as each seller prepares and ships your items.`,
+                `You'll receive updates as your items are prepared and shipped.`,
                 ``,
-                `Need anything? Just reply to this chat. Thanks for shopping with Rozare! 💙`,
+                `Track your order: https://rozare.com/track-order`,
             ].join('\n')
             : [
-                `Got it, ${firstName}! 👍`,
+                `Hi ${firstName},`,
                 ``,
-                `Order *#${orderId}* has been cancelled. ❌`,
+                `Order *#${orderId}* has been cancelled.`,
                 ``,
-                `If you change your mind, you can place a new order at rozare.com.`,
-                ``,
-                `Hope to see you again soon! 💙  — Rozare`,
+                `Track your order: https://rozare.com/track-order`,
             ].join('\n');
 
         await evolution.sendText(phone, message);
@@ -202,17 +200,18 @@ const sendLockedMessage = async (phone, orderId, buyerName, prevDecision = '') =
         // locked-in state to the buyer so they know why tapping the other
         // button seems to do nothing.
         const prevLine = prevDecision === 'confirmed'
-            ? `You already *confirmed* this order — we're processing it now. ✅`
+            ? `This order is already *confirmed*.`
             : prevDecision === 'cancelled'
-                ? `You already *cancelled* this order. ❌`
-                : `Your decision for order *#${orderId}* is now locked. 🔒`;
+                ? `This order is already *cancelled*.`
+                : `The decision for order *#${orderId}* can no longer be changed from this message.`;
 
         const msg = [
-            `Hey ${firstName}! 👋`,
+            `Hi ${firstName},`,
             ``,
             prevLine,
+            `Order: *#${orderId}*`,
             ``,
-            `Need to change something? Please contact our support team — they'll sort it out for you. 💙`,
+            `View your order in Rozare for its latest status and available actions.`,
         ].join('\n');
         await evolution.sendText(phone, msg);
     } catch (err) {
@@ -224,12 +223,12 @@ const sendUnclearReplyHint = async (phone, orderId, buyerName) => {
     try {
         const firstName = buyerName?.split(' ')[0] || 'there';
         const msg = [
-            `Hi ${firstName} 👋`,
+            `Hi ${firstName},`,
             ``,
-            `I didn't quite catch that for order *#${orderId}*.`,
+            `Order *#${orderId}* is waiting for your confirmation.`,
             ``,
             `Please use the Confirm order or Cancel order buttons from the latest order message.`,
-            `Typed replies are not accepted for order confirmation.`,
+            `A text reply does not confirm or cancel the order.`,
         ].join('\n');
         await evolution.sendText(phone, msg);
     } catch (err) {
@@ -245,10 +244,10 @@ const sendReconfirmPrompt = async (phone, order, contextMessage) => {
         // No text decision fallback: order decisions must come from buttons.
         const firstName = order.shippingInfo?.fullName?.split(' ')[0] || 'there';
         const msg = [
-            contextMessage || `Hey ${firstName}! This order was cancelled.`,
+            contextMessage || `Hi ${firstName}, this order was cancelled.`,
             ``,
-            `I could not send the re-confirmation buttons right now.`,
-            `Please place a new order or contact Rozare support if you need help.`,
+            `The confirmation buttons are unavailable right now.`,
+            `View your order in Rozare for its latest status and available actions.`,
         ].join('\n');
         await evolution.sendText(phone, msg);
     }
@@ -788,7 +787,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     }
                     await evolution.sendText(outboundTo, [
                         'This order confirmation request has expired or was replaced.',
-                        'Please check your Rozare account for the current order status.',
+                        'Check the current order status at https://rozare.com/track-order.',
                     ].join('\n'));
                     continue;
                 }
@@ -801,11 +800,11 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     if (order.orderStatus !== 'cancelled') {
                         // Already re-confirmed (maybe from another tap) — show current status
                         const msg = [
-                            `Hey ${firstName}! 👋`,
+                            `Hi ${firstName},`,
                             ``,
-                            `Your order *#${order.orderId}* is already confirmed! ✅`,
+                            `Order *#${order.orderId}* has already been updated.`,
                             ``,
-                            `Status: *${order.orderStatus}* — we'll keep you updated. 💙`,
+                            `Current status: *${order.orderStatus}*. Track your order at https://rozare.com/track-order.`,
                         ].join('\n');
                         await evolution.sendText(outboundTo, msg);
                         continue;
@@ -833,7 +832,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         await applyVote(job, 'yes');
                         await sendResponseMessage(outboundTo, true, order.orderId, firstName);
                     } else {
-                        const msg = `Hey ${firstName}! Something changed. Please visit rozare.com 💙`;
+                        const msg = `Hi ${firstName}, the order status changed while you responded. Review it at https://rozare.com/track-order.`;
                         await evolution.sendText(outboundTo, msg);
                     }
                     continue;
@@ -869,17 +868,17 @@ exports.handleEvolutionWebhook = async (req, res) => {
                             await applyVote(job, 'no');
                             await sendResponseMessage(outboundTo, false, order.orderId, firstName);
                         } else {
-                            const msg = `Hey ${firstName}! Something changed. Please visit rozare.com 💙`;
+                            const msg = `Hi ${firstName}, the order status changed while you responded. Review it at https://rozare.com/track-order.`;
                             await evolution.sendText(outboundTo, msg);
                         }
                     } else {
                         // Order is already cancelled, just acknowledge
                         const msg = [
-                            `Got it, ${firstName}! 👍`,
+                            `Hi ${firstName},`,
                             ``,
-                            `Your order *#${order.orderId}* will stay cancelled. No worries! 💙`,
+                            `Your order *#${order.orderId}* remains cancelled.`,
                             ``,
-                            `If you change your mind, you can always place a new order at rozare.com`,
+                            `Track your order: https://rozare.com/track-order`,
                         ].join('\n');
                         await evolution.sendText(outboundTo, msg);
                     }
@@ -928,21 +927,21 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         if (isYes) {
                             // Tap confirm — already confirmed
                             const msg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `You have already confirmed this order via your email (${maskedEmail}). ✅`,
                                 ``,
-                                `No action needed — we'll keep you updated. 💙`,
+                                `Track your order: https://rozare.com/track-order`,
                             ].join('\n');
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             // Tap cancel — already confirmed via email, tell them to visit account
                             const msg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `You have already confirmed this order via your email (${maskedEmail}). ✅`,
                                 ``,
-                                `Want to cancel? Visit your Rozare account to cancel this order. 💙`,
+                                `Open your Rozare order to check the available cancellation options.`,
                             ].join('\n');
                             await evolution.sendText(outboundTo, msg);
                         }
@@ -954,18 +953,18 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         if (!isYes) {
                             // Tap cancel — already cancelled
                             const msg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `You have already cancelled this order via your email (${maskedEmail}). ❌`,
                                 ``,
-                                `No action needed. 💙`,
+                                `No further action is needed.`,
                             ].join('\n');
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             // Tap confirm — wants to re-order! Send "Are you sure?" prompt
                             console.log(`[whatsapp] Order ${order.orderId} was cancelled via email; buyer tapped confirm on WA — sending reconfirm prompt`);
                             const contextMsg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `You cancelled this order via your email (${maskedEmail}).`,
                             ].join('\n');
@@ -979,18 +978,18 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         if (!isYes) {
                             // Tap cancel — already cancelled from account
                             const msg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `You have already cancelled this order from your Rozare account. ❌`,
                                 ``,
-                                `No action needed. 💙`,
+                                `No further action is needed.`,
                             ].join('\n');
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             // Tap confirm — wants to re-order from account cancel! Send prompt
                             console.log(`[whatsapp] Order ${order.orderId} was cancelled from account; buyer tapped confirm on WA — sending reconfirm prompt`);
                             const contextMsg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `You cancelled this order from your Rozare account.`,
                             ].join('\n');
@@ -1008,20 +1007,20 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         if (!isYes) {
                             // Tap cancel — already cancelled
                             const msg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `Your order *#${order.orderId}* is already cancelled. ❌`,
                                 ``,
                                 `You cancelled it from ${cancelledFrom}.`,
                                 ``,
-                                `No action needed. 💙`,
+                                `No further action is needed.`,
                             ].join('\n');
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             // Tap confirm — wants to re-order! Send prompt
                             console.log(`[whatsapp] Order ${order.orderId} cancelled after WA confirm; buyer tapped confirm — sending reconfirm prompt`);
                             const contextMsg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
                                 `You cancelled this order from ${cancelledFrom} after confirming on WhatsApp.`,
                             ].join('\n');
@@ -1034,20 +1033,20 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     if (confirmedOnSite) {
                         if (isYes) {
                             const msg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
-                                `Your order *#${order.orderId}* is already being processed (status: *${order.orderStatus}*). ✅`,
+                                `Current status of order *#${order.orderId}*: *${order.orderStatus}*.`,
                                 ``,
-                                `No action needed — we'll keep you updated. 💙`,
+                                `No further action is needed. Track your order at https://rozare.com/track-order.`,
                             ].join('\n');
                             await evolution.sendText(outboundTo, msg);
                         } else {
                             const msg = [
-                                `Hey ${firstName}! 👋`,
+                                `Hi ${firstName},`,
                                 ``,
-                                `Your order *#${order.orderId}* is already being processed (status: *${order.orderStatus}*).`,
+                                `Current status of order *#${order.orderId}*: *${order.orderStatus}*.`,
                                 ``,
-                                `Want to cancel? Visit your Rozare account. 💙`,
+                                `Open your Rozare order to check the available cancellation or return options.`,
                             ].join('\n');
                             await evolution.sendText(outboundTo, msg);
                         }
@@ -1064,13 +1063,13 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     // Confirmed via WA, now taps cancel → tell them to visit account with live status
                     if (confirmedViaWA && !isYes) {
                         const msg = [
-                            `Hey ${firstName}! 👋`,
+                            `Hi ${firstName},`,
                             ``,
                             `You have already confirmed this order via WhatsApp. ✅`,
                             ``,
                             `Current status: *${order.orderStatus}*`,
                             ``,
-                            `Want to cancel? Visit your Rozare account. 💙`,
+                            `Open your Rozare order to check the available cancellation or return options.`,
                         ].join('\n');
                         await evolution.sendText(outboundTo, msg);
                         continue;
@@ -1080,7 +1079,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     if (declinedViaWA && isYes) {
                         console.log(`[whatsapp] Order ${order.orderId} was cancelled via WA; buyer tapped confirm — sending reconfirm prompt`);
                         const contextMsg = [
-                            `Hey ${firstName}! 👋`,
+                            `Hi ${firstName},`,
                             ``,
                             `You previously cancelled this order on WhatsApp.`,
                         ].join('\n');

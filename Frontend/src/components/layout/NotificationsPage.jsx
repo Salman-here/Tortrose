@@ -113,7 +113,7 @@ const NotificationsPage = () => {
             if (!loadGuard.isCurrent(request, account.key)) return;
 
             if (inboxResult.status !== 'fulfilled') {
-                setInboxError('Your durable notification inbox could not be loaded. Please try again.');
+                setInboxError('Your notifications could not be loaded. Please try again.');
                 setInboxErrorAccountKey(account.key);
             } else {
                 const inspected = inspectNotificationInboxResponse(
@@ -122,7 +122,7 @@ const NotificationsPage = () => {
                     { surface: notificationSurface },
                 );
                 if (!inspected.valid) {
-                    setInboxError('Your notification inbox response could not be verified for this account.');
+                    setInboxError('Your notifications are unavailable. Please refresh this page.');
                     setInboxErrorAccountKey(account.key);
                 } else {
                     setDurableItems(inspected.items);
@@ -146,7 +146,7 @@ const NotificationsPage = () => {
             setDurableAccountKey(null);
             setStores([]);
             setStoresAccountKey(null);
-            setInboxError('Your durable notification inbox could not be loaded. Please try again.');
+            setInboxError('Your notifications could not be loaded. Please try again.');
             setInboxErrorAccountKey(account.key);
             setLoadState({ accountKey: account.key, status: 'settled' });
         });
@@ -172,7 +172,7 @@ const NotificationsPage = () => {
             synthetic.push({
                 id: `stock-oos-${product._id}`,
                 type: 'critical', category: 'stock', title: `${product.name} is out of stock`,
-                description: 'Update inventory to avoid lost sales', time: now, icon: 'package',
+                description: 'Review this product and update its stock when available.', time: now, icon: 'package',
                 eventType: 'product.out_of_stock', aggregateType: 'Product', aggregateId: String(product._id || ''),
                 _stream: 'synthetic', read: false,
             });
@@ -181,7 +181,7 @@ const NotificationsPage = () => {
             synthetic.push({
                 id: `stock-low-${product._id}`,
                 type: 'warning', category: 'stock', title: `${product.name} running low`,
-                description: `Only ${product.stock} units remaining`, time: now, icon: 'package',
+                description: `${product.stock} units remaining. Review your stock in Product Management.`, time: now, icon: 'package',
                 eventType: 'product.low_stock', aggregateType: 'Product', aggregateId: String(product._id || ''),
                 _stream: 'synthetic', read: false,
             });
@@ -190,8 +190,8 @@ const NotificationsPage = () => {
         orders.filter(order => order.orderStatus === 'pending').forEach(order => {
             synthetic.push({
                 id: `order-pending-${order._id}`,
-                type: 'info', category: 'order', title: `New order #${order.orderId || 'N/A'}`,
-                description: `${order.shippingInfo?.fullName || 'Customer'} · ${order.orderItems?.length || 0} item(s)`,
+                type: 'info', category: 'order', title: `Pending order #${order.orderId || 'N/A'}`,
+                description: 'Open the order to review its payment and confirmation status.',
                 time: order.createdAt, icon: 'order',
                 linkTo: isAdmin ? `/admin-dashboard/order/${order._id}` : `/seller-dashboard/order/${order._id}`,
                 eventType: 'order.pending', aggregateType: 'Order', aggregateId: String(order._id || ''),
@@ -219,8 +219,9 @@ const NotificationsPage = () => {
         orders.filter(order => order.orderStatus === 'delivered').slice(0, 5).forEach(order => {
             synthetic.push({
                 id: `order-delivered-${order._id}`,
-                type: 'success', category: 'order', title: `Order #${order.orderId || 'N/A'} delivered`,
-                description: 'Successfully completed', time: order.updatedAt || order.createdAt, icon: 'order',
+                type: 'success', category: 'order', title: `Order #${order.orderId || 'N/A'} marked delivered`,
+                description: 'View delivery details and any return updates in the order.', time: order.updatedAt || order.createdAt, icon: 'order',
+                linkTo: isAdmin ? `/admin-dashboard/order/${order._id}` : `/seller-dashboard/order/${order._id}`,
                 eventType: 'order.delivered', aggregateType: 'Order', aggregateId: String(order._id || ''),
                 _stream: 'synthetic', read: false,
             });
@@ -358,7 +359,7 @@ const NotificationsPage = () => {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div>
                     <div className="tag-pill mb-2"><Bell size={12} /> Notifications</div>
-                    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight" style={{ color: 'hsl(var(--foreground))' }}>Notification Center</h1>
+                    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight" style={{ color: 'hsl(var(--foreground))' }}>{notificationSurface === 'buyer' ? 'Your updates' : notificationSurface === 'seller' ? 'Seller updates' : 'Notification Center'}</h1>
                     <p className="text-sm mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                         {unreadCount > 0
                             ? `${unreadCount} unread inbox notification${unreadCount > 1 ? 's' : ''}`
@@ -393,7 +394,7 @@ const NotificationsPage = () => {
                 </div>
                 <div className="relative flex-1 max-w-xs">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'hsl(var(--muted-foreground))' }} />
-                    <input value={searchTerm} onChange={event => setSearchTerm(event.target.value)}
+                    <input aria-label="Search notifications" value={searchTerm} onChange={event => setSearchTerm(event.target.value)}
                         className="glass-input pl-9 text-xs" placeholder="Search notifications..." />
                 </div>
             </div>
@@ -406,7 +407,7 @@ const NotificationsPage = () => {
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-panel p-12 text-center">
                     <Bell size={40} style={{ color: 'hsl(var(--muted-foreground))' }} className="mx-auto mb-3 opacity-40" />
                     <p className="text-sm font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                        {visibleInboxError ? 'No verified notifications are available.' : 'No notifications found'}
+                        {visibleInboxError ? 'Notifications are temporarily unavailable.' : 'No notifications found'}
                     </p>
                 </motion.div>
             ) : (
@@ -421,18 +422,26 @@ const NotificationsPage = () => {
                                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                                     transition={{ delay: index * 0.02 }}
                                     onClick={() => markAsRead(notification)}
+                                    role={!notification.linkTo && notification._stream === 'durable' ? 'button' : undefined}
+                                    tabIndex={!notification.linkTo && notification._stream === 'durable' ? 0 : undefined}
+                                    onKeyDown={event => {
+                                        if (!notification.linkTo && (event.key === 'Enter' || event.key === ' ')) {
+                                            event.preventDefault();
+                                            markAsRead(notification);
+                                        }
+                                    }}
                                     className={`glass-panel p-4 flex items-start gap-4 cursor-pointer transition-all hover:scale-[1.005] ${isRead ? 'opacity-60' : ''}`}>
                                     <div className="p-2 rounded-xl shrink-0" style={{ background: colors.bg, color: colors.color }}>
                                         {iconMap[notification.icon] || typeIconMap[notification.type]}
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2">
-                                            <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{notification.title}</p>
+                                            <p className="text-sm font-semibold break-words" style={{ color: 'hsl(var(--foreground))', overflowWrap: 'anywhere' }}>{notification.title}</p>
                                             {notification._stream === 'durable' && !isRead && (
                                                 <div className="w-2 h-2 rounded-full shrink-0" style={{ background: 'hsl(220,70%,55%)' }} />
                                             )}
                                         </div>
-                                        {notification.description && <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>{notification.description}</p>}
+                                        {notification.description && <p className="text-xs mt-0.5 whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--muted-foreground))', overflowWrap: 'anywhere' }}>{notification.description}</p>}
                                         <div className="flex items-center gap-2 mt-1.5">
                                             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full capitalize" style={{ background: colors.bg, color: colors.color }}>
                                                 {notification.category}

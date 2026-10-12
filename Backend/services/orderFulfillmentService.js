@@ -102,13 +102,13 @@ const getBuyerCancellationBlock = (order) => {
     if (statuses.some(status => ['shipped', 'delivered'].includes(status))) {
         return {
             code: 'ORDER_FULFILLMENT_STARTED',
-            message: 'This order has already shipped or been delivered. Use the return request flow for eligible delivered items.',
+            message: 'Shipped or delivered items cannot be cancelled. Open your order on Rozare to check any unshipped items or available return options after delivery.',
         };
     }
     if (order?.isPaid) {
         return {
             code: 'PAID_ORDER_REQUIRES_REFUND',
-            message: 'Paid orders cannot be cancelled without a verified refund. Contact support before shipment, or request a return after delivery if eligible.',
+            message: 'Paid items cannot be cancelled from this message. Open your order on Rozare to review cancellation and refund options before shipment. For guest orders, contact support@rozare.com with your order number.',
         };
     }
     return null;

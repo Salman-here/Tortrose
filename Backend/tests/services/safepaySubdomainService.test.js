@@ -51,6 +51,10 @@ test('verified payment grants exactly three calendar years once and sends one du
   expect(await Grant.countDocuments()).toBe(1);
   expect(await Outbox.countDocuments()).toBe(4); // One receipt per channel, not per replay.
   expect(first.isActive).toBe(false); // Ownership is not a paid store subscription.
+  const ownershipEmail = await Outbox.findOne({ channel: 'email' }).lean();
+  expect(ownershipEmail.payload.text).toContain('Your payment of $15.00 has been received');
+  expect(ownershipEmail.payload.text).toContain(`Your purchase reserved ${store.storeSlug}.rozare.com for your store through`);
+  expect(ownershipEmail.payload.text).toContain('Subdomain ownership does not replace a store subscription');
   expect((await Store.findById(store._id)).subdomainPurchase.expiresAt).toEqual(first.subdomainPurchase.expiresAt);
   const receipt = await Outbox.findOne({ channel: 'inapp' }).select('+dedupeKey').lean();
   expect(await deliverNotificationRecord(receipt)).toMatchObject({ outcome: 'delivered' });

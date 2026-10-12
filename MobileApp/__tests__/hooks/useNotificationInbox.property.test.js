@@ -180,11 +180,11 @@ describe('useNotificationInbox helpers', () => {
         },
       }]);
       expect(out).toEqual([expect.objectContaining({
-        title: 'Order Cancelled',
+        title: 'Order cancelled',
         category: 'order',
         createdAt: '2026-08-24T09:00:00.000Z',
       })]);
-      expect(out.some(({ title }) => title === 'Order Confirmed' || title === 'Payment Confirmed')).toBe(false);
+      expect(out.some(({ title }) => title === 'Order confirmed' || title === 'Payment confirmed')).toBe(false);
     });
 
     test('does not invent a cancellation time from createdAt or updatedAt', () => {
@@ -206,7 +206,7 @@ describe('useNotificationInbox helpers', () => {
         confirmation: { confirmedAt: '2026-08-24T10:00:00.000Z' },
       }]);
       expect(out).toEqual([expect.objectContaining({
-        title: 'Order Confirmed',
+        title: 'Order confirmed',
         category: 'order',
         createdAt: '2026-08-24T10:00:00.000Z',
       })]);
@@ -222,11 +222,11 @@ describe('useNotificationInbox helpers', () => {
         confirmation: { confirmedAt: '2026-08-24T11:00:00.000Z' },
       }]);
       expect(out).toEqual([expect.objectContaining({
-        title: 'Payment Confirmed',
+        title: 'Payment confirmed',
         category: 'payment',
         createdAt: '2026-08-24T11:00:00.000Z',
       })]);
-      expect(out.some(({ title }) => title === 'Order Confirmed')).toBe(false);
+      expect(out.some(({ title }) => title === 'Order confirmed')).toBe(false);
     });
 
     test('requires actual shipped/delivered timestamps instead of inferring a timeline from final status', () => {
@@ -241,7 +241,8 @@ describe('useNotificationInbox helpers', () => {
         shippedAt: '2026-08-24T12:00:00.000Z',
         deliveredAt: '2026-08-24T13:00:00.000Z',
       }]);
-      expect(out.map(({ title }) => title)).toEqual(['Order Shipped', 'Order Delivered']);
+      expect(out.map(({ title }) => title)).toEqual(['Order shipped', 'Order marked delivered']);
+      expect(out[1].body).toContain('available return options');
     });
 
     test('suppresses local order snapshots when a durable push or inbox event exists for the order', () => {

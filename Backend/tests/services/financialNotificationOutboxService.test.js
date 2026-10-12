@@ -97,6 +97,58 @@ const paidMixedOrder = () => {
 };
 
 describe('financial notification domain contracts', () => {
+  test.each(['inapp', 'push', 'email', 'whatsapp'])('seller paid receipt has a direct order link and renders both frozen money snapshots on %s', async channel => {
+    const { order, sellerA } = paidMixedOrder();
+    const [record] = await enqueuePaidOrderSellerNotifications(order, sellerA, { channels: [channel] });
+    const rendered = record.payload.body || record.payload.text || record.payload.message;
+    expect(record.payload.linkTo).toBe(`/seller-dashboard/order/${order._id}`);
+    expect(record.money.map(snapshot => snapshot.key)).toEqual(['seller_store_total', 'seller_order_total']);
+    expect(rendered).toContain('Rs200.00 PKR');
+    expect(rendered).not.toContain('Rs1,680.00 PKR');
+    expect(rendered).not.toMatch(/only your items|your part of|frozen|withdrawable/i);
+  });
+
+  test('a guest payment receipt links to public tracking rather than a protected buyer account', async () => {
+    const { order } = paidMixedOrder();
+    delete order.user;
+    const [record] = await enqueuePaidOrderBuyerNotifications(order, { channels: ['email'] });
+    expect(record.recipient.kind).toBe('guest');
+    expect(record.payload.linkTo).toBe('/track-order');
+    expect(record.payload.text).toContain('Amount paid: Rs1,880.00 PKR');
+    expect(record.payload.text).not.toMatch(/your items (?:are being|have been) prepared|packing/i);
+    expect(record.payload.text).toContain('We will keep you updated');
+  });
+
+  test.each(['confirmed', 'reconfirmed'])('COD seller %s notification provides an appropriate next step without redundant item-scoping advice', async decision => {
+    const { order, sellerA } = paidMixedOrder();
+    order.paymentMethod = 'cash_on_delivery'; order.isPaid = false;
+    const records = await enqueueCodOrderDecisionSellerNotifications(order, sellerA, {
+      decision, transitionAt: new Date('2026-10-12T08:00:00Z'), channels: ['inapp', 'push', 'email', 'whatsapp'],
+    });
+    for (const record of records) {
+      const rendered = record.payload.body || record.payload.text || record.payload.message;
+      expect(rendered).not.toMatch(/Prepare only your items|frozen|buyer checkout equivalent/);
+      expect(rendered).toContain('Cash on delivery has not been collected yet');
+      expect(record.payload.linkTo).toBe(`/seller-dashboard/order/${order._id}`);
+    }
+  });
+
+  test.each(['order_payment', 'reversal', 'admin_adjustment'])('Wallet debit copy accurately distinguishes %s without changing the transaction snapshot', async type => {
+    const transaction = { _id: id(), user: id(), type, direction: 'debit', status: 'completed',
+      currency: 'PKR', amount: 100, referenceId: 'wallet-copy-review', completedAt: new Date('2026-10-12T08:00:00Z') };
+    const [record] = await enqueueWalletTransactionNotification(transaction, { channels: ['inapp'] });
+    expect(record.money[0]).toMatchObject({ currency: 'PKR', amountMinor: 10000 });
+    expect(record.payload.linkTo).toBe('/user-dashboard/wallet');
+    if (type === 'order_payment') {
+      expect(record.payload.title).toBe('Wallet payment completed');
+      expect(record.payload.body).toContain('You paid Rs100.00 PKR');
+    } else {
+      expect(record.payload.title).toBe('Wallet balance updated');
+      expect(record.payload.body).toContain('was deducted');
+      expect(record.payload.body).not.toContain('You paid');
+    }
+  });
+
   test.each([
     ['USD', 12.34, '$12.34'],
     ['PKR', 280, 'Rs280.00 PKR'],
@@ -241,12 +293,12 @@ describe('financial notification domain contracts', () => {
     await enqueueCodOrderBuyerConfirmationNotification(order, { channels: ['email'] });
 
     const record = await NotificationOutbox.findOne({ channel: 'email' }).lean();
-    expect(record.payload.html).toContain('>Confirm Order</a>');
-    expect(record.payload.html).toContain('>Cancel Order</a>');
+    expect(record.payload.html).toContain('>Confirm order</a>');
+    expect(record.payload.html).toContain('>Cancel order</a>');
     expect(record.payload.html).toContain(`/orders/confirm/${'a'.repeat(64)}?intent=confirm`);
     expect(record.payload.html).toContain(`/orders/confirm/${'a'.repeat(64)}?intent=cancel`);
-    expect(record.payload.text).toContain('Confirm Order:');
-    expect(record.payload.text).toContain('Cancel Order:');
+    expect(record.payload.text).toContain('Confirm order:');
+    expect(record.payload.text).toContain('Cancel order:');
     expect(record.payload.html).not.toContain('/api/order/');
   });
 
@@ -286,8 +338,8 @@ describe('financial notification domain contracts', () => {
 
   test.each([
     ['buyer', 'Buyer cancelled order', /The buyer cancelled/i],
-    ['seller', 'Seller cancelled order', /A seller cancelled/i],
-    ['admin', 'Administrator cancelled order', /An administrator cancelled/i],
+    ['seller', 'Seller cancelled order', /cancelled by a seller/i],
+    ['admin', 'Administrator cancelled order', /Rozare cancelled/i],
     ['system', 'Order cancelled automatically', /Rozare automatically cancelled/i],
   ])('COD seller cancellation copy attributes the %s actor truthfully', async (
     actorRole,
@@ -464,7 +516,8 @@ describe('financial notification domain contracts', () => {
       amountMinor: 188000,
     }));
     expect(persisted.payload.body).toContain('Rs1,880.00 PKR');
-    expect(persisted.payload.body).toMatch(/does not by itself record or promise a refund/i);
+    expect(persisted.payload.body).toMatch(/payment and refund details/i);
+    expect(persisted.payload.body).not.toMatch(/refund (?:was|has been) (?:issued|completed)/i);
     expect(await NotificationOutbox.countDocuments()).toBe(1);
   });
 
@@ -498,7 +551,8 @@ describe('financial notification domain contracts', () => {
         || record.payload.html
         || record.payload.message;
       expect(rendered).toMatch(expectedCopy);
-      expect(rendered).toMatch(/does not by itself record or promise a refund/i);
+      expect(rendered).toMatch(/payment and refund details/i);
+      expect(rendered).not.toMatch(/refund (?:was|has been) (?:issued|completed)/i);
       expect(record.payload.data.changedByRole).toBe(actorRole);
     }
   });
@@ -683,7 +737,8 @@ describe('financial notification domain contracts', () => {
     expect(String(first[0]._id)).toBe(String(replay[0]._id));
     expect(first[0].payload.body).toContain('€100.00 EUR');
     expect(first[0].payload.body).toContain('£90.00 GBP');
-    expect(first[0].payload.body).toContain('not yet recorded as paid');
+    expect(first[0].payload.body).toContain('being processed');
+    expect(first[0].payload.body).not.toContain('recorded as paid');
 
     withdrawal.adminOperations.push({
       operationKey: 'admin-op-processing-attempt-2',
@@ -698,9 +753,9 @@ describe('financial notification domain contracts', () => {
   });
 
   test.each([
-    ['manual_review', 'full reservation remains held'],
+    ['manual_review', 'funds remain reserved'],
     ['failed', 'reservation was released'],
-    ['paid', 'administrator-supplied transfer proof'],
+    ['paid', 'recorded as paid'],
   ])('withdrawal %s language states its exact settlement meaning', async (status, expected) => {
     const appliedAt = new Date('2026-08-24T12:30:00.000Z');
     const withdrawal = {
@@ -842,7 +897,7 @@ describe('financial notification domain contracts', () => {
     }
     for (const record of result.seller) {
       expect(record.payload.body).toContain('$100.00');
-      expect(record.payload.body).toContain('remain private');
+      expect(record.payload.body).toContain('refund');
       expect(record.payload.body).not.toContain('$40.00');
       expect(record.payload.body).not.toContain('$60.00');
       expect(record.payload.body).not.toContain('$25.00');

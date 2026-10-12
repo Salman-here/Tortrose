@@ -141,7 +141,7 @@ describe('order presentation helpers', () => {
     const text = buildOrderConfirmationMessage(sampleOrder);
     expect(text).toContain('Storage Cabinet (Size: Large, Finish: Walnut, Color: Brown) x1');
     expect(text).toContain('Rs4,343.79 PKR');
-    expect(text).toContain('Typed replies are not accepted');
+    expect(text).toContain('Use the Confirm order or Cancel order buttons');
     expect(text).not.toContain('YES');
     expect(text).not.toContain('NO');
   });

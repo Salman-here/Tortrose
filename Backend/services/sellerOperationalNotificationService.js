@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const { escapeHtml } = require('../utils/orderPresentation');
+const { storefrontNotificationUrl } = require('../utils/storefrontNotificationUrl');
 const { SUPPORTED_PAYOUT_CURRENCIES } = require('./payoutAccountValidationService');
 const {
   enqueueNotificationEvent,
@@ -96,13 +97,11 @@ const enqueueSellerWelcomeNotification = async (user, {
   const userId = stringId(user?._id);
   const notice = user?.sellerWelcomeNotice;
   const occurredAt = requiredDate(notice?.occurredAt, 'Seller welcome timestamp');
-  const storeName = optionalText(notice?.storeName, 120);
-  const storeSentence = storeName
-    ? `Your seller account and ${storeName} are ready.`
-    : 'Your seller account is ready.';
-  const htmlStoreSentence = storeName
-    ? `Your seller account and <strong>${escapeHtml(storeName)}</strong> are ready.`
-    : 'Your seller account is ready.';
+  // The welcome snapshot can precede the store's content decision. Keep this
+  // account notice independent of seller-submitted names; the approved store
+  // creation notice carries its name and assigned address separately.
+  const storeSentence = 'Your seller account is ready.';
+  const htmlStoreSentence = storeSentence;
 
   return enqueueNotificationEvent({
     eventKey: `user:${userId}:seller-welcome:${eventDigest(occurredAt.toISOString())}:seller:v1`,
@@ -116,7 +115,7 @@ const enqueueSellerWelcomeNotification = async (user, {
     templates: {
       inapp: {
         title: 'Welcome to selling on Rozare',
-        body: `${storeSentence} Open your seller dashboard to finish setup and manage products, orders, and store settings.`,
+        body: `${storeSentence} Complete your store setup, add products and manage orders in your seller dashboard.`,
       },
       push: {
         title: 'Your seller account is ready',
@@ -124,11 +123,11 @@ const enqueueSellerWelcomeNotification = async (user, {
       },
       email: {
         subject: 'Your Rozare seller account is ready',
-        text: `${storeSentence} Open your seller dashboard to finish setup and manage your store.`,
-        html: `<p>${htmlStoreSentence}</p><p>Open your seller dashboard to finish setup and manage your store.</p>`,
+        text: `${storeSentence}\n\nComplete your store setup, add products and manage orders in your seller dashboard.`,
+        html: `<p>${htmlStoreSentence}</p><p>Complete your store setup, add products and manage orders in your seller dashboard.</p>`,
       },
       whatsapp: {
-        message: `Welcome to Rozare Seller\n\n${storeSentence}\n\nOpen your seller dashboard to finish setup and manage your store.`,
+        message: `*Welcome to selling on Rozare*\n\n${storeSentence}\n\nComplete your store setup, add products and manage orders in your seller dashboard.`,
       },
     },
     metadata: sellerMetadata({
@@ -173,13 +172,16 @@ const enqueueStoreCreatedNotification = async (store, {
   const storeId = stringId(store?._id);
   const sellerId = stringId(store?.seller);
   const storeName = requiredText(store?.storeName, 'Store name', 120);
-  const storeSlug = requiredText(store?.storeSlug, 'Store slug', 120);
+  requiredText(store?.storeSlug, 'Store slug', 120);
   const occurredAt = requiredDate(store?.createdAt, 'Store creation timestamp');
-  const publicPath = `/store/${encodeURIComponent(storeSlug)}`;
+  const storeUrl = storefrontNotificationUrl(store);
+  const addressText = storeUrl ? `\nStore address: ${storeUrl}` : '';
+  const addressHtml = storeUrl ? `<p><strong>Store address:</strong> <a href="${escapeHtml(storeUrl)}">${escapeHtml(storeUrl)}</a></p>` : '';
+  const setupGuidance = 'Add your products and review your store settings before sharing your store. Check your subscription and store status in your seller dashboard.';
   const contentHeld = ['pending', 'blocked'].includes(store?.moderationStatus);
   const creationMessage = store?.moderationStatus === 'blocked'
-    ? 'Your store was saved with content requiring changes. Open Seller Dashboard > Store Settings to see the reason and correct it.'
-    : 'Your store was saved and submitted for automatic content checks. Open Seller Dashboard > Store Settings to see its current status. Clean content publishes automatically after the checks pass.';
+    ? 'Your store has been saved but is not visible to customers. Review the reason in Store Settings and update the affected details.'
+    : 'Your store has been saved and is being checked. It will become eligible to appear once the checks pass. View its status in Store Settings.';
 
   return enqueueNotificationEvent({
     eventKey: `store:${storeId}:created:seller:v1`,
@@ -193,7 +195,7 @@ const enqueueStoreCreatedNotification = async (store, {
     templates: {
       inapp: {
         title: 'Your store was created',
-        body: `${storeName} was created successfully. Add products and review its settings before sharing it. Visibility follows your current account and subscription status.`,
+        body: `${storeName} was created successfully. Add products and review your store settings to finish setup.`,
       },
       push: {
         title: 'Your store was created',
@@ -201,11 +203,11 @@ const enqueueStoreCreatedNotification = async (store, {
       },
       email: {
         subject: `Your store ${storeName} was created`,
-        text: `${storeName} was created successfully. Store path: ${publicPath}. Open Seller Dashboard > Store Settings to finish setup. Store visibility follows your current account and subscription status.`,
-        html: `<p><strong>${escapeHtml(storeName)}</strong> was created successfully.</p><p>Store path: <strong>${escapeHtml(publicPath)}</strong></p><p>Open <strong>Seller Dashboard &gt; Store Settings</strong> to finish setup. Store visibility follows your current account and subscription status.</p>`,
+        text: `${storeName} was created successfully.${addressText}\n\n${setupGuidance}`,
+        html: `<p><strong>${escapeHtml(storeName)}</strong> was created successfully.</p>${addressHtml}<p>${escapeHtml(setupGuidance)}</p>`,
       },
       whatsapp: {
-        message: `Store Created\n\n${storeName} was created. Store path: ${publicPath}.\n\nOpen Seller Dashboard > Store Settings to finish setup. Visibility follows your current account and subscription status.`,
+        message: `*Your store was created*\n\n${storeName} was created successfully.${addressText}\n\n${setupGuidance}`,
       },
       // Unreviewed names and subdomains must not be copied into outbound
       // messages before the content decision, including the welcome flow.
@@ -213,7 +215,7 @@ const enqueueStoreCreatedNotification = async (store, {
         inapp: { title: 'Your store was created', body: creationMessage },
         push: { title: 'Your store was created', body: creationMessage },
         email: { subject: 'Your store was created', text: creationMessage, html: `<p>${escapeHtml(creationMessage)}</p>` },
-        whatsapp: { message: `Store Created\n\n${creationMessage}` },
+        whatsapp: { message: `*Your store was created*\n\n${creationMessage}` },
       } : {}),
     },
     metadata: sellerMetadata({
@@ -221,6 +223,12 @@ const enqueueStoreCreatedNotification = async (store, {
       type: 'store_created',
       aggregateId: storeId,
       whatsappCategory: 'store_created',
+      data: {
+        storePresentationVersion: 1,
+        storefrontUrlAtCreation: contentHeld ? '' : storeUrl,
+        storeModerationStatusAtCreation: store?.moderationStatus || 'approved',
+        storeNameAtCreation: contentHeld ? '' : storeName,
+      },
     }),
     session,
   });
@@ -237,9 +245,9 @@ const VERIFICATION_EVENT = Object.freeze({
   },
   rejected: {
     eventType: 'store.verification_rejected',
-    title: 'Store verification rejected',
+    title: 'Store verification needs attention',
     state: 'rejected',
-    guidance: 'Update your store information before applying again.',
+    guidance: 'Review the reason and update your store information before applying again.',
     whatsappCategory: 'store_verification_rejected',
     type: 'store_verification_rejected',
   },
@@ -247,7 +255,7 @@ const VERIFICATION_EVENT = Object.freeze({
     eventType: 'store.verification_removed',
     title: 'Store verification removed',
     state: 'removed',
-    guidance: 'The verified badge is no longer shown. Open Store Settings for next steps.',
+    guidance: 'The verified badge is no longer displayed. Review your verification details in Store Settings.',
     whatsappCategory: 'store_verification_removed',
     type: 'store_verification_removed',
   },
@@ -265,7 +273,7 @@ const enqueueStoreVerificationNotification = async (store, decision, {
   const occurredAt = requiredDate(store?.verification?.reviewedAt, 'Store verification review timestamp');
   const reason = decision === 'approved'
     ? ''
-    : optionalText(store?.verification?.rejectionReason, 500) || 'No additional reason was provided.';
+    : optionalText(store?.verification?.rejectionReason, 500);
   const reasonSentence = reason ? ` Reason: ${reason}` : '';
 
   return enqueueNotificationEvent({
@@ -292,7 +300,7 @@ const enqueueStoreVerificationNotification = async (store, decision, {
         html: `<p><strong>${escapeHtml(storeName)}</strong> verification was <strong>${escapeHtml(config.state)}</strong>.</p>${reason ? `<p><strong>Reason:</strong> ${escapeHtml(reason)}</p>` : ''}<p>${escapeHtml(config.guidance)}</p>`,
       },
       whatsapp: {
-        message: `${config.title}\n\n${storeName} verification was ${config.state}.${reasonSentence}\n\n${config.guidance}`,
+        message: `*${config.title}*\n\n${storeName} verification was ${config.state}.${reasonSentence}\n\n${config.guidance}`,
       },
     },
     metadata: sellerMetadata({
@@ -312,8 +320,16 @@ const enqueueNewStoreReviewNotification = async ({ review, store, buyerName }, {
   const reviewId = stringId(review?._id);
   const storeId = stringId(store?._id || review?.store);
   const sellerId = stringId(store?.seller);
-  const storeName = requiredText(store?.storeName, 'Store name', 120);
-  const storeSlug = requiredText(store?.storeSlug, 'Store slug', 120);
+  const contentHeld = ['pending', 'blocked'].includes(store?.moderationStatus);
+  const storeName = contentHeld ? 'your store' : requiredText(store?.storeName, 'Store name', 120);
+  const storeUrl = store?.isActive === true ? storefrontNotificationUrl(store) : '';
+  const reviewUrl = storeUrl ? `${storeUrl}#store-reviews` : '';
+  const reviewGuidance = reviewUrl
+    ? `Read the review on your storefront: ${reviewUrl}`
+    : 'You can manage your store in your seller dashboard.';
+  const reviewGuidanceHtml = reviewUrl
+    ? `<p><a href="${escapeHtml(reviewUrl)}">Read the review on your storefront</a>.</p>`
+    : '<p>You can manage your store in your seller dashboard.</p>';
   const reviewer = optionalText(buyerName, 100) || 'A verified buyer';
   const rating = review?.rating;
   if (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5) {
@@ -336,19 +352,24 @@ const enqueueNewStoreReviewNotification = async ({ review, store, buyerName }, {
       push: { title: 'New store rating', body: sentence },
       email: {
         subject: `New verified-buyer rating for ${storeName}`,
-        text: `${sentence} Open Seller Dashboard > Store Overview to review it.`,
-        html: `<p>${escapeHtml(reviewer)} rated <strong>${escapeHtml(storeName)}</strong> <strong>${rating} out of 5</strong>.</p><p>Open <strong>Seller Dashboard &gt; Store Overview</strong> to review it.</p>`,
+        text: `${sentence}\n\n${reviewGuidance}`,
+        html: `<p>${escapeHtml(reviewer)} rated <strong>${escapeHtml(storeName)}</strong> <strong>${rating} out of 5</strong>.</p>${reviewGuidanceHtml}`,
       },
       whatsapp: {
-        message: `New Store Rating\n\n${sentence}\n\nOpen Seller Dashboard > Store Overview to review it.`,
+        message: `*New store rating*\n\n${sentence}\n\n${reviewGuidance}`,
       },
     },
     metadata: sellerMetadata({
-      linkTo: `/store/${encodeURIComponent(storeSlug)}#store-reviews`,
+      linkTo: reviewUrl ? `/store/${encodeURIComponent(store.storeSlug.trim().toLowerCase())}#store-reviews` : '/seller-dashboard/store-overview',
       type: 'new_review',
       aggregateId: reviewId,
       whatsappCategory: 'store_review',
-      data: { rating },
+      data: {
+        rating,
+        storeReviewPresentationVersion: 1,
+        reviewStoreName: storeName,
+        reviewStorefrontUrl: reviewUrl,
+      },
     }),
     session,
   });
@@ -368,7 +389,7 @@ const enqueuePayoutAccountUpdatedNotification = async ({ account, occurredAt, ch
     account?.ibanLast4 || account?.accountNumberLast4
   );
   const destination = destinationLast4 ? ` ending in ${destinationLast4}` : '';
-  const sentence = `Your ${bankName} payout destination${destination} was saved for ${currency} payouts.`;
+  const sentence = `Your ${bankName} bank account${destination} has been saved for ${currency} withdrawals.`;
 
   return enqueueNotificationEvent({
     eventKey: `seller-payment-account:${accountId}:updated:${fingerprint}:seller:v1`,
@@ -380,15 +401,15 @@ const enqueuePayoutAccountUpdatedNotification = async ({ account, occurredAt, ch
     recipient: sellerRecipient(sellerId),
     channels,
     templates: {
-      inapp: { title: 'Payout account updated', body: sentence },
-      push: { title: 'Payout account updated', body: sentence },
+      inapp: { title: 'Withdrawal account updated', body: sentence },
+      push: { title: 'Withdrawal account updated', body: sentence },
       email: {
-        subject: 'Your Rozare payout account was updated',
+        subject: 'Your withdrawal account was updated',
         text: `${sentence} If you did not make this change, contact Rozare support immediately.`,
         html: `<p>${escapeHtml(sentence)}</p><p><strong>If you did not make this change, contact Rozare support immediately.</strong></p>`,
       },
       whatsapp: {
-        message: `Payout Account Updated\n\n${sentence}\n\nIf you did not make this change, contact Rozare support immediately.`,
+        message: `*Withdrawal account updated*\n\n${sentence}\n\nIf you did not make this change, contact Rozare support immediately.`,
       },
     },
     metadata: sellerMetadata({
@@ -448,9 +469,9 @@ const enqueueProductBlockedNotification = async (product, {
   const sellerId = stringId(product?.seller);
   const notice = product?.moderationNotice;
   const occurredAt = requiredDate(notice?.reviewedAt, 'Product moderation notice timestamp');
-  const productName = requiredText(notice?.productName, 'Blocked product name', 200);
+  requiredText(notice?.productName, 'Blocked product name', 200);
   const reason = requiredText(notice?.reason, 'Product moderation reason', 600);
-  const sentence = `${productName} was blocked because ${reason}. Customers cannot see it until the listing is corrected.`;
+  const sentence = 'A product listing needs changes and is hidden from customers. Review the reason in Product Management, then update the affected details.';
 
   return enqueueNotificationEvent({
     eventKey: `product:${productId}:blocked:${eventDigest(occurredAt.toISOString(), reason)}:seller:v1`,
@@ -465,12 +486,12 @@ const enqueueProductBlockedNotification = async (product, {
       inapp: { title: 'Product blocked', body: sentence },
       push: { title: 'Product blocked', body: sentence },
       email: {
-        subject: `Product blocked - ${productName}`,
-        text: `${sentence} Open Seller Dashboard > Product Management to edit it.`,
-        html: `<p><strong>${escapeHtml(productName)}</strong> was blocked because ${escapeHtml(reason)}.</p><p>Customers cannot see it until the listing is corrected. Open <strong>Seller Dashboard &gt; Product Management</strong> to edit it.</p>`,
+        subject: 'Product listing needs changes',
+        text: sentence,
+        html: `<p>${escapeHtml(sentence)}</p>`,
       },
       whatsapp: {
-        message: `Product Blocked\n\n${productName} was blocked because ${reason}.\n\nCustomers cannot see it until you correct the listing in Product Management.`,
+        message: `*Product listing needs changes*\n\n${sentence}`,
       },
     },
     metadata: sellerMetadata({

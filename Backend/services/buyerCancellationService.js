@@ -54,30 +54,38 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     return literal(`${item.name} × ${item.quantity}${selected ? ` (${selected})` : ''}`);
   }).join(', ')).slice(0, 1800).join('');
   for (const seller of [false, true]) {
-    const title = completed ? 'Cancellation refund completed' : 'Order items cancelled';
+    const title = completed ? (seller ? 'Buyer refund completed' : 'Your cancellation refund is complete')
+      : (seller ? 'Buyer cancelled order items' : 'Your order items are cancelled');
     // The shared money renderer already includes non-USD currency codes.
     const refundAmount = `{{money.refund}}${row.currency === 'USD' ? ' USD' : ''}`;
     const deduction = row.deductionMinor > 0 ? ' Processing fee: {{money.deduction}}.' : '';
     const externalDestination = originalPaymentLabel(normalizeSafepayPaymentRail(row.paymentRail)).toLowerCase();
-    const refund = (row.refundDestination === 'none' || row.refundStatus === 'not_required' ? 'No payment refund is required.'
-      : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? 'the buyer’s Rozare Wallet' : `the ${externalDestination}`}.`
+    const walletDestination = seller ? 'the buyer’s Rozare Wallet' : 'your Rozare Wallet';
+    const cardDestination = seller ? `the buyer’s ${externalDestination}` : `your ${externalDestination}`;
+    const refund = (row.refundDestination === 'none' ? 'No payment was collected for these items, so no refund is needed.'
+      : row.refundStatus === 'not_required' ? `Refund after the processing fee: ${refundAmount}. No card refund is due.`
+        : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? walletDestination : cardDestination}.${row.refundDestination === 'original_card' ? ' The bank may take additional time to display the refund.' : ''}`
         : externalRefundCapability(row.paymentRail).available
-          ? `An automatic refund of ${refundAmount} to the ${externalDestination} is being verified.`
-          : `Refund of ${refundAmount} requires support review. No refund to the ${externalDestination} has been confirmed.`) + deduction;
-    const message = `Order ${order.orderId} · ${name}\n${description}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
+          ? `A refund of ${refundAmount} to ${cardDestination} is being verified. We will notify you when it is confirmed.`
+          : `The refund of ${refundAmount} is awaiting review by Rozare. A refund to ${cardDestination} has not been confirmed.`) + deduction;
+    const cancellationText = completed ? '' : (seller ? 'The buyer cancelled these items before shipment. ' : 'You cancelled these items before shipment. ');
+    const sellerAction = seller ? ' No action is required from you for this cancellation.' : '';
+    const hasOtherSellers = order.orderItems.some(item => id(item.seller) !== id(row.seller));
+    const otherStores = hasOtherSellers ? ' Items from other stores are unchanged by this cancellation.' : '';
+    const message = `Order: ${order.orderId}\nStore: ${name}\nItems: ${description}\n\n${cancellationText}${refund}${sellerAction}${otherStores}`;
     // In-app/push previews have a smaller limit than email/WhatsApp. Keep the
     // refund sentence intact even when an order contains many product options.
     const preview = description.length > 400 ? `${Array.from(description).slice(0, 400).join('')}…` : description;
-    const body = `Order ${order.orderId} · ${name}\n${preview}\n${completed ? '' : 'The buyer cancelled these items before shipment. '}${refund}${seller ? ' No seller action is required. Other seller portions are unchanged.' : ''}`;
+    const body = `Order ${order.orderId} · ${name}\n${preview}\n${cancellationText}${refund}${sellerAction}`;
     const link = seller ? `/seller-dashboard/order/${order._id}` : `/user-dashboard/order/detail/${order._id}`;
-    const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f4f5fc;font-family:Arial,sans-serif;color:#253149"><table role="presentation" style="width:100%;max-width:600px;margin:32px auto;border:1px solid #e3e7f5;border-radius:22px;background:#ffffff"><tr><td style="padding:28px;background:linear-gradient(125deg,#ecfbf7,#f1edff);border-radius:22px 22px 0 0"><img src="https://rozare.com/favicon-512.png" alt="Rozare" width="42" height="42"><h1 style="font-size:23px;margin:18px 0 0">${escapeHtml(title)}</h1></td></tr><tr><td style="padding:28px;line-height:1.7;font-size:14px">${escapeHtml(message).replace(/\n/g, '<br>')}<p><a href="https://rozare.com${link}" style="display:inline-block;background:#665af2;color:white;padding:12px 22px;border-radius:12px;text-decoration:none">View order details</a></p>${completed && row.refundDestination === 'original_card' ? '<p style="color:#76829b;font-size:12px">Your bank may take additional time to display the refund.</p>' : ''}</td></tr></table></body></html>`;
+    const html = `<p>Order: <strong>${escapeHtml(order.orderId)}</strong><br>Store: <strong>${escapeHtml(name)}</strong></p><p>Items: ${escapeHtml(description)}</p><p>${escapeHtml(cancellationText)}${escapeHtml(refund)}</p>${sellerAction ? `<p>${escapeHtml(sellerAction.trim())}</p>` : ''}${otherStores ? `<p>${escapeHtml(otherStores.trim())}</p>` : ''}`;
     const recipient = seller ? { kind: 'user', audienceRole: 'seller', user: row.seller, destinationPolicy: 'current_user', allowBlocked: true }
       : { kind: 'user', audienceRole: 'buyer', user: row.buyer, destinationPolicy: 'event_snapshot', email: order.shippingInfo.email, phone: phone || '' };
     await enqueueNotificationEvent({ eventKey: `order-cancellation:${row._id}:${completed ? 'refunded' : 'cancelled'}:${seller ? 'seller' : 'buyer'}:v1`,
       eventType: completed ? 'order.cancellation_refund_completed' : 'order.seller_portion_cancelled', aggregateType: 'OrderCancellation', aggregateId: row._id,
       occurredAt: completed ? row.refundedAt : row.requestedAt, financial: row.refundDestination !== 'none', recipient,
       channels: ['inapp', 'push', 'email', 'whatsapp'],
-      templates: { inapp: { title, body }, push: { title, body }, email: { subject: title, text: message, html }, whatsapp: { message } },
+      templates: { inapp: { title, body }, push: { title, body }, email: { subject: `${title} — ${order.orderId}`, text: message, html }, whatsapp: { message: `*${title}*\n\n${message}` } },
       money: row.refundDestination === 'none' ? [] : [snapshotMinorMoney({ key: 'refund', label: 'Cancellation refund', amountMinor: row.refundAmountMinor ?? row.amountMinor,
         currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: row.refundAmountMinor === undefined ? 'amountMinor' : 'refundAmountMinor' }),
         ...(row.deductionMinor > 0 ? [snapshotMinorMoney({ key: 'deduction', label: 'Processing fee', amountMinor: row.deductionMinor,
