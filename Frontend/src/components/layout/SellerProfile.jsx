@@ -8,6 +8,11 @@ import { getAuthToken, setCrossDomainCookie } from "../../utils/cookieHelper";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
+// Temporarily disabled alongside the backend routes. The OTP flow below is
+// retained for future use; do not re-enable only the client.
+// const SELLER_EMAIL_CHANGES_ENABLED = true;
+const SELLER_EMAIL_CHANGES_ENABLED = false;
+
 export default function SellerProfile() {
   const { fetchAndUpdateCurrentUser } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -243,14 +248,19 @@ export default function SellerProfile() {
               <div>
                 <p className="text-xs font-medium uppercase tracking-wider" style={{ color: 'hsl(var(--muted-foreground))' }}>Email</p>
                 <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{userData?.email || '—'}</p>
-                {emailCooldownDays && (
+                {!SELLER_EMAIL_CHANGES_ENABLED && (
+                  <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
+                    Email changes are currently unavailable.
+                  </p>
+                )}
+                {SELLER_EMAIL_CHANGES_ENABLED && emailCooldownDays && (
                   <p className="text-[11px] mt-1 flex items-center gap-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
                     <Clock size={10} /> Can change in {emailCooldownDays} day{emailCooldownDays > 1 ? 's' : ''}
                   </p>
                 )}
               </div>
             </div>
-            {!showEmailChange && (
+            {SELLER_EMAIL_CHANGES_ENABLED && !showEmailChange && (
               <button onClick={() => { setShowEmailChange(true); setShowWhatsAppChange(false); }}
                 disabled={emailCooldownDays !== null}
                 className="px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 glass-inner disabled:opacity-40"
@@ -261,7 +271,7 @@ export default function SellerProfile() {
           </div>
 
           {/* Email Change Form */}
-          {showEmailChange && (
+          {SELLER_EMAIL_CHANGES_ENABLED && showEmailChange && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="ml-6 p-4 rounded-xl border" style={{ borderColor: 'hsl(var(--border))', background: 'hsla(220, 70%, 55%, 0.03)' }}>
               {/* Warning */}
               <div className="flex items-start gap-2 p-3 rounded-lg mb-4" style={{ background: 'hsla(45, 93%, 47%, 0.08)', border: '1px solid hsla(45, 93%, 47%, 0.2)' }}>

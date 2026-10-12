@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import {
     BarChart3, Package, X, Menu, LayoutPanelLeft, ShoppingBag,
-    Star, Store, Truck, Bell, Settings, ChevronLeft, Search, Loader2,
+    Star, Store, Truck, Bell, Settings, SlidersHorizontal, ChevronLeft, Search, Loader2,
     TrendingUp, AlertTriangle, CheckCircle, Clock, DollarSign, Info, Bot, Crown, Lock, MessageCircle, User, Sparkles, Wand2, RotateCcw, Tag, Megaphone, CreditCard,
 } from 'lucide-react';
 import axios from 'axios';
@@ -50,7 +50,7 @@ const getSellerMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) =>
     { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/seller-dashboard/notifications' },
     { id: 'profile', label: 'Seller Profile', icon: <User size={18} />, link: '/seller-dashboard/profile' },
     { id: 'store', label: 'Store Settings', icon: <Settings size={18} />, link: '/seller-dashboard/store-settings' },
-    { id: 'notif-settings', label: 'Notif Settings', icon: <Settings size={18} />, link: '/seller-dashboard/notification-settings' },
+    { id: 'notif-settings', label: 'Notif Settings', icon: <SlidersHorizontal size={18} />, link: '/seller-dashboard/notification-settings' },
     { id: 'whatsapp', label: 'WhatsApp', icon: <MessageCircle size={18} />, link: '/seller-dashboard/whatsapp-settings' },
     { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
 ]);
@@ -1000,7 +1000,7 @@ const SellerSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpe
         { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/seller-dashboard/notifications' },
         { id: 'profile', label: 'Seller Profile', icon: <User size={18} />, link: '/seller-dashboard/profile' },
         { id: 'store', label: 'Store Settings', icon: <Settings size={18} />, link: '/seller-dashboard/store-settings' },
-        { id: 'notif-settings', label: 'Notif Settings', icon: <Settings size={18} />, link: '/seller-dashboard/notification-settings' },
+        { id: 'notif-settings', label: 'Notif Settings', icon: <SlidersHorizontal size={18} />, link: '/seller-dashboard/notification-settings' },
         { id: 'whatsapp', label: 'WhatsApp', icon: <MessageCircle size={18} />, link: '/seller-dashboard/whatsapp-settings' },
         { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
     ];

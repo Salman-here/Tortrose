@@ -1,6 +1,7 @@
 /**
  * SellerProfileScreen — Mobile parity for /seller-dashboard/profile
- * View account info + change WhatsApp number / Email with OTP verification.
+ * View account info + change WhatsApp number with OTP verification.
+ * The email-change flow is retained but temporarily unavailable.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -25,6 +26,10 @@ import { spacing, fontSize, fontWeight, borderRadius, shadows, typography } from
 import { useTheme } from '../../contexts/ThemeContext';
 import { isValidPhoneNumber } from '../../utils/phoneNumber';
 import useOtpCountdown, { formatOtpCountdown } from '../../hooks/useOtpCountdown';
+
+// Restore only when the backend email-change routes are deliberately re-enabled.
+// const SELLER_EMAIL_CHANGES_ENABLED = true;
+const SELLER_EMAIL_CHANGES_ENABLED = false;
 
 export default function SellerProfileScreen({ navigation }) {
   const { palette } = useTheme();
@@ -271,9 +276,11 @@ export default function SellerProfileScreen({ navigation }) {
                 iconColor={palette.colors.info}
                 label="Email"
                 value={data?.email}
-                footer={emCooldown ? `Can change in ${emCooldown} day${emCooldown > 1 ? 's' : ''}` : null}
+                footer={!SELLER_EMAIL_CHANGES_ENABLED
+                  ? 'Email changes are currently unavailable.'
+                  : emCooldown ? `Can change in ${emCooldown} day${emCooldown > 1 ? 's' : ''}` : null}
                 action={
-                  !emOpen && (
+                  SELLER_EMAIL_CHANGES_ENABLED && !emOpen && (
                     <TouchableOpacity
                       onPress={() => { setEmOpen(true); setWaOpen(false); }}
                       disabled={!!emCooldown}
@@ -289,7 +296,7 @@ export default function SellerProfileScreen({ navigation }) {
                 }
               />
 
-              {emOpen && (
+              {SELLER_EMAIL_CHANGES_ENABLED && emOpen && (
                 <View style={styles.changeBox}>
                   <View style={styles.warnBox}>
                     <Ionicons name="warning-outline" size={14} color="#d97706" />

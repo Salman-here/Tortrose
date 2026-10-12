@@ -34,9 +34,17 @@ router.post('/become-seller', verifyToken, becomeSeller)
 router.post('/seller/change-whatsapp/initiate', verifyToken, initiateWhatsAppChange)
 router.post('/seller/change-whatsapp/verify', verifyToken, verifyWhatsAppChange)
 
-// Seller profile — change email
-router.post('/seller/change-email/initiate', verifyToken, emailChangeInitiateLimiter, initiateEmailChange)
-router.post('/seller/change-email/verify', verifyToken, emailChangeVerifyLimiter, verifyEmailChange)
+// Seller email changes are temporarily disabled. Keep the original OTP
+// controllers and registrations for a future, deliberate re-enable.
+// router.post('/seller/change-email/initiate', verifyToken, emailChangeInitiateLimiter, initiateEmailChange)
+// router.post('/seller/change-email/verify', verifyToken, emailChangeVerifyLimiter, verifyEmailChange)
+const emailChangeDisabled = (_req, res) => res.status(403).json({
+    msg: 'Email changes are currently unavailable.',
+    code: 'SELLER_EMAIL_CHANGE_DISABLED',
+})
+// Block both issuance and verification, including codes issued before the pause.
+router.post('/seller/change-email/initiate', verifyToken, emailChangeInitiateLimiter, emailChangeDisabled)
+router.post('/seller/change-email/verify', verifyToken, emailChangeVerifyLimiter, emailChangeDisabled)
 
 // Shipping info (single default for back-compat)
 router.get('/shipping-info', verifyToken, getShippingInfo)
