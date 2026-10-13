@@ -1563,6 +1563,23 @@ exports.getSellerPaymentSummary = async (req, res) => {
     }
 };
 
+// Read-only revenue reporting is separate from the withdrawal balance API.
+exports.getSellerRevenueOverview = async (req, res) => {
+    try {
+        if (req.user?.role !== 'seller') return res.status(403).json({ msg: 'Seller access required' });
+        const { buildSellerRevenueOverview } = require('../services/sellerRevenueOverviewService');
+        const overview = await buildSellerRevenueOverview(req.user.id, {
+            currency: req.query.currency || 'USD', days: req.query.days ?? 'all',
+        });
+        return res.status(200).json({ success: true, overview });
+    } catch (error) {
+        console.error('[payments] seller revenue overview error:', error.message);
+        return res.status(error.statusCode || 500).json({
+            msg: error.statusCode ? error.message : 'Revenue totals are unavailable. Please retry.', code: error.code,
+        });
+    }
+};
+
 exports.upsertSellerPaymentAccount = async (req, res) => {
     try {
         if (req.user?.role !== 'seller') {

@@ -2,6 +2,7 @@ const express = require('express');
 const verifyToken = require('../middleware/authMiddleware');
 const {
     getSellerPaymentSummary,
+    getSellerRevenueOverview,
     upsertSellerPaymentAccount,
     createWithdrawalRequest,
     getSellerWithdrawals,
@@ -12,6 +13,7 @@ const {
 const router = express.Router();
 
 router.get('/seller/summary', verifyToken, getSellerPaymentSummary);
+router.get('/seller/revenue-overview', verifyToken, getSellerRevenueOverview);
 router.put('/seller/account', verifyToken, upsertSellerPaymentAccount);
 router.post('/seller/withdrawals', verifyToken, createWithdrawalRequest);
 router.get('/seller/withdrawals', verifyToken, getSellerWithdrawals);

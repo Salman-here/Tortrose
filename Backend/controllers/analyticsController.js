@@ -127,15 +127,19 @@ exports.getSellerAnalytics = async (req, res) => {
 
         const targetCurrency = await resolveRequestedCurrency(req, User);
         const daysNum = normalizeAnalyticsDays(days);
-        const startDate = new Date();
+        const reportNow = new Date();
+        const startDate = new Date(reportNow);
         startDate.setUTCHours(0, 0, 0, 0);
         startDate.setUTCDate(startDate.getUTCDate() - (daysNum - 1));
+        const endDate = new Date(reportNow);
+        endDate.setUTCHours(0, 0, 0, 0);
+        endDate.setUTCDate(endDate.getUTCDate() + 1);
 
         const sellerProducts = await Product.find({ seller: userId }).select('_id name image category stock updatedAt');
         const sellerProductIds = sellerProducts.map(p => String(p._id));
 
         const allOrders = await Order.find({
-            createdAt: { $gte: startDate },
+            createdAt: { $gte: startDate, $lt: endDate },
             awaitingPayment: { $ne: true },
             ...sellerOrderScope(userId, sellerProductIds),
         });
@@ -167,7 +171,7 @@ exports.getSellerAnalytics = async (req, res) => {
 
         const dayBuckets = {};
         for (let i = daysNum - 1; i >= 0; i--) {
-            const d = new Date();
+            const d = new Date(reportNow);
             d.setUTCHours(0, 0, 0, 0);
             d.setUTCDate(d.getUTCDate() - i);
             const key = d.toISOString().slice(0, 10);
