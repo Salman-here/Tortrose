@@ -41,14 +41,19 @@ function computeSellerPeriodRevenue({ sellerId, currency, days, at = new Date(),
   const end = period.endDateExclusive ? Date.parse(period.endDateExclusive) : Infinity;
   const selected = orders.filter(order => {
     if (period.days === null) return true;
+    if (order.createdAt === null || order.createdAt === undefined) throw invalid('An order has no valid placement date.');
     const created = new Date(order.createdAt).getTime();
     if (!Number.isFinite(created)) throw invalid('An order has no valid placement date.');
     return created >= start && created < end;
   });
   const selectedIds = new Set(selected.map(id));
-  const lineage = new Map(returns.filter(row => selectedIds.has(id(row.order))).map(row => [id(row), row.order]));
+  const lineage = new Map(returns.map(row => [id(row), row.order]));
   const relatedTransactions = transactions.flatMap(row => {
     const order = row.order || (row.referenceType === 'return_request' ? lineage.get(id(row.referenceId)) : null);
+    if (!order && row.referenceType === 'return_request') {
+      throw Object.assign(new Error('A refund cannot be linked to its original order. Revenue cannot be calculated safely.'),
+        { statusCode: 409, code: 'SELLER_REVENUE_LIABILITY_INVALID' });
+    }
     // Withdrawals, standalone adjustments and unrelated order liabilities do
     // not get assigned to the selected sales cohort. Never mutate ledger rows.
     return selectedIds.has(id(order)) ? [{ ...row, order }] : [];
@@ -71,10 +76,11 @@ async function buildSellerRevenueOverview(sellerId, { currency = 'USD', days = '
       ...(productIds.length ? [{ orderItems: { $elemMatch: { seller: null, productId: { $in: productIds } } } }] : [])],
   }).sort({ createdAt: -1 }).lean();
   const orderIds = orders.map(row => row._id);
-  const [transactions, returns] = await Promise.all([
-    SellerBalanceTransaction.find({ seller: sellerId, $or: [{ order: { $in: orderIds } }, { order: null, referenceType: 'return_request' }] }).lean(),
-    ReturnRequest.find({ seller: sellerId, order: { $in: orderIds } }).lean(),
-  ]);
+  const transactions = await SellerBalanceTransaction.find({ seller: sellerId,
+    $or: [{ order: { $in: orderIds } }, { order: null, referenceType: 'return_request' }] }).lean();
+  const legacyRefs = transactions.filter(row => !row.order && row.referenceType === 'return_request').map(row => row.referenceId);
+  const returns = await ReturnRequest.find({ seller: sellerId,
+    $or: [{ order: { $in: orderIds } }, ... (legacyRefs.length ? [{ _id: { $in: legacyRefs } }] : [])] }).lean();
   return computeSellerPeriodRevenue({ sellerId, currency, days, at, orders, transactions, returns,
     productIds: new Set(products.map(id)) });
 }

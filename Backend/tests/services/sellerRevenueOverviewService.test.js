@@ -73,6 +73,13 @@ test('native-currency online earnings are not revalued from other balances', () 
   expect(result.totalDeliveredRevenue).toBe(6000);
 });
 
+test('unresolved legacy refund provenance fails closed; a known out-of-period refund is excluded', () => {
+  const selected = sale(1000, '2026-10-12'), old = sale(2000, '2026-01-01');
+  const tx = refund(old, 500); delete tx.order; tx.referenceId = 'old-return';
+  expect(() => report([selected, old], '7', { transactions: [tx] })).toThrow(/original order/);
+  expect(report([selected, old], '7', { transactions: [tx], returns: [{ _id: 'old-return', order: old._id }] }).onlineGrossEarnings).toBe(1000);
+});
+
 test.each(Object.keys(rates).flatMap(native => Object.keys(rates).map(buyer => [native, buyer])))('%s / %s matches original accounting exactly', (native, buyer) => {
   const order = sale(10 * rates[native], '2026-10-12', 'wallet', 'delivered', 'seller-a', native, buyer);
   const before = JSON.stringify(order);
@@ -94,4 +101,8 @@ test.each(['0', '-1', '366', '7.5', '7oops', '', null, true])('rejects invalid p
 });
 test('leap-day calendar windows remain exact', () => {
   expect(revenuePeriod('7', new Date('2028-03-01T12:00:00Z')).startDate).toBe('2028-02-24T00:00:00.000Z');
+});
+test('missing dates are never guessed as the Unix epoch for a period report', () => {
+  const order = sale(1000, '2026-10-12'); order.createdAt = null;
+  expect(() => report([order])).toThrow(/placement date/);
 });
