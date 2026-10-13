@@ -48,6 +48,32 @@ beforeEach(()=>{
 });
 afterEach(() => jest.restoreAllMocks());
 
+test.each(['USD', 'PKR', 'EUR', 'GBP'])('hides delivered gateway rows while preserving the %s withdrawal balance', async currency => {
+  const summary = nativeResponse();
+  const balances = { USD: 50, PKR: 28000, EUR: 60, GBP: 70 };
+  for (const balance of summary.balances) {
+    const available = balances[balance.currency];
+    Object.assign(balance, {
+      safepayDeliveredRevenue: available / 2, walletDeliveredRevenue: available / 2,
+      stripeDeliveredRevenue: 0, onlineDeliveredRevenue: available,
+      totalDeliveredRevenue: available, estimatedRevenue: available, withdrawableBalance: available,
+    });
+  }
+  summary.paymentAccount.currency = currency;
+  const before = JSON.stringify(summary);
+  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currencyState } : summary }));
+  const screen = render(<SellerPaymentsScreen navigation={{ navigate: jest.fn() }} />);
+  const picker = await screen.findByLabelText('Withdrawal balance currency');
+  fireEvent(picker, 'valueChange', currency);
+  const minimum = currency === 'PKR' ? 2000 : 5;
+  expect(screen.getByText(`Available: ${currency} ${balances[currency].toFixed(2)} - Minimum: ${currency} ${minimum.toFixed(2)}`)).toBeTruthy();
+  expect(screen.queryByText('Safepay delivered revenue')).toBeNull();
+  expect(screen.queryByText('Wallet delivered revenue')).toBeNull();
+  for (const retained of ['Pending withdrawals', 'Held for returns', 'Processing withdrawals']) expect(screen.getByText(retained)).toBeTruthy();
+  expect(JSON.stringify(summary)).toBe(before);
+  expect(api.post).not.toHaveBeenCalled(); expect(api.put).not.toHaveBeenCalled();
+});
+
 test.each([
   ['bank currency mismatch', false, 'PKR'],
   ['payment hold', true, 'USD'],

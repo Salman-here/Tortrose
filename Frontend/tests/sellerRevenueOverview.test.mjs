@@ -90,6 +90,28 @@ test('Analytics uses a separately labelled all-time source, including when chart
   }
 });
 
+test('Payments no longer renders delivered gateway breakdown rows on either surface', () => {
+  for (const path of ['../src/components/layout/SellerPayments.jsx', '../../MobileApp/src/screens/seller/SellerPaymentsScreen.js']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    const strings = [];
+    walk(parse(source, { sourceType: 'module', plugins: ['jsx'] }), node => {
+      if (node.type === 'StringLiteral') strings.push(node.value);
+    });
+    for (const removed of ['Safepay delivered revenue', 'Wallet delivered revenue']) {
+      assert.ok(!strings.includes(removed), `${removed} must not render in Payments`);
+    }
+    for (const retained of ['Pending withdrawals', 'Held for returns', 'Processing withdrawals']) {
+      assert.ok(strings.includes(retained), `${retained} must remain in Payments`);
+    }
+    assert.match(source, /selectedBalance\?\.withdrawableBalance/);
+  }
+  for (const path of ['../src/components/seller/SellerRevenueOverview.jsx', '../../MobileApp/src/components/seller/SellerRevenueOverview.js']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /Total Online Earnings/);
+    assert.match(source, /onlineGrossEarnings/);
+  }
+});
+
 test('seller revenue screens inherit the theme-aware page background instead of forcing light mode', () => {
   const source = readFileSync(new URL('../src/components/layout/SellerDashboard.jsx', import.meta.url), 'utf8');
   let found = false;

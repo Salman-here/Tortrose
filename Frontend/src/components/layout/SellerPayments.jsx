@@ -638,8 +638,6 @@ const SellerPayments = () => {
                         <h2 className="text-lg font-bold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Balance Details</h2>
                         <div className="space-y-3">
                             {[
-                                ['Safepay delivered revenue', selectedBalance?.safepayDeliveredRevenue ?? 0],
-                                ['Wallet delivered revenue', selectedBalance?.walletDeliveredRevenue ?? 0],
                                 ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0],
                                 ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0],
                                 ['Held for returns', selectedBalance?.returnWindowHeldAmount ?? 0],
