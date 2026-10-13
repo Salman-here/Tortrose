@@ -18,6 +18,7 @@ import {
 } from '../../utils/currencySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 import SellerRevenueOverview from '../seller/SellerRevenueOverview';
+import { useAuth } from '../../contexts/AuthContext';
 
 const STATUS_ORDER = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
 const STATUS_COLORS = {
@@ -93,7 +94,7 @@ const SellerAnalytics = () => {
         if (!analytics?.revenueByDay) return [];
         return analytics.revenueByDay.map(b => ({
             ...b,
-            label: new Date(b.date).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
+            label: new Date(b.date).toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
             revenue: roundCurrencyAmount(b.revenue),
         }));
     }, [analytics]);
@@ -126,40 +127,19 @@ const SellerAnalytics = () => {
         { label: '90 Days', value: '90' },
     ];
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-[60vh]">
-                <Loader size="default" text="Loading analytics..." />
-            </div>
-        );
-    }
-
-    if (!analytics) {
-        return (
-            <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
-                <SellerRevenueOverview />
-                <div className="p-6 max-w-xl mx-auto text-center glass-panel space-y-4">
-                <AlertTriangle size={30} className="mx-auto" style={{ color: 'hsl(30,90%,50%)' }} />
-                <p className="text-sm" style={{ color: 'hsl(var(--foreground))' }}>{loadError}</p>
-                <button type="button" onClick={fetchAnalytics} className="px-4 py-2 rounded-xl glass-inner text-sm font-semibold">Retry</button>
-                </div>
-            </div>
-        );
-    }
-
-    const s = analytics.summary;
-    const analyticsCurrency = analytics.currency;
+    const s = analytics?.summary;
+    const analyticsCurrency = analytics?.currency;
     const money = (amount) => formatPrice(amount, {
         sourceCurrency: analyticsCurrency,
         targetCurrency: analyticsCurrency,
     });
 
-    const summaryStats = [
+    const summaryStats = analytics ? [
         { label: 'Total Revenue', value: money(s.totalRevenue), icon: <DollarSign size={20} />, color: 'hsl(150,60%,45%)', bg: 'rgba(16,185,129,0.12)' },
         { label: 'Recognized Orders', value: s.paidOrders, icon: <ShoppingBag size={20} />, color: 'hsl(220,70%,55%)', bg: 'rgba(99,102,241,0.12)' },
         { label: 'Avg Order Value', value: money(s.avgOrderValue), icon: <TrendingUp size={20} />, color: 'hsl(200,80%,50%)', bg: 'rgba(14,165,233,0.12)' },
         { label: 'Units Sold', value: s.totalUnitsSold, icon: <Package size={20} />, color: 'hsl(280,60%,55%)', bg: 'rgba(139,92,246,0.12)' },
-    ];
+    ] : [];
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
@@ -176,10 +156,15 @@ const SellerAnalytics = () => {
                         Track your store performance and revenue trends
                     </p>
                 </div>
-                <div className="flex gap-2">
+            </motion.div>
+
+            <SellerRevenueOverview />
+
+            <div role="group" aria-label="Analytics date filter" className="flex flex-wrap gap-2">
                     {ranges.map(r => (
                         <motion.button key={r.value} whileTap={{ scale: 0.95 }}
                             onClick={() => setTimeRange(r.value)}
+                            aria-pressed={timeRange === r.value}
                             className={`px-3 py-2 rounded-xl text-xs font-medium transition-all ${timeRange === r.value ? 'border' : 'glass-inner'}`}
                             style={timeRange === r.value
                                 ? { background: 'rgba(16,185,129,0.12)', color: 'hsl(150,60%,45%)', borderColor: 'rgba(16,185,129,0.3)' }
@@ -187,10 +172,18 @@ const SellerAnalytics = () => {
                             <Calendar size={12} className="inline mr-1" />{r.label}
                         </motion.button>
                     ))}
-                </div>
-            </motion.div>
+            </div>
 
-            <SellerRevenueOverview />
+            <SellerRevenueOverview days={timeRange} />
+
+            {loading && <div role="status" className="flex items-center justify-center py-12"><Loader size="default" text="Loading period performance..." /></div>}
+            {!loading && !analytics && <div role="alert" className="p-6 glass-panel space-y-4 text-center">
+                <AlertTriangle size={30} className="mx-auto" style={{ color: 'hsl(30,90%,50%)' }} />
+                <p className="text-sm">{loadError}</p>
+                <button type="button" onClick={fetchAnalytics} className="px-4 py-2 rounded-xl glass-inner text-sm font-semibold">Retry performance charts</button>
+            </div>}
+
+            {!loading && analytics && <>
 
             {/* Period-filtered Summary Stats */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -368,8 +361,12 @@ const SellerAnalytics = () => {
                     )}
                 </motion.div>
             </div>
+            </>}
         </motion.div>
     );
 };
 
-export default SellerAnalytics;
+export default function AccountScopedSellerAnalytics() {
+    const { currentUser } = useAuth();
+    return <SellerAnalytics key={`${currentUser?.role || 'guest'}:${currentUser?._id || currentUser?.id || ''}`} />;
+}

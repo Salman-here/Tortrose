@@ -10,7 +10,7 @@ import { inspectSellerProductCurrencyState } from '../../utils/productCurrencySt
 import { inspectSellerRevenueOverview } from '../../utils/sellerRevenueOverview';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
 
-export default function SellerRevenueOverview() {
+export default function SellerRevenueOverview({ days = 'all', refreshKey = 0 }) {
   const { currentUser } = useAuth();
   const { formatAmount } = useCurrency();
   const { palette } = useTheme();
@@ -36,9 +36,9 @@ export default function SellerRevenueOverview() {
       if (requestRef.current.id !== requestId) return;
       const state = inspectSellerProductCurrencyState(response.data?.productCurrency);
       if (!state.valid || !state.hasStore) throw new Error('Your store currency could not be verified.');
-      const totals = await api.get(`${API_ENDPOINTS.PAYMENTS.SELLER_SUMMARY}?currency=${encodeURIComponent(state.activeCurrency)}`, options);
+      const totals = await api.get(`/api/payments/seller/revenue-overview?currency=${encodeURIComponent(state.activeCurrency)}&days=${days}`, options);
       if (requestRef.current.id !== requestId) return;
-      const next = inspectSellerRevenueOverview(totals.data, sellerId, state.activeCurrency);
+      const next = inspectSellerRevenueOverview(totals.data?.overview, sellerId, state.activeCurrency, days);
       if (!next) throw new Error('Revenue totals could not be verified. Please retry.');
       setOverview(next);
     } catch (failure) {
@@ -47,26 +47,30 @@ export default function SellerRevenueOverview() {
     } finally {
       if (requestRef.current.id === requestId) setLoading(false);
     }
-  }, [sellerId]);
+  }, [sellerId, days]);
 
   useEffect(() => {
     refresh();
     return () => { requestRef.current.id += 1; requestRef.current.controller?.abort(); };
-  }, [refresh]);
+  }, [refresh, refreshKey]);
 
-  const active = overview?.sellerId === sellerId ? overview : null;
+  const allTime = days === 'all';
+  const sectionName = allTime ? 'All-time revenue' : 'Revenue for selected period';
+  const active = overview?.sellerId === sellerId && overview.days === (allTime ? null : Number(days)) ? overview : null;
   const cards = active ? [
+    { label: `Total Online Earnings (${active.currency})`, value: active.onlineGrossEarnings, icon: 'wallet-outline', description: 'Safepay and Wallet earnings before fees and withdrawals, excluding refunds and reversals.', color: palette.colors.success },
     { label: 'Delivered COD Revenue', value: active.codDeliveredRevenue, icon: 'cash-outline', description: 'Delivered COD sales collected directly by you.', color: palette.colors.warning },
     { label: 'Total Delivered Revenue', value: active.totalDeliveredRevenue, icon: 'trending-up-outline', description: 'Delivered Safepay, Wallet and COD sales.', color: palette.colors.primary },
     { label: 'Estimated Revenue', value: active.estimatedRevenue, icon: 'time-outline', description: 'Delivered sales plus pending online and COD orders.', color: palette.colors.info },
   ] : [];
 
   return (
-    <View style={styles.section} accessibilityLabel="All-time revenue">
+    <View style={styles.section} accessibilityLabel={sectionName}>
       <View style={styles.header}>
-        <View style={styles.headerCopy}><Text style={styles.title}>All-time revenue</Text>
-          <Text style={styles.subtitle}>Gross sales totals{active ? ` in ${active.currency}` : ''}. Independent of the chart period; not your withdrawable balance.</Text></View>
-        <TouchableOpacity onPress={refresh} disabled={loading} accessibilityRole="button" accessibilityLabel="Refresh all-time revenue" style={styles.refresh}>
+        <View style={styles.headerCopy}><Text style={styles.title}>{allTime ? 'All-time revenue' : `Revenue · Last ${days} days`}</Text>
+          <Text style={styles.subtitle}>{allTime ? 'Lifetime totals, independent of the date filter.' : 'Orders placed in the selected calendar-day period (UTC), using saved order amounts.'} Not your withdrawable balance.</Text>
+          {!allTime && active && <Text style={styles.subtitle}>{active.period.startDate.slice(0, 10)} to {new Date(Date.parse(active.period.endDateExclusive) - 86400000).toISOString().slice(0, 10)} · UTC</Text>}</View>
+        <TouchableOpacity onPress={refresh} disabled={loading} accessibilityRole="button" accessibilityLabel={allTime ? 'Refresh all-time revenue' : 'Refresh period revenue'} style={styles.refresh}>
           {loading ? <ActivityIndicator color={palette.colors.primary} size="small" /> : <Ionicons name="refresh" size={18} color={palette.colors.primary} />}
         </TouchableOpacity>
       </View>

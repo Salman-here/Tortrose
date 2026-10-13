@@ -458,7 +458,6 @@ export default function SellerPaymentsScreen({ navigation }) {
         </GlassPanel>
 
         <View style={styles.statsGrid}>
-          <StatCard styles={styles} icon="wallet-outline" label="Total online earnings" value={formatBalanceMoney(selectedBalance?.onlineGrossEarnings ?? 0)} description="Gross online and Wallet earnings before deductions and withdrawals, excluding refunds" color={palette.colors.primary} />
           {/* Fee summary card temporarily hidden; accounting and per-order fee
               details remain active. Uncomment if this summary is needed later.
           <StatCard styles={styles} icon="card-outline" label="Processing fee + tax" value={formatBalanceMoney(selectedBalance?.processingFeeAndTax ?? 0)} description="One combined deduction for Safepay and Wallet orders" color={palette.colors.warning} />

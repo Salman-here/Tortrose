@@ -466,11 +466,7 @@ const SellerPayments = () => {
                 </motion.button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <PaymentStat label={`Total Online Earnings (${balanceCurrency})`}
-                    value={formatBalanceMoney(selectedBalance?.onlineGrossEarnings ?? 0)}
-                    description="Gross online and Wallet earnings before deductions and withdrawals; refunded amounts are removed."
-                    icon={<TrendingUp size={22} />} color="hsl(220,70%,55%)" bg="rgba(99,102,241,0.12)" />
+            <div className="grid grid-cols-1 gap-4">
                 {/* Fee summary card temporarily hidden; keep per-order details and
                     fee accounting active. Uncomment this card if needed later.
                 <PaymentStat label="Processing fee + tax"

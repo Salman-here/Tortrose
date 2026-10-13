@@ -7,7 +7,7 @@ import { getAuthToken } from '../../utils/cookieHelper';
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 import { inspectSellerRevenueOverview } from '../../utils/sellerRevenueOverview';
 
-export default function SellerRevenueOverview() {
+export default function SellerRevenueOverview({ days = 'all', refreshKey = 0 }) {
   const { currentUser } = useAuth();
   const { formatAmount } = useCurrency();
   const sellerId = currentUser?.role === 'seller' ? String(currentUser._id || currentUser.id || '') : '';
@@ -31,9 +31,9 @@ export default function SellerRevenueOverview() {
       if (requestRef.current.id !== requestId) return;
       const state = inspectSellerProductCurrencyState(response.data?.productCurrency);
       if (!state.valid || !state.hasStore) throw new Error('Your store currency could not be verified.');
-      const totals = await axios.get(`${import.meta.env.VITE_API_URL}api/payments/seller/summary?currency=${encodeURIComponent(state.activeCurrency)}`, options);
+      const totals = await axios.get(`${import.meta.env.VITE_API_URL}api/payments/seller/revenue-overview?currency=${encodeURIComponent(state.activeCurrency)}&days=${days}`, options);
       if (requestRef.current.id !== requestId) return;
-      const next = inspectSellerRevenueOverview(totals.data, sellerId, state.activeCurrency);
+      const next = inspectSellerRevenueOverview(totals.data?.overview, sellerId, state.activeCurrency, days);
       if (!next) throw new Error('Revenue totals could not be verified. Please retry.');
       setOverview(next);
     } catch (failure) {
@@ -42,15 +42,19 @@ export default function SellerRevenueOverview() {
     } finally {
       if (requestRef.current.id === requestId) setLoading(false);
     }
-  }, [sellerId]);
+  }, [sellerId, days]);
 
   useEffect(() => {
     refresh();
     return () => { requestRef.current.id += 1; requestRef.current.controller?.abort(); };
-  }, [refresh]);
+  }, [refresh, refreshKey]);
 
-  const active = overview?.sellerId === sellerId ? overview : null;
+  const allTime = days === 'all';
+  const sectionName = allTime ? 'All-time revenue' : 'Revenue for selected period';
+  const active = overview?.sellerId === sellerId && overview.days === (allTime ? null : Number(days)) ? overview : null;
   const cards = active ? [
+    { label: `Total Online Earnings (${active.currency})`, value: active.onlineGrossEarnings, icon: TrendingUp,
+      description: 'Safepay and Wallet earnings before fees and withdrawals, excluding refunds and reversals.', color: 'hsl(150,60%,45%)', bg: 'rgba(16,185,129,0.12)' },
     { label: 'Delivered COD Revenue', value: active.codDeliveredRevenue, icon: Banknote,
       description: 'Delivered COD sales collected directly by you.', color: 'hsl(30,90%,50%)', bg: 'rgba(249,115,22,0.12)' },
     { label: 'Total Delivered Revenue', value: active.totalDeliveredRevenue, icon: TrendingUp,
@@ -60,17 +64,18 @@ export default function SellerRevenueOverview() {
   ] : [];
 
   return (
-    <section aria-label="All-time revenue" className="space-y-3">
+    <section aria-label={sectionName} className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold">All-time revenue</h2>
-          <p className="text-xs text-muted-foreground mt-1">Gross sales totals{active ? ` in ${active.currency}` : ''}. Independent of the chart period; not your withdrawable balance.</p>
+          <h2 className="text-lg font-bold">{allTime ? 'All-time revenue' : `Revenue · Last ${days} days`}</h2>
+          <p className="text-xs text-muted-foreground mt-1">{allTime ? 'Lifetime totals, independent of the date filter.' : 'Orders placed in the selected calendar-day period (UTC), using saved order amounts.'} Not your withdrawable balance.</p>
+          {!allTime && active && <p className="text-xs text-muted-foreground mt-1">{active.period.startDate.slice(0, 10)} to {new Date(Date.parse(active.period.endDateExclusive) - 86400000).toISOString().slice(0, 10)} · UTC</p>}
         </div>
-        <button type="button" aria-label="Refresh all-time revenue" onClick={refresh} disabled={loading}
+        <button type="button" aria-label={allTime ? 'Refresh all-time revenue' : 'Refresh period revenue'} onClick={refresh} disabled={loading}
           className="glass-inner rounded-xl p-2 disabled:opacity-50"><RefreshCw size={16} className={loading ? 'animate-spin' : ''} /></button>
       </div>
       {loading ? <div role="status" className="glass-panel rounded-2xl p-5 text-sm text-muted-foreground">Loading revenue totals…</div>
-        : active ? <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">{cards.map(({ icon: Icon, ...card }) => (
+        : active ? <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">{cards.map(({ icon: Icon, ...card }) => (
           <div key={card.label} className="glass-card water-shimmer p-4 sm:p-5 min-w-0">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{card.label}</p>

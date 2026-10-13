@@ -3,38 +3,31 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parse } from '@babel/parser';
 import { inspectSellerRevenueOverview } from '../src/utils/sellerRevenueOverview.js';
-import { WITHDRAWAL_MINIMUMS } from '../src/utils/nativeBalanceSafety.js';
 
 const response = () => {
-  const fields = ['withdrawableBalance', 'onlineDeliveredRevenue', 'onlinePendingRevenue', 'pendingWithdrawalAmount',
-    'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn',
-    'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits', 'totalReservedOrWithdrawn', 'deficit', 'paymentRiskHeldAmount'];
-  const balances = Object.keys(WITHDRAWAL_MINIMUMS).map(currency => ({
-    ...Object.fromEntries(fields.map(field => [field, 0])), currency, minimumWithdrawal: WITHDRAWAL_MINIMUMS[currency],
-  }));
-  return { sellerId: 'seller-a', accountingVersion: 2, displayCurrency: 'PKR', baseCurrency: 'PKR',
-    balances, balanceByCurrency: Object.fromEntries(balances.map(row => [row.currency, { ...row }])),
-    exchangeRateStatus: { fallback: false },
-    withdrawalLimits: { currency: 'PKR', availableDisplayAmount: 0, minimumDisplayAmount: 2000 },
-    displayRevenue: { codDeliveredRevenue: 4000, onlineDeliveredRevenue: 6000, totalDeliveredRevenue: 10000,
-      onlinePendingRevenue: 1500, codPendingRevenue: 500, estimatedRevenue: 12000 } };
+  return { sellerId: 'seller-a', version: 1, currency: 'PKR', scope: 'all_time',
+    period: { days: null, startDate: null, endDateExclusive: null, timezone: 'UTC', basis: 'order_created_at' },
+    exchangeRateStatus: { fallback: false, frozen: true }, onlineEarningsBasis: 'native_balance_currency', onlineGrossEarnings: 6000,
+    codDeliveredRevenue: 4000, onlineDeliveredRevenue: 6000, totalDeliveredRevenue: 10000,
+    onlinePendingRevenue: 1500, codPendingRevenue: 500, estimatedRevenue: 12000 };
 };
 
 test('moved cards retain exact all-time reporting totals without mutating the payment authority', () => {
   const summary = response(), before = JSON.stringify(summary);
   assert.deepEqual(inspectSellerRevenueOverview(summary, 'seller-a', 'PKR'), {
-    sellerId: 'seller-a', currency: 'PKR', codDeliveredRevenue: 4000, totalDeliveredRevenue: 10000, estimatedRevenue: 12000,
+    sellerId: 'seller-a', currency: 'PKR', days: null, period: summary.period, onlineGrossEarnings: 6000,
+    codDeliveredRevenue: 4000, totalDeliveredRevenue: 10000, estimatedRevenue: 12000,
   });
   assert.equal(JSON.stringify(summary), before);
 });
 
 test('invalid, relabelled, stale-account and inconsistent revenue never becomes displayed zero money', () => {
-  const mutations = [s => s.sellerId = 'seller-b', s => s.displayCurrency = 'USD', s => s.baseCurrency = 'USD',
-    s => s.exchangeRateStatus.fallback = true, s => s.accountingVersion = 1,
-    s => s.balanceByCurrency.PKR.withdrawableBalance = 1,
-    s => delete s.displayRevenue.codDeliveredRevenue, s => s.displayRevenue.totalDeliveredRevenue = 9999,
-    s => s.displayRevenue.estimatedRevenue = 10000, s => s.displayRevenue.onlineDeliveredRevenue = '6000',
-    s => s.displayRevenue.codPendingRevenue = 0.001, s => s.displayRevenue.onlinePendingRevenue = null];
+  const mutations = [s => s.sellerId = 'seller-b', s => s.currency = 'USD', s => s.version = 2,
+    s => s.exchangeRateStatus.fallback = true, s => s.exchangeRateStatus.frozen = false,
+    s => s.onlineEarningsBasis = 'converted_balances', s => delete s.onlineGrossEarnings,
+    s => delete s.codDeliveredRevenue, s => s.totalDeliveredRevenue = 9999,
+    s => s.estimatedRevenue = 10000, s => s.onlineDeliveredRevenue = '6000',
+    s => s.codPendingRevenue = 0.001, s => s.onlinePendingRevenue = null];
   for (const mutate of mutations) {
     const summary = response(); mutate(summary);
     assert.equal(inspectSellerRevenueOverview(summary, 'seller-a', 'PKR'), null);
@@ -72,7 +65,7 @@ test('Payments hides only the requested cards and retains reversible fee markup 
     }
     assert.match(source, /Fee summary card temporarily hidden/);
     assert.match(source, /label="Processing fee \+ tax"/);
-    assert.match(source, /selectedBalance\?\.onlineGrossEarnings/);
+    assert.doesNotMatch(source, /selectedBalance\?\.onlineGrossEarnings/);
     assert.match(source, /selectedBalance\?\.withdrawableBalance/);
   }
   for (const path of ['../src/components/layout/OrderDetail.jsx', '../../MobileApp/src/screens/shared/OrderDetailManagementScreen.js']) {
@@ -83,13 +76,29 @@ test('Payments hides only the requested cards and retains reversible fee markup 
 test('Analytics uses a separately labelled all-time source, including when charts are unavailable', () => {
   for (const path of ['../src/components/layout/SellerAnalytics.jsx', '../../MobileApp/src/screens/seller/SellerAnalyticsScreen.js']) {
     const source = readFileSync(new URL(path, import.meta.url), 'utf8');
-    assert.equal((source.match(/<SellerRevenueOverview\s*\/>/g) || []).length, 2);
+    assert.match(source, /<SellerRevenueOverview(?:\s+refreshKey=\{revenueRefreshKey\})?\s*\/>/);
+    assert.match(source, /<SellerRevenueOverview days=\{timeRange\}/);
+    assert.ok(source.indexOf('<SellerRevenueOverview') < source.indexOf('Analytics date filter'));
   }
   for (const path of ['../src/components/seller/SellerRevenueOverview.jsx', '../../MobileApp/src/components/seller/SellerRevenueOverview.js']) {
     const source = readFileSync(new URL(path, import.meta.url), 'utf8');
     assert.match(source, /All-time revenue/);
-    assert.doesNotMatch(source, /days=|timeRange|api\.post|axios\.post|api\.put|axios\.put/);
+    assert.doesNotMatch(source, /api\.post|axios\.post|api\.put|axios\.put/);
+    assert.match(source, /revenue-overview\?currency=/);
     assert.match(source, /overview\?\.sellerId === sellerId/);
     for (const title of ['Delivered COD Revenue', 'Total Delivered Revenue', 'Estimated Revenue']) assert.ok(source.includes(title));
+  }
+});
+
+test('filtered responses are bound to the exact requested window and cannot masquerade as lifetime totals', () => {
+  const value = response(); value.scope = 'period';
+  value.period = { days: 7, startDate: '2026-10-07T00:00:00.000Z', endDateExclusive: '2026-10-14T00:00:00.000Z', timezone: 'UTC', basis: 'order_created_at' };
+  assert.equal(inspectSellerRevenueOverview(value, 'seller-a', 'PKR', '7').onlineGrossEarnings, 6000);
+  assert.equal(inspectSellerRevenueOverview(value, 'seller-a', 'PKR', '30'), null);
+  assert.equal(inspectSellerRevenueOverview(value, 'seller-a', 'PKR'), null);
+  for (const mutate of [s => s.period.days = 30, s => s.period.startDate = '2026-10-08T00:00:00.000Z',
+    s => s.period.timezone = 'Asia/Karachi', s => s.period.basis = 'delivery_date', s => s.period.endDateExclusive = '2026-10-14T01:00:00.000Z']) {
+    const invalid = structuredClone(value); mutate(invalid);
+    assert.equal(inspectSellerRevenueOverview(invalid, 'seller-a', 'PKR', '7'), null);
   }
 });

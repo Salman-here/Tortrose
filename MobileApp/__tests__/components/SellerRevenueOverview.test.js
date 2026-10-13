@@ -25,22 +25,17 @@ jest.mock('../../src/config/api', () => ({ __esModule: true, default: { get: jes
 const currency = { hasStore: true, activeCurrency: 'PKR', status: 'active', pendingCurrency: null, previousCurrency: null,
   productCount: 1, productCurrencies: ['PKR'], productCurrencyCounts: { PKR: 1 }, canAddProduct: true };
 const summary = (sellerId = 'seller-a') => {
-  const fields = ['withdrawableBalance', 'onlineDeliveredRevenue', 'onlinePendingRevenue', 'pendingWithdrawalAmount',
-    'approvedWithdrawalAmount', 'processingWithdrawalAmount', 'manualReviewWithdrawalAmount', 'totalWithdrawn',
-    'returnRefundDebits', 'paymentReversalDebits', 'balanceAdjustmentCredits', 'totalReservedOrWithdrawn', 'deficit', 'paymentRiskHeldAmount'];
-  const minima = { USD: 5, PKR: 2000, EUR: 5, GBP: 5 };
-  const balances = Object.keys(minima).map(code => ({ ...Object.fromEntries(fields.map(field => [field, 0])), currency: code, minimumWithdrawal: minima[code] }));
-  return { sellerId, accountingVersion: 2, displayCurrency: 'PKR', baseCurrency: 'PKR', balances,
-    balanceByCurrency: Object.fromEntries(balances.map(row => [row.currency, { ...row }])), exchangeRateStatus: { fallback: false },
-    withdrawalLimits: { currency: 'PKR', availableDisplayAmount: 0, minimumDisplayAmount: 2000 },
-    displayRevenue: { codDeliveredRevenue: 4000, onlineDeliveredRevenue: 6000, totalDeliveredRevenue: 10000,
-      onlinePendingRevenue: 1500, codPendingRevenue: 500, estimatedRevenue: 12000 } };
+  return { sellerId, version: 1, currency: 'PKR', scope: 'all_time',
+    period: { days: null, startDate: null, endDateExclusive: null, timezone: 'UTC', basis: 'order_created_at' },
+    exchangeRateStatus: { fallback: false, frozen: true }, onlineEarningsBasis: 'native_balance_currency', onlineGrossEarnings: 6000,
+    codDeliveredRevenue: 4000, onlineDeliveredRevenue: 6000, totalDeliveredRevenue: 10000,
+    onlinePendingRevenue: 1500, codPendingRevenue: 500, estimatedRevenue: 12000 };
 };
 
 beforeEach(() => {
   mockUser = { _id: 'seller-a', role: 'seller' };
   jest.clearAllMocks();
-  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currency } : summary(mockUser._id) }));
+  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currency } : { overview: summary(mockUser._id) } }));
 });
 
 test('renders the exact three all-time cards from the original authority without a write', async () => {
@@ -49,8 +44,9 @@ test('renders the exact three all-time cards from the original authority without
   for (const label of ['Delivered COD Revenue', 'Total Delivered Revenue', 'Estimated Revenue']) expect(screen.getByText(label)).toBeTruthy();
   expect(screen.getByText('PKR 4000.00')).toBeTruthy();
   expect(screen.getByText('PKR 10000.00')).toBeTruthy();
-  expect(screen.getByText(/Independent of the chart period/)).toBeTruthy();
-  expect(api.get).toHaveBeenCalledWith('/summary?currency=PKR', expect.any(Object));
+  expect(screen.getByText(/Lifetime totals/)).toBeTruthy();
+  expect(screen.getByText('Total Online Earnings (PKR)')).toBeTruthy();
+  expect(api.get).toHaveBeenCalledWith('/api/payments/seller/revenue-overview?currency=PKR&days=all', expect.any(Object));
   expect(api.post).not.toHaveBeenCalled(); expect(api.put).not.toHaveBeenCalled();
 });
 
@@ -66,8 +62,8 @@ test('a failed refresh removes old totals and does not show invented zero money'
 
 test.each(['seller-b', 'invalid-currency'])('rejects %s response rather than displaying another balance', async reason => {
   const invalid = summary(reason === 'seller-b' ? reason : 'seller-a');
-  if (reason === 'invalid-currency') invalid.displayCurrency = 'USD';
-  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currency } : invalid }));
+  if (reason === 'invalid-currency') invalid.currency = 'USD';
+  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currency } : { overview: invalid } }));
   const screen = render(<SellerRevenueOverview />);
   await screen.findByText('Revenue totals could not be verified. Please retry.');
   expect(screen.queryByText('PKR 12000.00')).toBeNull();
@@ -83,11 +79,11 @@ test('ignores a late old-account response after switching sellers', async () => 
   screen.rerender(<SellerRevenueOverview />);
   await waitFor(() => expect(pending).toHaveLength(2));
   const newer = summary('seller-b');
-  Object.assign(newer.displayRevenue, { codDeliveredRevenue: 0, onlineDeliveredRevenue: 500,
+  Object.assign(newer, { codDeliveredRevenue: 0, onlineDeliveredRevenue: 500, onlineGrossEarnings: 600,
     totalDeliveredRevenue: 500, onlinePendingRevenue: 0, codPendingRevenue: 0, estimatedRevenue: 500 });
-  await act(async () => { pending[1]({ data: newer }); });
+  await act(async () => { pending[1]({ data: { overview: newer } }); });
   await screen.findAllByText('PKR 500.00');
-  await act(async () => { pending[0]({ data: summary('seller-a') }); });
+  await act(async () => { pending[0]({ data: { overview: summary('seller-a') } }); });
   expect(screen.queryByText('PKR 12000.00')).toBeNull();
   expect(screen.getAllByText('PKR 500.00')).toHaveLength(2);
 });
@@ -95,10 +91,35 @@ test('ignores a late old-account response after switching sellers', async () => 
 test('basic revenue remains available when advanced analytics charts are not included', async () => {
   api.get.mockImplementation(async url => {
     if (url.startsWith('/api/analytics/seller')) throw { response: { status: 403 } };
-    return { data: url === '/currency' ? { productCurrency: currency } : summary() };
+    if (url === '/currency') return { data: { productCurrency: currency } };
+    const value = summary();
+    if (url.endsWith('days=30')) {
+      value.scope = 'period'; value.period = { days: 30, startDate: '2026-09-14T00:00:00.000Z', endDateExclusive: '2026-10-14T00:00:00.000Z', timezone: 'UTC', basis: 'order_created_at' };
+      Object.assign(value, { codDeliveredRevenue: 1000, onlineDeliveredRevenue: 4000, onlineGrossEarnings: 4000, totalDeliveredRevenue: 5000, onlinePendingRevenue: 0, codPendingRevenue: 0, estimatedRevenue: 5000 });
+    }
+    return { data: { overview: value } };
   });
   const screen = render(<SellerAnalyticsScreen navigation={{ navigate: jest.fn() }} />);
   await screen.findByText('PKR 12000.00');
   expect(screen.getByText(/Advanced Analytics is not included/)).toBeTruthy();
-  expect(screen.getByText('Delivered COD Revenue')).toBeTruthy();
+  expect(screen.getAllByText('Delivered COD Revenue')).toHaveLength(2);
+  expect(screen.getByText('Revenue · Last 30 days')).toBeTruthy();
+});
+
+test('switching the period ignores the previous late response instead of showing old-range money', async () => {
+  const pending = [];
+  api.get.mockImplementation(url => url === '/currency' ? Promise.resolve({ data: { productCurrency: currency } })
+    : new Promise(resolve => pending.push(resolve)));
+  const screen = render(<SellerRevenueOverview days="7" />);
+  await waitFor(() => expect(pending).toHaveLength(1));
+  screen.rerender(<SellerRevenueOverview days="30" />);
+  await waitFor(() => expect(pending).toHaveLength(2));
+  const current = summary(); current.scope = 'period'; current.period = { days: 30, startDate: '2026-09-14T00:00:00.000Z', endDateExclusive: '2026-10-14T00:00:00.000Z', timezone: 'UTC', basis: 'order_created_at' };
+  await act(async () => { pending[1]({ data: { overview: current } }); });
+  await screen.findByText('PKR 12000.00');
+  const previous = summary(); previous.scope = 'period'; previous.period = { days: 7, startDate: '2026-10-07T00:00:00.000Z', endDateExclusive: '2026-10-14T00:00:00.000Z', timezone: 'UTC', basis: 'order_created_at' };
+  previous.estimatedRevenue = 999;
+  await act(async () => { pending[0]({ data: { overview: previous } }); });
+  expect(screen.getByText('Revenue · Last 30 days')).toBeTruthy();
+  expect(screen.queryByText('PKR 999.00')).toBeNull();
 });

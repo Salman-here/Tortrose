@@ -19,6 +19,7 @@ import { useCurrency } from '../../contexts/CurrencyContext';
 import { sellerAnalyticsMoneyIsValid } from '../../utils/currencySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 import SellerRevenueOverview from '../../components/seller/SellerRevenueOverview';
+import { useAuth } from '../../contexts/AuthContext';
 
 const RANGES = [
   { label: '7 Days', value: '7' },
@@ -37,7 +38,7 @@ const getStatusColor = (status, palette) => ({
 }[status] || palette.colors.textSecondary);
 const CAT_COLORS = ['#6366f1', '#10b981', '#0ea5e9', '#8b5cf6', '#f97316', '#ec4899'];
 
-export default function SellerAnalyticsScreen({ navigation }) {
+function SellerAnalyticsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { formatAmount } = useCurrency();
@@ -47,6 +48,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
   const [timeRange, setTimeRange] = useState('30');
   const [analytics, setAnalytics] = useState(null);
   const [error, setError] = useState(null);
+  const [revenueRefreshKey, setRevenueRefreshKey] = useState(0);
   const analyticsRequestRef = useRef(0);
 
   const fetchAnalytics = useCallback(async () => {
@@ -88,42 +90,20 @@ export default function SellerAnalyticsScreen({ navigation }) {
     fetchAnalytics();
     return () => { analyticsRequestRef.current += 1; };
   }, [fetchAnalytics]);
-  const onRefresh = useCallback(() => { setRefreshing(true); fetchAnalytics(); }, [fetchAnalytics]);
+  const onRefresh = useCallback(() => { setRefreshing(true); setRevenueRefreshKey(key => key + 1); fetchAnalytics(); }, [fetchAnalytics]);
+  const s = analytics?.summary;
 
-  if (loading) return <SellerScreenSkeleton navigation={navigation} title="Store Analytics" subtitle="Loading verified performance data" icon="bar-chart-outline" variant="dashboard" />;
-
-  if (error) return (
-    <GlassBackground>
-      <SafeAreaView style={{flex:1}} edges={Platform.OS === 'android' ? [] : ['top']}>
-        <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Verified seller performance" icon="bar-chart-outline" />
-        <ScrollView contentContainerStyle={styles.scroll}>
-        <SellerRevenueOverview />
-        <SellerInlineError title="Analytics unavailable" message={error} onRetry={fetchAnalytics} />
-        {String(error).includes('entitlement') && (
-          <TouchableOpacity style={styles.planButton} onPress={() => navigation.navigate('SellerSubscription')}>
-            <Ionicons name="diamond-outline" size={17} color="#fff" />
-            <Text style={styles.planButtonText}>View seller plans</Text>
-          </TouchableOpacity>
-        )}
-        </ScrollView>
-      </SafeAreaView>
-    </GlassBackground>
-  );
-
-  if (!analytics) return null;
-  const s = analytics.summary;
-
-  const summaryStats = [
+  const summaryStats = analytics ? [
     { label: 'Total Revenue', value: formatAmount(s.totalRevenue, { targetCurrency: analytics.currency }), icon: 'cash-outline', color: palette.colors.success, bg: 'rgba(16,185,129,0.12)' },
     { label: 'Recognized Orders', value: s.paidOrders, icon: 'receipt-outline', color: palette.colors.info, bg: 'rgba(99,102,241,0.12)' },
     { label: 'Avg Order Value', value: formatAmount(s.avgOrderValue, { targetCurrency: analytics.currency }), icon: 'trending-up-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)' },
     { label: 'Units Sold', value: s.totalUnitsSold, icon: 'cube-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
-  ];
+  ] : [];
 
-  const maxRevenue = Math.max(...(analytics.revenueByDay || []).map(d => d.revenue), 1);
-  const maxOrders = Math.max(...(analytics.revenueByDay || []).map(d => d.orders), 1);
+  const maxRevenue = Math.max(...(analytics?.revenueByDay || []).map(d => d.revenue), 1);
+  const maxOrders = Math.max(...(analytics?.revenueByDay || []).map(d => d.orders), 1);
 
-  const statusBreakdown = [...(analytics.statusBreakdown || [])].sort((left, right) => {
+  const statusBreakdown = [...(analytics?.statusBreakdown || [])].sort((left, right) => {
     const leftIndex = STATUS_ORDER.indexOf(left.name);
     const rightIndex = STATUS_ORDER.indexOf(right.name);
     return (leftIndex === -1 ? STATUS_ORDER.length : leftIndex) - (rightIndex === -1 ? STATUS_ORDER.length : rightIndex);
@@ -133,14 +113,17 @@ export default function SellerAnalyticsScreen({ navigation }) {
   return (
     <GlassBackground>
       <SafeAreaView style={{flex:1}} edges={Platform.OS === 'android' ? [] : ['top']}>
-      <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Verified seller performance" icon="bar-chart-outline" rightIcon="refresh" rightLabel="Refresh" onRightPress={fetchAnalytics} />
+      <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Verified seller performance" icon="bar-chart-outline" rightIcon="refresh" rightLabel="Refresh" onRightPress={onRefresh} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}>
 
+        <SellerRevenueOverview refreshKey={revenueRefreshKey} />
+
         {/* Period Selector */}
-        <View style={styles.rangeRow}>
+        <View style={styles.rangeRow} accessibilityLabel="Analytics date filter">
           {RANGES.map(r => (
             <TouchableOpacity key={r.value} style={[styles.rangeBtn, timeRange === r.value && styles.rangeBtnActive]}
+              accessibilityRole="button" accessibilityState={{ selected: timeRange === r.value }}
               onPress={() => setTimeRange(r.value)}>
               <Ionicons name="calendar-outline" size={12} color={timeRange === r.value ? palette.colors.primary : palette.colors.textSecondary} />
               <Text style={[styles.rangeBtnText, timeRange === r.value && { color: palette.colors.primary }]}>{r.label}</Text>
@@ -148,7 +131,17 @@ export default function SellerAnalyticsScreen({ navigation }) {
           ))}
         </View>
 
-        <SellerRevenueOverview />
+        <SellerRevenueOverview days={timeRange} refreshKey={revenueRefreshKey} />
+
+        {loading && <View style={styles.loadingPanel}><Text style={styles.chartSubtitle}>Loading period performance…</Text></View>}
+        {!loading && error && <>
+          <SellerInlineError title="Performance charts unavailable" message={error} onRetry={fetchAnalytics} />
+          {String(error).includes('entitlement') && <TouchableOpacity style={styles.planButton} onPress={() => navigation.navigate('SellerSubscription')}>
+            <Ionicons name="diamond-outline" size={17} color="#fff" /><Text style={styles.planButtonText}>View seller plans</Text>
+          </TouchableOpacity>}
+        </>}
+
+        {!loading && analytics && <>
 
         {/* Summary Stats */}
         <View style={styles.statsGrid}>
@@ -179,7 +172,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
               <View key={i} style={styles.barContainer}>
                 <View style={[styles.bar, { height: Math.max((day.revenue / maxRevenue) * 120, 4), backgroundColor: palette.colors.success }]} />
                 {i % 3 === 0 && (
-                  <Text style={styles.barLabel}>{new Date(day.date).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</Text>
+                  <Text style={styles.barLabel}>{new Date(day.date).toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</Text>
                 )}
               </View>
             ))}
@@ -202,7 +195,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
               <View key={i} style={styles.barContainer}>
                 <View style={[styles.bar, { height: Math.max((day.orders / maxOrders) * 120, 4), backgroundColor: palette.colors.primary }]} />
                 {i % 3 === 0 && (
-                  <Text style={styles.barLabel}>{new Date(day.date).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</Text>
+                  <Text style={styles.barLabel}>{new Date(day.date).toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</Text>
                 )}
               </View>
             ))}
@@ -293,6 +286,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
           </GlassPanel>
         )}
 
+        </>}
         <View style={{ height: 100 }} />
       </ScrollView>
       </SafeAreaView>
@@ -302,6 +296,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
 
 const buildStyles = (p) => StyleSheet.create({
   scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: 100 },
+  loadingPanel: { padding: spacing.lg },
   rangeRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.lg },
   rangeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.xl, backgroundColor: 'rgba(255,255,255,0.08)' },
   rangeBtnActive: { backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.3)' },
@@ -341,3 +336,8 @@ const buildStyles = (p) => StyleSheet.create({
   planButton: { minHeight: 48, marginHorizontal: spacing.lg, marginTop: spacing.sm, borderRadius: borderRadius.xl, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: p.colors.primary },
   planButtonText: { color: '#fff', fontSize: fontSize.sm, fontWeight: fontWeight.bold },
 });
+
+export default function AccountScopedSellerAnalyticsScreen(props) {
+  const { currentUser } = useAuth();
+  return <SellerAnalyticsScreen key={`${currentUser?.role || 'guest'}:${currentUser?._id || currentUser?.id || ''}`} {...props} />;
+}
