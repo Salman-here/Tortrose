@@ -17,6 +17,7 @@ import {
     sellerAnalyticsMoneyIsValid,
 } from '../../utils/currencySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
+import SellerRevenueOverview from '../seller/SellerRevenueOverview';
 
 const STATUS_ORDER = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
 const STATUS_COLORS = {
@@ -135,10 +136,13 @@ const SellerAnalytics = () => {
 
     if (!analytics) {
         return (
-            <div className="p-6 max-w-xl mx-auto text-center glass-panel space-y-4">
+            <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+                <SellerRevenueOverview />
+                <div className="p-6 max-w-xl mx-auto text-center glass-panel space-y-4">
                 <AlertTriangle size={30} className="mx-auto" style={{ color: 'hsl(30,90%,50%)' }} />
                 <p className="text-sm" style={{ color: 'hsl(var(--foreground))' }}>{loadError}</p>
                 <button type="button" onClick={fetchAnalytics} className="px-4 py-2 rounded-xl glass-inner text-sm font-semibold">Retry</button>
+                </div>
             </div>
         );
     }
@@ -186,7 +190,9 @@ const SellerAnalytics = () => {
                 </div>
             </motion.div>
 
-            {/* Summary Stats */}
+            <SellerRevenueOverview />
+
+            {/* Period-filtered Summary Stats */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {summaryStats.map((stat, i) => (
                     <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}

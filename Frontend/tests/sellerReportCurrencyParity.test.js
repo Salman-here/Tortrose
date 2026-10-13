@@ -61,7 +61,9 @@ test('web seller money is formatted without converting back to account display c
   }
   assert.match(settings, /sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency/);
   assert.match(subdomain, /sourceCurrency: analytics\.currency, targetCurrency: analytics\.currency/);
-  assert.match(payments, /formatAmount\(amount, \{ targetCurrency: sellerCurrency \}\)/);
+  assert.match(payments, /formatAmount\(amount, \{ targetCurrency: balanceCurrency, showCode: true \}\)/);
+  const revenueOverview = readFileSync(new URL('../src/components/seller/SellerRevenueOverview.jsx', import.meta.url), 'utf8');
+  assert.match(revenueOverview, /targetCurrency: active\.currency/);
   assert.match(coupons, /sourceCurrency: analyticsCurrency, targetCurrency: analyticsCurrency/);
   assert.match(coupons, /sourceCurrency: presentation\.currency, targetCurrency: presentation\.currency/);
   assert.match(productCard, /displayNativeCurrency/);

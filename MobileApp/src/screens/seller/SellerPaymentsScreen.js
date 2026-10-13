@@ -459,12 +459,12 @@ export default function SellerPaymentsScreen({ navigation }) {
 
         <View style={styles.statsGrid}>
           <StatCard styles={styles} icon="wallet-outline" label="Total online earnings" value={formatBalanceMoney(selectedBalance?.onlineGrossEarnings ?? 0)} description="Gross online and Wallet earnings before deductions and withdrawals, excluding refunds" color={palette.colors.primary} />
+          {/* Fee summary card temporarily hidden; accounting and per-order fee
+              details remain active. Uncomment if this summary is needed later.
           <StatCard styles={styles} icon="card-outline" label="Processing fee + tax" value={formatBalanceMoney(selectedBalance?.processingFeeAndTax ?? 0)} description="One combined deduction for Safepay and Wallet orders" color={palette.colors.warning} />
+          */}
           <StatCard styles={styles} icon="lock-closed-outline" label="Pending online funds" value={formatBalanceMoney(selectedBalance?.pendingOnlineNetBalance ?? selectedBalance?.pendingOnlineBalance ?? 0)} description="Net funds awaiting delivery, return-window expiry or an open return" color={palette.colors.warning} />
           <StatCard styles={styles} icon="card-outline" label="Online delivered" value={formatDisplayMoney(displayValue('onlineDeliveredRevenue'))} description="Delivered Safepay and Wallet revenue" color={palette.colors.success} />
-          <StatCard styles={styles} icon="cash-outline" label="Delivered COD" value={formatDisplayMoney(displayValue('codDeliveredRevenue'))} description="Collected directly from buyers" color={palette.colors.warning} />
-          <StatCard styles={styles} icon="trending-up-outline" label="Delivered Total" value={formatDisplayMoney(displayValue('totalDeliveredRevenue'))} description="Delivered Safepay, Wallet, and COD revenue" color={palette.colors.primary} />
-          <StatCard styles={styles} icon="time-outline" label="Estimated" value={formatDisplayMoney(displayValue('estimatedRevenue'))} description="Delivered plus pending revenue" color={palette.colors.info} />
         </View>
 
         <GlassPanel variant="inner" style={{ padding: 14 }}><Text style={styles.heroText}>Safepay card, Raast and Wallet orders: 6.2% + PKR30 per checkout. Multi-seller orders share the fixed amount. Other currencies use the saved checkout rate. Withdrawals do not charge this deduction again.</Text></GlassPanel>

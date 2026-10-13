@@ -7,9 +7,7 @@ import {
     Landmark,
     Wallet,
     CreditCard,
-    Banknote,
     TrendingUp,
-    Clock,
     CheckCircle,
     AlertTriangle,
     RefreshCw,
@@ -34,7 +32,6 @@ import {
     parseExactMoneyInput,
     selectWithdrawalHistoryMoney,
     shouldRetainWithdrawalAttempt,
-    withdrawalNeedsLiveFx,
 } from '../../utils/sellerMoneySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 import { selectSellerWithdrawalProof } from '../../utils/sellerWithdrawalProof';
@@ -286,16 +283,12 @@ const SellerPayments = () => {
         && Boolean(sellerCurrency)
         && String(summary.displayCurrency).toUpperCase() === sellerCurrency;
     const activeSummary = summaryMatchesCurrency ? summary : null;
-    const displayRevenue = activeSummary?.displayRevenue || {};
-    const displayValue = (field) => displayRevenue[field];
-    const withdrawalLimits = activeSummary?.withdrawalLimits || {};
     const paymentAccount = activeSummary?.paymentAccount;
 
     const selectedBalance = activeSummary?.balanceByCurrency?.[balanceCurrency];
     const withdrawalIsBlocked = Boolean(paymentAccount && paymentAccount.currency !== balanceCurrency) || activeSummary?.paymentRiskPending === true;
     const formatBalanceMoney = amount => formatAmount(amount, { targetCurrency: balanceCurrency, showCode: true });
 
-    const formatDisplayMoney = (amount) => formatAmount(amount, { targetCurrency: sellerCurrency });
     const availableInCurrentCurrency = selectedBalance?.withdrawableBalance ?? 0;
     const minimumWithdrawalInCurrentCurrency = selectedBalance?.minimumWithdrawal ?? 0;
     const withdrawalInput = parseExactMoneyInput(withdrawAmount, { allowZero: false });
@@ -473,15 +466,18 @@ const SellerPayments = () => {
                 </motion.button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <PaymentStat label={`Total Online Earnings (${balanceCurrency})`}
                     value={formatBalanceMoney(selectedBalance?.onlineGrossEarnings ?? 0)}
                     description="Gross online and Wallet earnings before deductions and withdrawals; refunded amounts are removed."
                     icon={<TrendingUp size={22} />} color="hsl(220,70%,55%)" bg="rgba(99,102,241,0.12)" />
+                {/* Fee summary card temporarily hidden; keep per-order details and
+                    fee accounting active. Uncomment this card if needed later.
                 <PaymentStat label="Processing fee + tax"
                     value={formatBalanceMoney(selectedBalance?.processingFeeAndTax ?? 0)}
                     description="One combined deduction for Safepay and Wallet orders. Pending portions remain held."
                     icon={<CreditCard size={22} />} color="hsl(30,90%,50%)" bg="rgba(249,115,22,0.12)" />
+                */}
                 <PaymentStat
                     label={`Withdrawable Online Balance (${balanceCurrency})`}
                     value={formatBalanceMoney(availableInCurrentCurrency)}
@@ -489,33 +485,6 @@ const SellerPayments = () => {
                     icon={<Wallet size={22} />}
                     color="hsl(150,60%,45%)"
                     bg="rgba(16,185,129,0.12)"
-                />
-                <PaymentStat
-                    label="Delivered COD Revenue"
-                    value={formatDisplayMoney(displayValue('codDeliveredRevenue'))}
-                    description="Delivered COD order revenue you collect from buyers yourself."
-                    icon={<Banknote size={22} />}
-                    color="hsl(30,90%,50%)"
-                    bg="rgba(249,115,22,0.12)"
-                    delay={0.05}
-                />
-                <PaymentStat
-                    label="Total Delivered Revenue"
-                    value={formatDisplayMoney(displayValue('totalDeliveredRevenue'))}
-                    description="Delivered Safepay, Wallet, and COD revenue."
-                    icon={<TrendingUp size={22} />}
-                    color="hsl(220,70%,55%)"
-                    bg="rgba(99,102,241,0.12)"
-                    delay={0.1}
-                />
-                <PaymentStat
-                    label="Estimated Revenue"
-                    value={formatDisplayMoney(displayValue('estimatedRevenue'))}
-                    description="Delivered revenue plus pending Safepay, Wallet, and COD orders."
-                    icon={<Clock size={22} />}
-                    color="hsl(200,80%,50%)"
-                    bg="rgba(14,165,233,0.12)"
-                    delay={0.15}
                 />
             </div>
 

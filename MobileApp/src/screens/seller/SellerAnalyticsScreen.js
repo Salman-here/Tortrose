@@ -18,6 +18,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { sellerAnalyticsMoneyIsValid } from '../../utils/currencySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
+import SellerRevenueOverview from '../../components/seller/SellerRevenueOverview';
 
 const RANGES = [
   { label: '7 Days', value: '7' },
@@ -95,6 +96,8 @@ export default function SellerAnalyticsScreen({ navigation }) {
     <GlassBackground>
       <SafeAreaView style={{flex:1}} edges={Platform.OS === 'android' ? [] : ['top']}>
         <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Verified seller performance" icon="bar-chart-outline" />
+        <ScrollView contentContainerStyle={styles.scroll}>
+        <SellerRevenueOverview />
         <SellerInlineError title="Analytics unavailable" message={error} onRetry={fetchAnalytics} />
         {String(error).includes('entitlement') && (
           <TouchableOpacity style={styles.planButton} onPress={() => navigation.navigate('SellerSubscription')}>
@@ -102,6 +105,7 @@ export default function SellerAnalyticsScreen({ navigation }) {
             <Text style={styles.planButtonText}>View seller plans</Text>
           </TouchableOpacity>
         )}
+        </ScrollView>
       </SafeAreaView>
     </GlassBackground>
   );
@@ -143,6 +147,8 @@ export default function SellerAnalyticsScreen({ navigation }) {
             </TouchableOpacity>
           ))}
         </View>
+
+        <SellerRevenueOverview />
 
         {/* Summary Stats */}
         <View style={styles.statsGrid}>
