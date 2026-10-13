@@ -1,339 +1,153 @@
-/**
- * SellerAnalyticsScreen — Full analytics matching website
- * Revenue trend, order volume, order status, top products, category breakdown
- */
-
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity, Platform,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api, { API_ENDPOINTS } from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
-import { SellerInlineError, SellerScreenHeader, SellerScreenSkeleton } from '../../components/seller/SellerUI';
-import { spacing, fontSize, fontWeight, borderRadius, typography } from '../../styles/theme';
+import Skeleton from '../../components/common/Skeleton';
+import { SellerInlineError, SellerScreenHeader } from '../../components/seller/SellerUI';
+import SellerRevenueOverview from '../../components/seller/SellerRevenueOverview';
+import SellerAnalyticsCharts from '../../components/seller/SellerAnalyticsCharts';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
-import { sellerAnalyticsMoneyIsValid } from '../../utils/currencySafety';
-import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
-import SellerRevenueOverview from '../../components/seller/SellerRevenueOverview';
 import { useAuth } from '../../contexts/AuthContext';
+import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
+import { sellerAnalyticsPeriodIsValid } from '../../utils/sellerAnalyticsPresentation';
+import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
 
-const RANGES = [
-  { label: '7 Days', value: '7' },
-  { label: '30 Days', value: '30' },
-  { label: '90 Days', value: '90' },
-];
-
-const STATUS_ORDER = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
-const getStatusColor = (status, palette) => ({
-  pending: palette.colors.warning,
-  confirmed: '#8B5CF6',
-  processing: palette.colors.info,
-  shipped: palette.colors.primary,
-  delivered: palette.colors.success,
-  cancelled: palette.colors.error,
-}[status] || palette.colors.textSecondary);
-const CAT_COLORS = ['#6366f1', '#10b981', '#0ea5e9', '#8b5cf6', '#f97316', '#ec4899'];
+const RANGES = [{ label: '7 Days', value: '7' }, { label: '30 Days', value: '30' }, { label: '90 Days', value: '90' }];
 
 function SellerAnalyticsScreen({ navigation }) {
   const { palette } = useTheme();
-  const styles = buildStyles(palette);
   const { formatAmount } = useCurrency();
-
+  const { width, fontScale } = useWindowDimensions();
+  const styles = useMemo(() => buildStyles(palette), [palette]);
+  const [timeRange, setTimeRange] = useState('30');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [timeRange, setTimeRange] = useState('30');
-  const [analytics, setAnalytics] = useState(null);
+  const [response, setResponse] = useState(null);
   const [error, setError] = useState(null);
   const [revenueRefreshKey, setRevenueRefreshKey] = useState(0);
-  const analyticsRequestRef = useRef(0);
+  const analyticsRequestRef = useRef({ id: 0, controller: null });
+  const analytics = response?.days === timeRange ? response.data : null;
 
   const fetchAnalytics = useCallback(async () => {
-    const requestId = analyticsRequestRef.current + 1;
-    analyticsRequestRef.current = requestId;
-    setLoading(true); setError(null);
+    const requestId = analyticsRequestRef.current.id + 1;
+    analyticsRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    analyticsRequestRef.current = { id: requestId, controller };
+    setLoading(true); setError(null); setResponse(null);
     try {
-      const productCurrencyResponse = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY);
-      const productCurrencyState = inspectSellerProductCurrencyState(
-        productCurrencyResponse.data?.productCurrency
-      );
-      if (!productCurrencyState.valid || productCurrencyState.hasStore !== true) {
-        throw new Error('Your store product currency could not be verified. Please retry.');
+      const options = { signal: controller.signal };
+      const currencyResponse = await api.get(API_ENDPOINTS.STORES.PRODUCT_CURRENCY, options);
+      if (analyticsRequestRef.current.id !== requestId) return;
+      const state = inspectSellerProductCurrencyState(currencyResponse.data?.productCurrency);
+      if (!state.valid || !state.hasStore) throw new Error('Your store currency could not be verified. Please retry.');
+      const result = await api.get(`/api/analytics/seller?days=${timeRange}&currency=${encodeURIComponent(state.activeCurrency)}`, options);
+      if (analyticsRequestRef.current.id !== requestId) return;
+      if (!sellerAnalyticsPeriodIsValid(result.data?.analytics, state.activeCurrency, timeRange)) {
+        throw new Error('Analytics returned an incomplete or invalid reporting period. Please retry.');
       }
-      const sellerCurrency = productCurrencyState.activeCurrency;
-      const res = await api.get(`/api/analytics/seller?days=${timeRange}&currency=${sellerCurrency}`);
-      if (analyticsRequestRef.current !== requestId) return;
-      const nextAnalytics = res.data.analytics;
-      if (!sellerAnalyticsMoneyIsValid(nextAnalytics, sellerCurrency)) {
-        throw new Error('Analytics returned incomplete or invalid money totals. Please retry.');
-      }
-      setAnalytics(nextAnalytics);
-    } catch (e) {
-      if (analyticsRequestRef.current !== requestId) return;
-      const status = e.response?.status;
-      setAnalytics(null);
-      setError(status === 403
-        ? 'Advanced Analytics is not included in your current seller entitlement. Open Subscription to compare plans and unlock live performance reporting.'
-        : e.response?.data?.msg || e.message || 'Live analytics could not be loaded. Check your connection and try again.');
+      setResponse({ data: result.data.analytics, days: timeRange });
+    } catch (failure) {
+      if (failure.code === 'ERR_CANCELED' || failure.name === 'CanceledError' || analyticsRequestRef.current.id !== requestId) return;
+      setResponse(null);
+      setError(failure.response?.status === 403
+        ? { entitlement: true, message: 'Advanced Analytics is not included in your current seller entitlement. Open Subscription to compare plans and unlock live performance reporting.' }
+        : { entitlement: false, message: failure.response?.data?.msg || failure.message || 'Performance charts are unavailable. Check your connection and try again.' });
     } finally {
-      if (analyticsRequestRef.current === requestId) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      if (analyticsRequestRef.current.id === requestId) { setLoading(false); setRefreshing(false); }
     }
   }, [timeRange]);
 
   useEffect(() => {
     fetchAnalytics();
-    return () => { analyticsRequestRef.current += 1; };
+    return () => { analyticsRequestRef.current.id += 1; analyticsRequestRef.current.controller?.abort(); };
   }, [fetchAnalytics]);
-  const onRefresh = useCallback(() => { setRefreshing(true); setRevenueRefreshKey(key => key + 1); fetchAnalytics(); }, [fetchAnalytics]);
-  const s = analytics?.summary;
-
-  const summaryStats = analytics ? [
-    { label: 'Total Revenue', value: formatAmount(s.totalRevenue, { targetCurrency: analytics.currency }), icon: 'cash-outline', color: palette.colors.success, bg: 'rgba(16,185,129,0.12)' },
-    { label: 'Recognized Orders', value: s.paidOrders, icon: 'receipt-outline', color: palette.colors.info, bg: 'rgba(99,102,241,0.12)' },
-    { label: 'Avg Order Value', value: formatAmount(s.avgOrderValue, { targetCurrency: analytics.currency }), icon: 'trending-up-outline', color: '#0ea5e9', bg: 'rgba(14,165,233,0.12)' },
-    { label: 'Units Sold', value: s.totalUnitsSold, icon: 'cube-outline', color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)' },
+  const onRefresh = useCallback(() => {
+    setRefreshing(true); setRevenueRefreshKey(key => key + 1); fetchAnalytics();
+  }, [fetchAnalytics]);
+  const summary = analytics?.summary;
+  const stats = analytics ? [
+    { label: 'Total Revenue', value: formatAmount(summary.totalRevenue, { targetCurrency: analytics.currency, showCode: true }), icon: 'cash-outline', color: palette.colors.success },
+    { label: 'Recognized Orders', value: summary.paidOrders, icon: 'receipt-outline', color: palette.colors.primary },
+    { label: 'Avg Order Value', value: formatAmount(summary.avgOrderValue, { targetCurrency: analytics.currency, showCode: true }), icon: 'trending-up-outline', color: palette.colors.info },
+    { label: 'Units Sold', value: summary.totalUnitsSold, icon: 'cube-outline', color: palette.colors.secondary },
   ] : [];
+  const wideStats = width >= 340 && fontScale < 1.4;
 
-  const maxRevenue = Math.max(...(analytics?.revenueByDay || []).map(d => d.revenue), 1);
-  const maxOrders = Math.max(...(analytics?.revenueByDay || []).map(d => d.orders), 1);
-
-  const statusBreakdown = [...(analytics?.statusBreakdown || [])].sort((left, right) => {
-    const leftIndex = STATUS_ORDER.indexOf(left.name);
-    const rightIndex = STATUS_ORDER.indexOf(right.name);
-    return (leftIndex === -1 ? STATUS_ORDER.length : leftIndex) - (rightIndex === -1 ? STATUS_ORDER.length : rightIndex);
-  });
-  const totalStatusCount = statusBreakdown.reduce((sum, s) => sum + s.value, 0);
-
-  return (
-    <GlassBackground>
-      <SafeAreaView style={{flex:1}} edges={Platform.OS === 'android' ? [] : ['top']}>
-      <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Verified seller performance" icon="bar-chart-outline" rightIcon="refresh" rightLabel="Refresh" onRightPress={onRefresh} />
+  return <GlassBackground>
+    <SafeAreaView style={styles.safeArea} edges={Platform.OS === 'android' ? [] : ['top']}>
+      <SellerScreenHeader navigation={navigation} title="Store Analytics" subtitle="Track performance and revenue trends"
+        icon="bar-chart-outline" rightIcon="refresh" rightLabel="Refresh" onRightPress={onRefresh} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}>
-
         <SellerRevenueOverview refreshKey={revenueRefreshKey} />
 
-        {/* Period Selector */}
-        <View style={styles.rangeRow} accessibilityLabel="Analytics date filter">
-          {RANGES.map(r => (
-            <TouchableOpacity key={r.value} style={[styles.rangeBtn, timeRange === r.value && styles.rangeBtnActive]}
-              accessibilityRole="button" accessibilityState={{ selected: timeRange === r.value }}
-              onPress={() => setTimeRange(r.value)}>
-              <Ionicons name="calendar-outline" size={12} color={timeRange === r.value ? palette.colors.primary : palette.colors.textSecondary} />
-              <Text style={[styles.rangeBtnText, timeRange === r.value && { color: palette.colors.primary }]}>{r.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <View style={styles.periodHeader}><Text style={styles.periodTitle} accessibilityRole="header">Reporting period</Text><Text style={styles.periodNote}>Calendar days · UTC</Text></View>
+        <GlassPanel variant="inner" style={styles.rangeRow} accessibilityLabel="Analytics date filter">
+          {RANGES.map(range => <TouchableOpacity key={range.value} activeOpacity={0.8}
+            style={[styles.rangeButton, timeRange === range.value && styles.rangeButtonActive]}
+            accessibilityRole="button" accessibilityLabel={range.label} accessibilityState={{ selected: timeRange === range.value }}
+            onPress={() => setTimeRange(range.value)}>
+            <Ionicons name="calendar-outline" size={14} color={timeRange === range.value ? palette.colors.success : palette.colors.textSecondary} />
+            <Text style={[styles.rangeLabel, timeRange === range.value && styles.rangeLabelActive]}>{range.label}</Text>
+          </TouchableOpacity>)}
+        </GlassPanel>
 
         <SellerRevenueOverview days={timeRange} refreshKey={revenueRefreshKey} />
 
-        {loading && <View style={styles.loadingPanel}><Text style={styles.chartSubtitle}>Loading period performance…</Text></View>}
+        <View style={styles.performanceHeader}><Text style={styles.performanceTitle} accessibilityRole="header">Period performance</Text>
+          <Text style={styles.performanceNote}>Charts and sales metrics · Last {timeRange} days</Text></View>
+        {loading && <View accessibilityLabel="Loading period performance" accessibilityState={{ busy: true }}>
+          <View style={styles.statsGrid}>{Array.from({ length: 4 }, (_, index) => <GlassPanel key={index} variant="card" style={[styles.statCard, wideStats ? styles.halfCard : styles.fullCard]}>
+            <Skeleton width={36} height={36} radius={12} /><Skeleton width="80%" height={12} style={styles.skeletonGap} /><Skeleton width="65%" height={24} style={styles.skeletonGap} />
+          </GlassPanel>)}</View>
+          <GlassPanel variant="card" style={styles.loadingChart}><Skeleton width="48%" height={18} /><Skeleton width="100%" height={160} radius={12} style={styles.skeletonGap} /></GlassPanel>
+        </View>}
         {!loading && error && <>
-          <SellerInlineError title="Performance charts unavailable" message={error} onRetry={fetchAnalytics} />
-          {String(error).includes('entitlement') && <TouchableOpacity style={styles.planButton} onPress={() => navigation.navigate('SellerSubscription')}>
+          <SellerInlineError title="Performance charts unavailable" message={error.message} onRetry={fetchAnalytics} />
+          {error.entitlement && <TouchableOpacity style={styles.planButton} onPress={() => navigation.navigate('SellerSubscription')} accessibilityRole="button">
             <Ionicons name="diamond-outline" size={17} color="#fff" /><Text style={styles.planButtonText}>View seller plans</Text>
           </TouchableOpacity>}
         </>}
-
         {!loading && analytics && <>
-
-        {/* Summary Stats */}
-        <View style={styles.statsGrid}>
-          {summaryStats.map((stat) => (
-            <GlassPanel key={stat.label} variant="card" style={styles.statCard}>
-              <View style={[styles.statIcon, { backgroundColor: stat.bg }]}>
-                <Ionicons name={stat.icon} size={20} color={stat.color} />
-              </View>
-              <Text style={styles.statLabel}>{stat.label}</Text>
-              <Text style={styles.statValue}>{stat.value}</Text>
-            </GlassPanel>
-          ))}
-        </View>
-
-        {/* Revenue Chart */}
-        <GlassPanel variant="card" style={styles.chartSection}>
-          <View style={styles.chartHeader}>
-            <View>
-              <Text style={styles.chartTitle}>Revenue Trend</Text>
-              <Text style={styles.chartSubtitle}>Daily revenue over {timeRange} days</Text>
-            </View>
-            <View style={[styles.chartIcon, { backgroundColor: 'rgba(16,185,129,0.12)' }]}>
-              <Ionicons name="trending-up" size={18} color={palette.colors.success} />
-            </View>
-          </View>
-          <View style={styles.barChart}>
-            {(analytics.revenueByDay || []).slice(-14).map((day, i) => (
-              <View key={i} style={styles.barContainer}>
-                <View style={[styles.bar, { height: Math.max((day.revenue / maxRevenue) * 120, 4), backgroundColor: palette.colors.success }]} />
-                {i % 3 === 0 && (
-                  <Text style={styles.barLabel}>{new Date(day.date).toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</Text>
-                )}
-              </View>
-            ))}
-          </View>
-        </GlassPanel>
-
-        {/* Order Volume Chart */}
-        <GlassPanel variant="card" style={styles.chartSection}>
-          <View style={styles.chartHeader}>
-            <View>
-              <Text style={styles.chartTitle}>Order Volume</Text>
-              <Text style={styles.chartSubtitle}>Daily orders received</Text>
-            </View>
-            <View style={[styles.chartIcon, { backgroundColor: 'rgba(99,102,241,0.12)' }]}>
-              <Ionicons name="bar-chart" size={18} color={palette.colors.primary} />
-            </View>
-          </View>
-          <View style={styles.barChart}>
-            {(analytics.revenueByDay || []).slice(-14).map((day, i) => (
-              <View key={i} style={styles.barContainer}>
-                <View style={[styles.bar, { height: Math.max((day.orders / maxOrders) * 120, 4), backgroundColor: palette.colors.primary }]} />
-                {i % 3 === 0 && (
-                  <Text style={styles.barLabel}>{new Date(day.date).toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</Text>
-                )}
-              </View>
-            ))}
-          </View>
-        </GlassPanel>
-
-        {/* Order Status Distribution */}
-        {statusBreakdown.length > 0 && totalStatusCount > 0 && (
-          <GlassPanel variant="card" style={styles.chartSection}>
-            <Text style={styles.chartTitle}>Order Status</Text>
-            <Text style={[styles.chartSubtitle, {marginBottom: spacing.md}]}>Breakdown by current status</Text>
-            {/* Visual pie approximation */}
-            <View style={styles.statusPieRow}>
-              <View style={styles.pieContainer}>
-                {statusBreakdown.map((st, i) => {
-                  if (st.value === 0) return null;
-                  const pct = (st.value / totalStatusCount) * 100;
-                  return (
-                    <View key={st.name} style={[styles.pieSegment, { 
-                      width: `${pct}%`, 
-                      backgroundColor: getStatusColor(st.name, palette),
-                      borderTopLeftRadius: i === 0 ? 6 : 0,
-                      borderBottomLeftRadius: i === 0 ? 6 : 0,
-                      borderTopRightRadius: i === statusBreakdown.filter(s=>s.value>0).length - 1 ? 6 : 0,
-                      borderBottomRightRadius: i === statusBreakdown.filter(s=>s.value>0).length - 1 ? 6 : 0,
-                    }]} />
-                  );
-                })}
-              </View>
-            </View>
-            <View style={styles.statusLegend}>
-              {statusBreakdown.map((st) => st.value > 0 && (
-                <View key={st.name} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: getStatusColor(st.name, palette) }]} />
-                  <Text style={styles.legendName}>{st.name}</Text>
-                  <Text style={styles.legendValue}>{st.value}</Text>
-                </View>
-              ))}
-            </View>
-          </GlassPanel>
-        )}
-
-        {/* Top Products */}
-        {analytics.topProducts?.length > 0 && (
-          <GlassPanel variant="card" style={styles.chartSection}>
-            <View style={styles.chartHeader}>
-              <View>
-                <Text style={styles.chartTitle}>Top Products</Text>
-                <Text style={styles.chartSubtitle}>By revenue generated</Text>
-              </View>
-              <View style={[styles.chartIcon, { backgroundColor: 'rgba(139,92,246,0.12)' }]}>
-                <Ionicons name="star" size={18} color="#8b5cf6" />
-              </View>
-            </View>
-            {analytics.topProducts.slice(0, 6).map((p, i) => (
-              <View key={i} style={styles.topRow}>
-                <Text style={styles.topRank}>#{i + 1}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.topName} numberOfLines={1}>{p.name}</Text>
-                  <Text style={styles.topMeta}>{formatAmount(p.revenue, { targetCurrency: analytics.currency })} - {p.sold} sold</Text>
-                </View>
-              </View>
-            ))}
-          </GlassPanel>
-        )}
-
-        {/* Category Breakdown */}
-        {analytics.categoryBreakdown?.length > 0 && (
-          <GlassPanel variant="card" style={styles.chartSection}>
-            <Text style={styles.chartTitle}>Category Breakdown</Text>
-            <Text style={[styles.chartSubtitle, {marginBottom: spacing.md}]}>Products by category</Text>
-            {analytics.categoryBreakdown.slice(0, 6).map((cat, i) => {
-              const total = analytics.categoryBreakdown.reduce((s, c) => s + c.count, 0);
-              const pct = total > 0 ? ((cat.count / total) * 100).toFixed(0) : 0;
-              return (
-                <View key={cat.name} style={styles.catRow}>
-                  <View style={styles.catLeft}>
-                    <View style={[styles.legendDot, { backgroundColor: CAT_COLORS[i % CAT_COLORS.length] }]} />
-                    <Text style={styles.catName}>{cat.name}</Text>
-                  </View>
-                  <View style={styles.catBarContainer}>
-                    <View style={[styles.catBar, { width: `${pct}%`, backgroundColor: CAT_COLORS[i % CAT_COLORS.length] }]} />
-                  </View>
-                  <Text style={styles.catCount}>{cat.count}</Text>
-                </View>
-              );
-            })}
-          </GlassPanel>
-        )}
-
+          <View style={styles.statsGrid}>{stats.map(stat => <GlassPanel key={stat.label} variant="card" style={[styles.statCard, wideStats ? styles.halfCard : styles.fullCard]}>
+            <View style={[styles.statIcon, { backgroundColor: `${stat.color}18` }]}><Ionicons name={stat.icon} size={19} color={stat.color} /></View>
+            <Text style={styles.statLabel}>{stat.label}</Text><Text style={styles.statValue}>{stat.value}</Text>
+          </GlassPanel>)}</View>
+          <SellerAnalyticsCharts analytics={analytics} days={timeRange} />
         </>}
-        <View style={{ height: 100 }} />
       </ScrollView>
-      </SafeAreaView>
-    </GlassBackground>
-  );
+    </SafeAreaView>
+  </GlassBackground>;
 }
 
-const buildStyles = (p) => StyleSheet.create({
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: 100 },
-  loadingPanel: { padding: spacing.lg },
-  rangeRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.lg },
-  rangeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.xl, backgroundColor: 'rgba(255,255,255,0.08)' },
-  rangeBtnActive: { backgroundColor: 'rgba(99,102,241,0.12)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.3)' },
-  rangeBtnText: { fontSize: 12, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, paddingHorizontal: spacing.lg },
-  statCard: { flexGrow: 1, flexBasis: '47%', minWidth: 140, padding: spacing.md },
-  statIcon: { width: 40, height: 40, borderRadius: borderRadius.lg, justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },
-  statLabel: { fontSize: 12, color: p.colors.textSecondary, fontWeight: fontWeight.medium },
-  statValue: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: p.colors.text, letterSpacing: -0.5, marginTop: 2 },
-  chartSection: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
-  chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg },
-  chartTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: p.colors.text },
-  chartSubtitle: { fontSize: 12, color: p.colors.textSecondary, marginTop: 2 },
-  chartIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  barChart: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 140 },
-  barContainer: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
-  bar: { width: '100%', borderRadius: 3, minWidth: 4 },
-  barLabel: { fontSize: 8, color: p.colors.textSecondary, marginTop: 4 },
-  statusPieRow: { marginBottom: spacing.md },
-  pieContainer: { flexDirection: 'row', height: 12, borderRadius: 6, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.06)' },
-  pieSegment: { height: 12 },
-  statusLegend: { gap: spacing.sm },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendName: { flex: 1, fontSize: 12, color: p.colors.textSecondary, textTransform: 'capitalize' },
-  legendValue: { fontSize: 12, fontWeight: fontWeight.bold, color: p.colors.text },
-  topRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' },
-  topRank: { fontSize: 12, fontWeight: fontWeight.bold, color: p.colors.textSecondary, width: 24 },
-  topName: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: p.colors.text },
-  topMeta: { fontSize: 11, color: p.colors.textSecondary, marginTop: 2 },
-  catRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
-  catLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, width: 100 },
-  catName: { fontSize: 12, color: p.colors.textSecondary },
-  catBarContainer: { flex: 1, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' },
-  catBar: { height: 8, borderRadius: 4 },
-  catCount: { fontSize: 12, fontWeight: fontWeight.bold, color: p.colors.text, width: 30, textAlign: 'right' },
-  planButton: { minHeight: 48, marginHorizontal: spacing.lg, marginTop: spacing.sm, borderRadius: borderRadius.xl, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: p.colors.primary },
+const buildStyles = palette => StyleSheet.create({
+  safeArea: { flex: 1 },
+  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingTop: spacing.sm, paddingBottom: 100 },
+  periodHeader: { marginHorizontal: spacing.lg, marginTop: spacing.xl, marginBottom: spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
+  periodTitle: { flex: 1, fontSize: fontSize.sm, color: palette.colors.text, fontWeight: fontWeight.bold },
+  periodNote: { fontSize: 10, color: palette.colors.textSecondary },
+  rangeRow: { flexDirection: 'row', gap: spacing.xs, marginHorizontal: spacing.lg, marginBottom: spacing.md, padding: 5, borderRadius: 17 },
+  rangeButton: { flex: 1, minHeight: 44, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xs, paddingVertical: spacing.sm, borderRadius: 12, borderWidth: 1, borderColor: 'transparent' },
+  rangeButtonActive: { backgroundColor: `${palette.colors.success}18`, borderColor: `${palette.colors.success}45` },
+  rangeLabel: { flexShrink: 1, color: palette.colors.textSecondary, fontSize: fontSize.sm, fontWeight: fontWeight.semibold },
+  rangeLabelActive: { color: palette.colors.success, fontWeight: fontWeight.bold },
+  performanceHeader: { marginHorizontal: spacing.lg, marginTop: spacing.xl, marginBottom: spacing.md },
+  performanceTitle: { fontSize: fontSize.lg, color: palette.colors.text, fontWeight: fontWeight.bold },
+  performanceNote: { fontSize: fontSize.sm, color: palette.colors.textSecondary, lineHeight: 18, marginTop: 4 },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginHorizontal: spacing.lg },
+  statCard: { padding: spacing.md, borderRadius: borderRadius.xxl, minWidth: 0 },
+  halfCard: { flexGrow: 1, flexBasis: '46%' },
+  fullCard: { width: '100%' },
+  statIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md },
+  statLabel: { fontSize: 11, color: palette.colors.textSecondary, fontWeight: fontWeight.medium, lineHeight: 17 },
+  statValue: { color: palette.colors.text, fontSize: fontSize.xxl, fontWeight: fontWeight.extrabold, lineHeight: 29, marginTop: 5, fontVariant: ['tabular-nums'] },
+  skeletonGap: { marginTop: spacing.md },
+  loadingChart: { marginHorizontal: spacing.lg, marginTop: spacing.lg, padding: spacing.lg },
+  planButton: { minHeight: 48, marginHorizontal: spacing.lg, marginTop: spacing.sm, borderRadius: borderRadius.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: palette.colors.primary },
   planButtonText: { color: '#fff', fontSize: fontSize.sm, fontWeight: fontWeight.bold },
 });
 

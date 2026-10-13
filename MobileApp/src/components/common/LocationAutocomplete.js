@@ -57,6 +57,7 @@ export default function LocationAutocomplete({
   onSelect,
   onClear,
   onInteraction,
+  onQueryChange,
   containerStyle,
 }) {
   const { palette } = useTheme();
@@ -72,10 +73,14 @@ export default function LocationAutocomplete({
   }, [code, open, value]);
 
   useEffect(() => {
-    if (!open || disabled) return undefined;
+    if (!open || disabled) { setLoading(false); return undefined; }
 
     const endpoint = endpointByType[type] || endpointByType.country;
     const listKey = listKeyByType[type] || listKeyByType.country;
+    const controller = new AbortController();
+    setOptions([]);
+    setLoading(true);
+    setFetchError('');
     const timer = setTimeout(async () => {
       try {
         setLoading(true);
@@ -93,17 +98,21 @@ export default function LocationAutocomplete({
           else if (stateName) params.set('state', stateName);
         }
 
-        const res = await api.get(`/api/locations/${endpoint}?${params.toString()}`);
-        setOptions(res.data?.[listKey] || []);
+        const res = await api.get(`/api/locations/${endpoint}?${params.toString()}`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        const nextOptions = res.data?.[listKey];
+        if (!Array.isArray(nextOptions)) throw new Error('Locations unavailable');
+        setOptions(nextOptions);
       } catch (err) {
+        if (controller.signal.aborted) return;
         setOptions([]);
         setFetchError(err.response?.data?.msg || 'Locations unavailable');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }, 180);
 
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [countryCode, countryName, disabled, open, query, stateCode, stateName, type]);
 
   const selectOption = (option) => {
@@ -136,6 +145,7 @@ export default function LocationAutocomplete({
           value={query}
           onChangeText={(text) => {
             onInteraction?.();
+            onQueryChange?.(text);
             setQuery(text);
             setOpen(true);
           }}

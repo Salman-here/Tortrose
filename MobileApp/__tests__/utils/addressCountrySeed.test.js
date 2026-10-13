@@ -20,14 +20,16 @@ describe('addressCountrySeed', () => {
     expect(addressCountrySeed(null, null, true)).toEqual({ country: 'Pakistan', countryCode: 'PK' });
   });
 
-  it('keeps the profile shipping phone country aligned with detection and selection', () => {
+  it('seeds the profile shipping country but keeps telephone-country selection independent', () => {
     const source = fs.readFileSync(
       path.join(__dirname, '../../src/screens/ProfileScreen.js'),
       'utf8',
     );
     expect(source).toContain('resolveBuyerCountrySuggestion()');
     expect(source).toContain('addressCountrySeed(null, detectedLocation)');
-    expect(source).toContain('onCountryChange={(option) => setShippingForm');
+    expect(source).toContain('profileCountryCode={savedShipping?.countryCode || shippingForm.countryCode}');
+    expect(source).toContain("updateProfileShippingLocation(previous, 'country', option)");
+    expect(source).not.toContain('onCountryChange={(option) => setShippingForm');
     expect(source).not.toMatch(/country:\s*['"]Pakistan['"],\s*countryCode:\s*['"]PK/);
   });
 });

@@ -1,20 +1,25 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api, { API_ENDPOINTS } from '../../config/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import GlassPanel from '../common/GlassPanel';
+import Skeleton from '../common/Skeleton';
+import { SellerInlineError } from './SellerUI';
 import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 import { inspectSellerRevenueOverview } from '../../utils/sellerRevenueOverview';
+import { revenueCardColumns } from '../../utils/sellerAnalyticsPresentation';
 import { spacing, fontSize, fontWeight, borderRadius } from '../../styles/theme';
 
 export default function SellerRevenueOverview({ days = 'all', refreshKey = 0 }) {
   const { currentUser } = useAuth();
   const { formatAmount } = useCurrency();
   const { palette } = useTheme();
+  const { width, fontScale } = useWindowDimensions();
   const styles = buildStyles(palette);
+  const cardWidth = revenueCardColumns(width, fontScale) === 2 ? styles.halfCard : styles.fullCard;
   const sellerId = currentUser?.role === 'seller' ? String(currentUser._id || currentUser.id || '') : '';
   const [overview, setOverview] = useState(null);
   const [error, setError] = useState('');
@@ -65,7 +70,7 @@ export default function SellerRevenueOverview({ days = 'all', refreshKey = 0 }) 
   ] : [];
 
   return (
-    <View style={styles.section} accessibilityLabel={sectionName}>
+    <View style={styles.section} accessibilityLabel={sectionName} accessibilityState={{ busy: loading }}>
       <View style={styles.header}>
         <View style={styles.headerCopy}><Text style={styles.title}>{allTime ? 'All-time revenue' : `Revenue · Last ${days} days`}</Text>
           <Text style={styles.subtitle}>{allTime ? 'Lifetime totals, independent of the date filter.' : 'Orders placed in the selected calendar-day period (UTC), using saved order amounts.'} Not your withdrawable balance.</Text>
@@ -74,15 +79,17 @@ export default function SellerRevenueOverview({ days = 'all', refreshKey = 0 }) 
           {loading ? <ActivityIndicator color={palette.colors.primary} size="small" /> : <Ionicons name="refresh" size={18} color={palette.colors.primary} />}
         </TouchableOpacity>
       </View>
-      {loading ? <Text style={styles.subtitle} accessibilityLiveRegion="polite">Loading revenue totals…</Text>
+      {loading ? <View style={styles.grid} accessibilityLabel="Loading revenue totals">{Array.from({ length: 4 }, (_, index) => <GlassPanel key={index} variant="card" style={[styles.card, cardWidth]}>
+          <Skeleton width="62%" height={12} /><Skeleton width="76%" height={28} style={styles.skeletonGap} /><Skeleton width="95%" height={12} style={styles.skeletonGap} />
+        </GlassPanel>)}</View>
         : active ? <View style={styles.grid}>{cards.map(card => (
-          <GlassPanel key={card.label} variant="card" style={styles.card}>
-            <Ionicons name={card.icon} size={20} color={card.color} />
-            <Text style={styles.label}>{card.label}</Text>
+          <GlassPanel key={card.label} variant="card" style={[styles.card, cardWidth]}>
+            <View style={styles.cardHeader}><Text style={styles.label}>{card.label}</Text>
+              <View style={[styles.cardIcon, { backgroundColor: `${card.color}18` }]}><Ionicons name={card.icon} size={20} color={card.color} /></View></View>
             <Text style={styles.value}>{formatAmount(card.value, { targetCurrency: active.currency, showCode: true })}</Text>
             <Text style={styles.subtitle}>{card.description}</Text>
           </GlassPanel>
-        ))}</View> : <Text style={styles.error} accessibilityRole="alert">{error || 'Sign in as a seller to view revenue totals.'}</Text>}
+        ))}</View> : <SellerInlineError compact title="Revenue totals unavailable" message={error || 'Sign in as a seller to view revenue totals.'} onRetry={refresh} />}
     </View>
   );
 }
@@ -95,8 +102,12 @@ const buildStyles = p => StyleSheet.create({
   subtitle: { color: p.colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4 },
   refresh: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: borderRadius.lg, backgroundColor: p.glass.bgSubtle },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  card: { flexGrow: 1, flexBasis: '47%', minWidth: 140, padding: spacing.md },
-  label: { color: p.colors.textSecondary, fontSize: 12, fontWeight: fontWeight.medium, marginTop: spacing.sm },
-  value: { color: p.colors.text, fontSize: fontSize.xxl, fontWeight: fontWeight.bold, marginTop: 4 },
-  error: { color: p.colors.error, fontSize: 13, lineHeight: 19 },
+  card: { minWidth: 0, padding: spacing.lg, borderRadius: borderRadius.xxl },
+  halfCard: { flexGrow: 1, flexBasis: '46%' },
+  fullCard: { width: '100%' },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  cardIcon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  label: { flex: 1, color: p.colors.textSecondary, fontSize: 11, lineHeight: 17, fontWeight: fontWeight.bold, textTransform: 'uppercase', letterSpacing: 0.4 },
+  value: { color: p.colors.text, fontSize: fontSize.xxxl, lineHeight: 33, fontWeight: fontWeight.extrabold, marginTop: spacing.md, marginBottom: spacing.xs, fontVariant: ['tabular-nums'] },
+  skeletonGap: { marginTop: spacing.md },
 });

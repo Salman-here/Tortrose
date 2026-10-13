@@ -19,6 +19,8 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import OrderGroupCard from '../components/notifications/OrderGroupCard';
 import NotificationCard from '../components/notifications/NotificationCard';
+import NotificationSearchField from '../components/notifications/NotificationSearchField';
+import { notificationMatchesSearch } from '../utils/notificationSearch';
 import useNotificationInbox, { groupNotifications } from '../hooks/useNotificationInbox';
 import {
   getNotificationCategoriesForRole,
@@ -49,6 +51,8 @@ export default function NotificationsScreen({ navigation }) {
   const categories = useMemo(() => getNotificationCategoriesForRole(currentUser), [currentUser?.role]);
   const { refreshUnreadCount } = useGlobal();
   const [activeCategory, setActiveCategory] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  useEffect(() => { setSearchQuery(''); }, [currentUser?._id, currentUser?.id]);
 
   useEffect(() => {
     if (!categories.some(({ key }) => key === activeCategory)) setActiveCategory('all');
@@ -60,9 +64,10 @@ export default function NotificationsScreen({ navigation }) {
     refresh, markRead, markAllRead, clearAll, dismiss, dismissGroup,
   } = useNotificationInbox({ currentUser, onCountChange: refreshUnreadCount });
 
-  const filtered = activeCategory === 'all'
+  const categoryFiltered = activeCategory === 'all'
     ? notifications
     : notifications.filter(n => n.category === activeCategory);
+  const filtered = categoryFiltered.filter(notification => notificationMatchesSearch(notification, searchQuery));
   const grouped = groupNotifications(filtered);
 
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -150,6 +155,7 @@ export default function NotificationsScreen({ navigation }) {
             </View>
           </GlassPanel>
 
+          <NotificationSearchField value={searchQuery} onChangeText={setSearchQuery} style={{ marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm }} />
           {/* Category Filter Chips */}
           <FlatList
             horizontal
@@ -209,8 +215,8 @@ export default function NotificationsScreen({ navigation }) {
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <View style={styles.emptyIconWrap}><Ionicons name="notifications-off-outline" size={56} color={palette.colors.primaryLight} /></View>
-                  <Text style={styles.emptyTitle}>{loadError ? 'Notifications unavailable' : (activeCategory === 'all' ? 'No notifications yet' : `No ${activeCategory} notifications`)}</Text>
-                  <Text style={styles.emptySubtitle}>{loadError || 'Your order, payment and account updates will appear here.'}</Text>
+                  <Text style={styles.emptyTitle}>{loadError ? 'Notifications unavailable' : searchQuery.trim() ? 'No matching notifications' : (activeCategory === 'all' ? 'No notifications yet' : `No ${activeCategory} notifications`)}</Text>
+                  <Text style={styles.emptySubtitle}>{loadError || (searchQuery.trim() ? 'Try another search or choose a different category.' : 'Your order, payment and account updates will appear here.')}</Text>
                 </View>
               }
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} colors={[palette.colors.primary]} tintColor={palette.colors.primary} />}

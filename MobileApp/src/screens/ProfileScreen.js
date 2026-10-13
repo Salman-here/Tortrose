@@ -20,12 +20,14 @@ import GlassBlurFill from '../components/common/GlassBlurFill';
 import RozareLogo from '../components/common/RozareLogo';
 import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PhoneNumberInput from '../components/common/PhoneNumberInput';
+import LocationAutocomplete from '../components/common/LocationAutocomplete';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import Constants from 'expo-constants';
 import { isValidPhoneNumber } from '../utils/phoneNumber';
 import { resolveBuyerCountrySuggestion } from '../utils/buyerLocation';
 import { addressCountrySeed } from '../utils/addressCountrySeed';
+import { normalizeProfileShippingAddress, profileShippingLocationError, updateProfileShippingLocation } from '../utils/profileShippingAddress';
 
 const APP_VERSION = Constants.expoConfig?.version || '1.0.3';
 const EMPTY_SHIPPING_FORM = {
@@ -94,8 +96,9 @@ export default function ProfileScreen({ navigation }) {
     try {
       const res = await api.get('/api/user/shipping-info');
       if (res.data?.shippingInfo) {
-        setSavedShipping(res.data.shippingInfo);
-        setShippingForm(res.data.shippingInfo);
+        const address = normalizeProfileShippingAddress(res.data.shippingInfo);
+        setSavedShipping(address);
+        setShippingForm(address);
       }
     } catch {}
   };
@@ -105,10 +108,17 @@ export default function ProfileScreen({ navigation }) {
       Feedback.show({ type: 'error', text1: 'Invalid phone number', text2: 'Select a country code and enter a valid number.' });
       return;
     }
+    const address = normalizeProfileShippingAddress(shippingForm);
+    const locationError = profileShippingLocationError(address);
+    if (locationError) {
+      Feedback.show({ type: 'error', text1: 'Check your shipping address', text2: locationError });
+      return;
+    }
     setSavingShipping(true);
     try {
-      await api.patch('/api/user/shipping-info', { shippingInfo: shippingForm });
-      setSavedShipping(shippingForm);
+      await api.patch('/api/user/shipping-info', { shippingInfo: address });
+      setSavedShipping(address);
+      setShippingForm(address);
       setEditingShipping(false);
       Feedback.show({ type: 'success', text1: 'Saved!', text2: 'Shipping info updated' });
     } catch { Feedback.show({ type: 'error', text1: 'Error', text2: 'Failed to update' }); }
@@ -353,7 +363,7 @@ export default function ProfileScreen({ navigation }) {
               <KeyboardAwareFormScrollView
                 style={{ maxHeight: 400 }}
               >
-                {['fullName', 'email', 'phone', 'address', 'city', 'state', 'postalCode', 'country'].map(field => field === 'phone' ? (
+                {['fullName', 'email', 'phone', 'address'].map(field => field === 'phone' ? (
                   <PhoneNumberInput
                     key={field}
                     label="Phone"
@@ -362,11 +372,6 @@ export default function ProfileScreen({ navigation }) {
                     defaultCountryCode={shippingForm.phone ? shippingForm.countryCode : undefined}
                     profileCountryCode={savedShipping?.countryCode || shippingForm.countryCode}
                     profileCountry={savedShipping?.country || shippingForm.country}
-                    onCountryChange={(option) => setShippingForm(previous => ({
-                      ...previous,
-                      country: option.name,
-                      countryCode: option.isoCode,
-                    }))}
                     testID="profile-shipping-phone"
                   />
                 ) : (
@@ -378,6 +383,29 @@ export default function ProfileScreen({ navigation }) {
                       keyboardType={field === 'email' ? 'email-address' : field === 'postalCode' ? 'phone-pad' : 'default'} />
                   </View>
                 ))}
+                <LocationAutocomplete type="country" label="Country" required value={shippingForm.country}
+                  code={shippingForm.countryCode} placeholder="Select country"
+                  onQueryChange={() => setShippingForm(previous => updateProfileShippingLocation(previous, 'country'))}
+                  onSelect={option => setShippingForm(previous => updateProfileShippingLocation(previous, 'country', option))}
+                  onClear={() => setShippingForm(previous => updateProfileShippingLocation(previous, 'country'))} />
+                <LocationAutocomplete key={`state-${shippingForm.countryCode || shippingForm.country}`} type="state" label="State / Province"
+                  value={shippingForm.state} code={shippingForm.stateCode} countryCode={shippingForm.countryCode} countryName={shippingForm.country}
+                  placeholder="Select state" disabled={!shippingForm.countryCode && !shippingForm.country}
+                  onQueryChange={() => setShippingForm(previous => updateProfileShippingLocation(previous, 'state'))}
+                  onSelect={option => setShippingForm(previous => updateProfileShippingLocation(previous, 'state', option))}
+                  onClear={() => setShippingForm(previous => updateProfileShippingLocation(previous, 'state'))} />
+                <LocationAutocomplete key={`city-${shippingForm.countryCode || shippingForm.country}-${shippingForm.stateCode || shippingForm.state}`} type="city"
+                  label="City" required value={shippingForm.city} countryCode={shippingForm.countryCode} countryName={shippingForm.country}
+                  stateCode={shippingForm.stateCode} stateName={shippingForm.state} placeholder="Select city" disabled={!shippingForm.countryCode && !shippingForm.country}
+                  onQueryChange={() => setShippingForm(previous => updateProfileShippingLocation(previous, 'city'))}
+                  onSelect={option => setShippingForm(previous => updateProfileShippingLocation(previous, 'city', option))}
+                  onClear={() => setShippingForm(previous => updateProfileShippingLocation(previous, 'city'))} />
+                <View style={{ marginBottom: spacing.md }}>
+                  <Text style={{ fontSize: fontSize.sm, color: palette.colors.textSecondary, marginBottom: 4 }}>Postal Code</Text>
+                  <TextInput value={shippingForm.postalCode} onChangeText={postalCode => setShippingForm(previous => ({ ...previous, postalCode }))}
+                    placeholder="Enter postal code" placeholderTextColor={palette.colors.textSecondary} autoCapitalize="characters"
+                    style={{ backgroundColor: palette.glass.bgSubtle, borderRadius: 12, borderWidth: 1, borderColor: palette.glass.borderSubtle, padding: spacing.md, fontSize: fontSize.md, color: palette.colors.text }} />
+                </View>
               </KeyboardAwareFormScrollView>
               <TouchableOpacity style={{ borderRadius: 16, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', marginTop: spacing.md, opacity: savingShipping ? 0.6 : 1, overflow: 'hidden' }}
                 onPress={saveShippingInfo} disabled={savingShipping} activeOpacity={0.85}>

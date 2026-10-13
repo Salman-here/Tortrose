@@ -21,6 +21,8 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
+import NotificationSearchField from '../../components/notifications/NotificationSearchField';
+import { notificationMatchesSearch } from '../../utils/notificationSearch';
 import {
   SellerEmptyState,
   SellerInlineError,
@@ -245,9 +247,11 @@ export default function SellerNotificationsScreen({ navigation }) {
     () => visibleNotifications.reduce((count, notification) => count + (notification.read ? 0 : 1), 0),
     [visibleNotifications],
   );
+  const [searchQuery, setSearchQuery] = useState('');
+  useEffect(() => { setSearchQuery(''); }, [sellerId]);
   const filteredNotifications = useMemo(
-    () => filterSellerNotifications(visibleNotifications, activeCategory),
-    [activeCategory, visibleNotifications],
+    () => filterSellerNotifications(visibleNotifications, activeCategory).filter(notification => notificationMatchesSearch(notification, searchQuery)),
+    [activeCategory, visibleNotifications, searchQuery],
   );
   const categoryCounts = useMemo(() => {
     const counts = { all: visibleNotifications.length };
@@ -523,6 +527,7 @@ export default function SellerNotificationsScreen({ navigation }) {
             </TouchableOpacity>
           </GlassPanel>
 
+          <NotificationSearchField value={searchQuery} onChangeText={setSearchQuery} style={{ marginTop: spacing.md }} />
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -577,12 +582,12 @@ export default function SellerNotificationsScreen({ navigation }) {
           ListEmptyComponent={(
             <SellerEmptyState
               icon={loadError ? 'cloud-offline-outline' : 'notifications-off-outline'}
-              title={loadError ? 'Notifications unavailable' : 'Nothing here yet'}
-              message={loadError || (activeCategory === 'all'
+              title={loadError ? 'Notifications unavailable' : searchQuery.trim() ? 'No matching notifications' : 'Nothing here yet'}
+              message={loadError || (searchQuery.trim() ? 'Try another search or choose a different category.' : activeCategory === 'all'
                 ? 'New order, stock, payment and store updates will appear here.'
                 : 'There are no notifications in this category right now.')}
-              actionLabel={loadError ? 'Try again' : undefined}
-              onAction={loadError ? onRefresh : undefined}
+              actionLabel={loadError ? 'Try again' : searchQuery.trim() ? 'Clear search' : undefined}
+              onAction={loadError ? onRefresh : searchQuery.trim() ? () => setSearchQuery('') : undefined}
             />
           )}
         />

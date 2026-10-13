@@ -463,7 +463,6 @@ export default function SellerPaymentsScreen({ navigation }) {
           <StatCard styles={styles} icon="card-outline" label="Processing fee + tax" value={formatBalanceMoney(selectedBalance?.processingFeeAndTax ?? 0)} description="One combined deduction for Safepay and Wallet orders" color={palette.colors.warning} />
           */}
           <StatCard styles={styles} icon="lock-closed-outline" label="Pending online funds" value={formatBalanceMoney(selectedBalance?.pendingOnlineNetBalance ?? selectedBalance?.pendingOnlineBalance ?? 0)} description="Net funds awaiting delivery, return-window expiry or an open return" color={palette.colors.warning} />
-          <StatCard styles={styles} icon="card-outline" label="Online delivered" value={formatDisplayMoney(displayValue('onlineDeliveredRevenue'))} description="Delivered Safepay and Wallet revenue" color={palette.colors.success} />
         </View>
 
         <GlassPanel variant="inner" style={{ padding: 14 }}><Text style={styles.heroText}>Safepay card, Raast and Wallet orders: 6.2% + PKR30 per checkout. Multi-seller orders share the fixed amount. Other currencies use the saved checkout rate. Withdrawals do not charge this deduction again.</Text></GlassPanel>
