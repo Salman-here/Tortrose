@@ -90,6 +90,21 @@ test('Analytics uses a separately labelled all-time source, including when chart
   }
 });
 
+test('seller revenue screens inherit the theme-aware page background instead of forcing light mode', () => {
+  const source = readFileSync(new URL('../src/components/layout/SellerDashboard.jsx', import.meta.url), 'utf8');
+  let found = false;
+  walk(parse(source, { sourceType: 'module', plugins: ['jsx'] }), node => {
+    if (node.type !== 'JSXOpeningElement' || node.name.name !== 'div') return;
+    if (!node.attributes.some(attribute => attribute.name?.name === 'className'
+      && attribute.value?.value === 'min-h-screen relative flex')) return;
+    found = true;
+    assert.ok(!node.attributes.some(attribute => attribute.name?.name === 'style'));
+  });
+  assert.ok(found, 'Seller layout root must retain the shared theme-aware background');
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+  assert.match(css, /html\.dark body\s*\{\s*background: linear-gradient/);
+});
+
 test('filtered responses are bound to the exact requested window and cannot masquerade as lifetime totals', () => {
   const value = response(); value.scope = 'period';
   value.period = { days: 7, startDate: '2026-10-07T00:00:00.000Z', endDateExclusive: '2026-10-14T00:00:00.000Z', timezone: 'UTC', basis: 'order_created_at' };
