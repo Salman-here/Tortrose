@@ -69,9 +69,55 @@ test.each(['USD', 'PKR', 'EUR', 'GBP'])('hides delivered gateway rows while pres
   expect(screen.getByText(`Available: ${currency} ${balances[currency].toFixed(2)} - Minimum: ${currency} ${minimum.toFixed(2)}`)).toBeTruthy();
   expect(screen.queryByText('Safepay delivered revenue')).toBeNull();
   expect(screen.queryByText('Wallet delivered revenue')).toBeNull();
-  for (const retained of ['Pending withdrawals', 'Held for returns', 'Processing withdrawals']) expect(screen.getByText(retained)).toBeTruthy();
+  for (const retained of ['Pending withdrawals', 'Held for returns']) expect(screen.getByText(retained)).toBeTruthy();
+  for (const hidden of ['Pending online estimate', 'Return refunds & holds', 'Processing withdrawals']) expect(screen.queryByText(hidden)).toBeNull();
   expect(JSON.stringify(summary)).toBe(before);
   expect(api.post).not.toHaveBeenCalled(); expect(api.put).not.toHaveBeenCalled();
+});
+
+test.each(['USD', 'PKR', 'EUR', 'GBP'])('hidden detail rows still count toward the %s balance when their amounts are nonzero', async currency => {
+  const summary = nativeResponse();
+  const availableByCurrency = { USD: 50, PKR: 28000, EUR: 60, GBP: 70 };
+  for (const balance of summary.balances) {
+    const available = availableByCurrency[balance.currency];
+    const delivered = available + 67;
+    Object.assign(balance, {
+      withdrawableBalance: available,
+      onlineDeliveredRevenue: delivered, safepayDeliveredRevenue: delivered,
+      stripeDeliveredRevenue: 0, walletDeliveredRevenue: 0,
+      onlinePendingRevenue: 23, walletPendingRevenue: 23, safepayPendingRevenue: 0,
+      totalDeliveredRevenue: delivered, estimatedRevenue: delivered + 23,
+      pendingWithdrawalAmount: 7, processingWithdrawalAmount: 11, returnRefundDebits: 13,
+      totalReservedOrWithdrawn: 31, returnWindowHeldAmount: 17,
+      onlineFeeDeductions: 19, pendingOnlineFeeDeductions: 5, processingFeeAndTax: 24,
+      pendingOnlineBalance: 40, pendingOnlineNetBalance: 35, onlineGrossEarnings: delivered + 10,
+    });
+  }
+  summary.displayRevenue = { ...summary.balanceByCurrency.USD };
+  summary.paymentAccount.currency = currency;
+  const before = JSON.stringify(summary);
+  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currencyState } : summary }));
+  const screen = render(<SellerPaymentsScreen navigation={{ navigate: jest.fn() }} />);
+  fireEvent(await screen.findByLabelText('Withdrawal balance currency'), 'valueChange', currency);
+  const minimum = currency === 'PKR' ? 2000 : 5;
+  expect(screen.getByText(`Available: ${currency} ${availableByCurrency[currency].toFixed(2)} - Minimum: ${currency} ${minimum.toFixed(2)}`)).toBeTruthy();
+  expect(screen.getByText('Pending withdrawals')).toBeTruthy();
+  expect(screen.getByText('Held for returns')).toBeTruthy();
+  expect(screen.getByText(`${currency} 35.00`)).toBeTruthy();
+  for (const hidden of ['Pending online estimate', 'Return refunds & holds', 'Processing withdrawals']) expect(screen.queryByText(hidden)).toBeNull();
+  expect(JSON.stringify(summary)).toBe(before);
+  expect(api.post).not.toHaveBeenCalled();
+  expect(api.put).not.toHaveBeenCalled();
+});
+
+test.each(['onlinePendingRevenue', 'returnRefundDebits', 'processingWithdrawalAmount'])('missing hidden %s still prevents an unsafe withdrawal', async field => {
+  const summary = nativeResponse();
+  delete summary.balanceByCurrency.USD[field];
+  api.get.mockImplementation(async url => ({ data: url === '/currency' ? { productCurrency: currencyState } : summary }));
+  const screen = render(<SellerPaymentsScreen navigation={{ navigate: jest.fn() }} />);
+  await screen.findByText('Payment summary did not include complete authoritative money totals.');
+  expect(screen.queryByLabelText('Withdrawal balance currency')).toBeNull();
+  expect(api.post).not.toHaveBeenCalled();
 });
 
 test.each([

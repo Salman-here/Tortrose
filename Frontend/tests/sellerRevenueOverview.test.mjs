@@ -100,7 +100,7 @@ test('Payments no longer renders delivered gateway breakdown rows on either surf
     for (const removed of ['Safepay delivered revenue', 'Wallet delivered revenue']) {
       assert.ok(!strings.includes(removed), `${removed} must not render in Payments`);
     }
-    for (const retained of ['Pending withdrawals', 'Held for returns', 'Processing withdrawals']) {
+    for (const retained of ['Pending withdrawals', 'Held for returns']) {
       assert.ok(strings.includes(retained), `${retained} must remain in Payments`);
     }
     assert.match(source, /selectedBalance\?\.withdrawableBalance/);
@@ -109,6 +109,31 @@ test('Payments no longer renders delivered gateway breakdown rows on either surf
     const source = readFileSync(new URL(path, import.meta.url), 'utf8');
     assert.match(source, /Total Online Earnings/);
     assert.match(source, /onlineGrossEarnings/);
+  }
+});
+
+test('Payments hides the requested detail rows reversibly on web and mobile without changing money validation', () => {
+  const hidden = ['Pending online estimate', 'Return refunds & holds', 'Processing withdrawals'];
+  for (const path of ['../src/components/layout/SellerPayments.jsx', '../../MobileApp/src/screens/seller/SellerPaymentsScreen.js']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    const strings = [];
+    walk(parse(source, { sourceType: 'module', plugins: ['jsx'] }), node => {
+      if (node.type === 'StringLiteral') strings.push(node.value);
+    });
+    assert.match(source, /Temporarily hidden balance-detail rows/);
+    for (const label of hidden) {
+      assert.ok(!strings.includes(label), `${label} must not render in Payments`);
+      assert.ok(source.split('\n').some(line => line.trimStart().startsWith(`// ['${label}',`)), `${label} must remain commented out for restoration`);
+    }
+    for (const retained of ['Pending withdrawals', 'Held for returns', 'Pending COD estimate']) {
+      assert.ok(strings.includes(retained), `${retained} must remain in Payments`);
+    }
+    assert.match(source, /nativeBalancesAreValid\((?:next|res\.data)\)/);
+    assert.match(source, /selectedBalance\?\.withdrawableBalance/);
+  }
+  for (const path of ['../src/utils/nativeBalanceSafety.js', '../../MobileApp/src/utils/nativeBalanceSafety.js']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    for (const field of ['onlinePendingRevenue', 'returnRefundDebits', 'processingWithdrawalAmount']) assert.ok(source.includes(`'${field}'`));
   }
 });
 

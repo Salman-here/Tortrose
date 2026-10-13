@@ -583,12 +583,13 @@ export default function SellerPaymentsScreen({ navigation }) {
         <GlassPanel variant="card" style={styles.section}>
           <SellerSectionHeader title="Balance details" subtitle="How your available amount is calculated" icon="calculator-outline" />
           {[
-            ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0, 'hourglass-outline'],
+            // Temporarily hidden balance-detail rows; retain these entries for future display.
+            // ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0, 'hourglass-outline'],
             ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0, 'paper-plane-outline'],
             ['Held for returns', selectedBalance.returnWindowHeldAmount, 'lock-closed-outline'],
-            ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0, 'sync-outline'],
+            // ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0, 'sync-outline'],
             ['Paid out', selectedBalance?.totalWithdrawn ?? 0, 'checkmark-done-outline'],
-            ['Return refunds & holds', selectedBalance?.returnRefundDebits ?? 0, 'return-down-back-outline'],
+            // ['Return refunds & holds', selectedBalance?.returnRefundDebits ?? 0, 'return-down-back-outline'],
             ['Pending COD estimate', selectedBalance?.codPendingRevenue ?? 0, 'cash-outline'],
             ...[
               ['Approved withdrawals', selectedBalance?.approvedWithdrawalAmount ?? 0, 'checkmark-circle-outline'],

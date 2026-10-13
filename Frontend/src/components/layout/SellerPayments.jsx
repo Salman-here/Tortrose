@@ -638,12 +638,13 @@ const SellerPayments = () => {
                         <h2 className="text-lg font-bold mb-4" style={{ color: 'hsl(var(--foreground))' }}>Balance Details</h2>
                         <div className="space-y-3">
                             {[
-                                ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0],
+                                // Temporarily hidden balance-detail rows; retain these entries for future display.
+                                // ['Pending online estimate', selectedBalance?.onlinePendingRevenue ?? 0],
                                 ['Pending withdrawals', selectedBalance?.pendingWithdrawalAmount ?? 0],
                                 ['Held for returns', selectedBalance?.returnWindowHeldAmount ?? 0],
-                                ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0],
+                                // ['Processing withdrawals', selectedBalance?.processingWithdrawalAmount ?? 0],
                                 ['Already paid out', selectedBalance?.totalWithdrawn ?? 0],
-                                ['Return refunds & holds', selectedBalance?.returnRefundDebits ?? 0],
+                                // ['Return refunds & holds', selectedBalance?.returnRefundDebits ?? 0],
                                 ['Pending COD estimate', selectedBalance?.codPendingRevenue ?? 0],
                                 ...[
                                     ['Approved withdrawals', selectedBalance?.approvedWithdrawalAmount ?? 0],
