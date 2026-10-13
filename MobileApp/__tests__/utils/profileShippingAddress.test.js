@@ -31,4 +31,5 @@ test('profile uses checkout location pickers and never silently saves typed sear
   expect(source).not.toContain("'address', 'city', 'state'");
   expect(source).not.toContain('onCountryChange={(option) => setShippingForm');
   expect(source).toContain('profileShippingLocationError(address)');
+  expect(source).toContain('height: Math.min(400, height * 0.45), flex: 0');
 });

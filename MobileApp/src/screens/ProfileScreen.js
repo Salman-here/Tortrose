@@ -5,7 +5,7 @@
 
 import React, { useCallback, useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, useWindowDimensions,
 } from 'react-native';
 import Modal from '../components/common/AppModal';
 import { Image } from 'expo-image';
@@ -65,6 +65,7 @@ export const getMenuItemsForRole = (role, palette) => {
 
 export default function ProfileScreen({ navigation }) {
   const { palette } = useTheme();
+  const { height } = useWindowDimensions();
   const styles = buildStyles(palette);
 
   const { currentUser, logout } = useAuth();
@@ -361,7 +362,7 @@ export default function ProfileScreen({ navigation }) {
                 </TouchableOpacity>
               </View>
               <KeyboardAwareFormScrollView
-                style={{ maxHeight: 400 }}
+                style={{ height: Math.min(400, height * 0.45), flex: 0 }}
               >
                 {['fullName', 'email', 'phone', 'address'].map(field => field === 'phone' ? (
                   <PhoneNumberInput
