@@ -306,12 +306,12 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
         note: note.trim(),
         expectedUpdatedAt: dialog.request.updatedAt,
       });
-      Feedback.show({ type: 'success', text1: 'Return updated', text2: 'The buyer was notified on Rozare and WhatsApp.' });
+      Feedback.show({ type: 'success', text1: warranty ? 'Claim updated' : 'Return updated', text2: 'The update is visible to the buyer.' });
       setDialog(null);
       setNote('');
       await load();
     } catch (error) {
-      Feedback.show({ type: 'error', text1: 'Update failed', text2: getApiError(error, 'Could not update this return.') });
+      Feedback.show({ type: 'error', text1: 'Update failed', text2: getApiError(error, warranty ? 'Could not update this warranty claim.' : 'Could not update this return.') });
     } finally {
       setSubmitting(false);
       setSubmittingRequestId('');
@@ -322,7 +322,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
     if (fundingBusyRef.current) return;
     const snapshot = inspectReturnPresentationSnapshot(request);
     if (!snapshot.valid) {
-      Feedback.show({ type: 'error', text1: 'Return unavailable', text2: 'Refresh this return before accepting it.' });
+      Feedback.show({ type: 'error', text1: warranty ? 'Claim unavailable' : 'Return unavailable', text2: warranty ? 'Refresh this claim before proceeding.' : 'Refresh this return before accepting it.' });
       setDialog(null);
       return;
     }
@@ -334,7 +334,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
         || (!replacementOnly && ['held_order', 'seller_balance', 'card'].includes(fundingSource))
       );
     if (!actionValid) {
-      Feedback.show({ type: 'error', text1: 'Refund action unavailable', text2: 'Refresh this return before trying again.' });
+      Feedback.show({ type: 'error', text1: 'Refund action unavailable', text2: warranty ? 'Refresh this claim before trying again.' : 'Refresh this return before trying again.' });
       setDialog(null);
       return;
     }
@@ -667,7 +667,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
               </Text>
             </View>
             {hasLoaded && !loading && !loadError && (
-              <View style={styles.resultCount} accessible accessibilityLabel={`${summary.total} ${warranty ? 'claims' : 'returns'} shown`}>
+              <View style={styles.resultCount} accessible accessibilityLabel={`${summary.total} ${warranty ? (summary.total === 1 ? 'claim' : 'claims') : (summary.total === 1 ? 'return' : 'returns')} shown`}>
                 <Text style={styles.resultCountValue}>{summary.total}</Text>
                 <Text style={styles.resultCountLabel}>shown</Text>
               </View>
