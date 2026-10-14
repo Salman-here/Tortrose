@@ -234,20 +234,20 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
       if (requestId !== requestSequence.current) return;
       const rows = targeted ? (response.data?.returnRequest?.kind === 'warranty' ? [response.data.returnRequest] : null) : response.data?.returns;
       if (!Array.isArray(rows)) {
-        throw new Error('The returns service sent an invalid response. Please try again.');
+        throw new Error(warranty ? 'The warranty service sent an invalid response. Please try again.' : 'The returns service sent an invalid response. Please try again.');
       }
       setRequests(rows);
       setHasLoaded(true);
     } catch (error) {
       if (requestId !== requestSequence.current) return;
-      setLoadError(getApiError(error, 'Failed to load return requests.'));
+      setLoadError(getApiError(error, warranty ? 'Failed to load warranty claims.' : 'Failed to load return requests.'));
     } finally {
       if (requestId === requestSequence.current) {
         setLoading(false);
         setRefreshing(false);
       }
     }
-  }, [search, status, base, linkedClaim]);
+  }, [search, status, base, linkedClaim, warranty]);
 
   useEffect(() => {
     setLoading(true);
@@ -445,16 +445,16 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
             <Ionicons name="alert-circle-outline" size={18} color={palette.colors.error} />
             <View style={styles.snapshotErrorCopy}>
               <Text style={styles.snapshotErrorTitle}>Financial snapshot unavailable</Text>
-              <Text style={styles.snapshotErrorText}>Amounts and seller actions are disabled until a fresh, internally consistent return is loaded.</Text>
+              <Text style={styles.snapshotErrorText}>Amounts and seller actions are disabled until a verified request is loaded.</Text>
             </View>
-            <TouchableOpacity style={styles.snapshotRetry} onPress={() => load()} accessibilityRole="button" accessibilityLabel="Retry loading returns">
+            <TouchableOpacity style={styles.snapshotRetry} onPress={() => load()} accessibilityRole="button" accessibilityLabel={warranty ? 'Retry loading warranty claims' : 'Retry loading returns'}>
               <Ionicons name="refresh-outline" size={15} color={palette.colors.error} />
             </TouchableOpacity>
           </View>
         )}
         <View style={styles.cardHeader}>
           <View style={styles.returnIcon}>
-            <Ionicons name="return-down-back-outline" size={21} color={palette.colors.primary} />
+            <Ionicons name={warranty ? 'shield-checkmark-outline' : 'return-down-back-outline'} size={21} color={palette.colors.primary} />
           </View>
           <View style={styles.cardTitleCopy}>
             <Text style={styles.returnNumber}>{warranty ? 'Claim' : 'Return'} #{returnNumber}</Text>
@@ -486,7 +486,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
         </View>
 
         <View style={styles.sectionHeading}>
-          <Text style={styles.sectionTitle}>Items to return</Text>
+          <Text style={styles.sectionTitle}>{warranty ? 'Claimed items' : 'Items to return'}</Text>
           <Text style={styles.sectionCount}>{itemCount === null ? 'Quantity unavailable' : `${itemCount} ${itemCount === 1 ? 'item' : 'items'}`}</Text>
         </View>
         <View style={styles.itemsBox}>
@@ -533,14 +533,14 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
               disabled={submitting}
               activeOpacity={0.78}
               accessibilityRole="button"
-              accessibilityLabel={request.policySnapshot?.refundType === 'replacement_only' ? 'Approve replacement' : 'Accept return'}
+              accessibilityLabel={request.policySnapshot?.refundType === 'replacement_only' ? 'Approve replacement' : warranty ? 'Fund warranty refund' : 'Accept return'}
               accessibilityHint="Opens the refund funding confirmation"
               accessibilityState={{ disabled: submitting, busy: requestBusy }}
             >
               {requestBusy
                 ? <ActivityIndicator size="small" color="#fff" />
                 : <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />}
-              <Text style={styles.acceptText}>{request.policySnapshot?.refundType === 'replacement_only' ? 'Approve replacement' : 'Accept return'}</Text>
+              <Text style={styles.acceptText}>{request.policySnapshot?.refundType === 'replacement_only' ? 'Approve replacement' : warranty ? 'Fund warranty refund' : 'Accept return'}</Text>
             </TouchableOpacity>
           )}
           {snapshot.valid && request.status === 'accepted_pending_payment' && (
@@ -657,17 +657,17 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
         <GlassPanel variant="strong" style={styles.filtersCard}>
           <View style={styles.filterHeadingRow}>
             <View style={styles.filterIcon}>
-              <Ionicons name="return-down-back-outline" size={20} color={palette.colors.primary} />
+              <Ionicons name={warranty ? 'shield-checkmark-outline' : 'return-down-back-outline'} size={20} color={palette.colors.primary} />
             </View>
             <View style={styles.filterHeadingCopy}>
               <Text style={styles.filterEyebrow}>{warranty ? 'WARRANTY CARE' : 'RETURN OPERATIONS'}</Text>
               <Text style={styles.filterTitle}>{warranty ? 'Warranty claims' : 'Return requests'}</Text>
               <Text style={styles.filterSubtitle}>
-                {loadError ? 'Results are hidden until a fresh load succeeds.' : `${activeFilterLabel} returns in this view`}
+                {loadError ? 'Results are hidden until a fresh load succeeds.' : `${activeFilterLabel} ${warranty ? 'claims' : 'returns'} in this view`}
               </Text>
             </View>
             {hasLoaded && !loading && !loadError && (
-              <View style={styles.resultCount} accessible accessibilityLabel={`${summary.total} returns shown`}>
+              <View style={styles.resultCount} accessible accessibilityLabel={`${summary.total} ${warranty ? 'claims' : 'returns'} shown`}>
                 <Text style={styles.resultCountValue}>{summary.total}</Text>
                 <Text style={styles.resultCountLabel}>shown</Text>
               </View>
@@ -679,7 +679,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
               {summary.actionable > 0 && (
                 <View style={[styles.summaryPill, styles.actionablePill]}>
                   <Ionicons name="flash-outline" size={13} color={palette.colors.primary} />
-                  <Text style={[styles.summaryPillText, { color: palette.colors.primary }]}>{summary.actionable} need action</Text>
+                  <Text style={[styles.summaryPillText, { color: palette.colors.primary }]}>{summary.actionable} {summary.actionable === 1 ? 'needs' : 'need'} action</Text>
                 </View>
               )}
               {summary.paymentDue > 0 && (
@@ -702,7 +702,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
               returnKeyType="search"
               autoCapitalize="none"
               autoCorrect={false}
-              accessibilityLabel="Search return requests"
+              accessibilityLabel={warranty ? 'Search warranty claims' : 'Search return requests'}
             />
             {!!search && (
               <TouchableOpacity
@@ -710,7 +710,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
                 onPress={() => setSearch('')}
                 activeOpacity={0.72}
                 accessibilityRole="button"
-                accessibilityLabel="Clear return search"
+                accessibilityLabel={warranty ? 'Clear warranty search' : 'Clear return search'}
               >
                 <Ionicons name="close" size={16} color={palette.colors.textSecondary} />
               </TouchableOpacity>
@@ -733,7 +733,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
                   onPress={() => setStatus(value)}
                   activeOpacity={0.76}
                   accessibilityRole="tab"
-                  accessibilityLabel={`Show ${label.toLowerCase()} returns`}
+                  accessibilityLabel={`Show ${label.toLowerCase()} ${warranty ? 'claims' : 'returns'}`}
                   accessibilityState={{ selected }}
                 >
                   {selected && <Ionicons name="checkmark" size={13} color="#fff" />}
@@ -749,7 +749,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
               onPress={clearFilters}
               activeOpacity={0.72}
               accessibilityRole="button"
-              accessibilityLabel="Clear all return filters"
+              accessibilityLabel={warranty ? 'Clear all warranty filters' : 'Clear all return filters'}
             >
               <Ionicons name="refresh-outline" size={14} color={palette.colors.textSecondary} />
               <Text style={styles.clearFiltersText}>Clear filters</Text>
@@ -768,7 +768,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
       {!!loadError && hasLoaded && (
         <SellerInlineError
           compact
-          title="Returns did not refresh"
+          title={warranty ? 'Warranty claims did not refresh' : 'Returns did not refresh'}
           message={`${loadError} Results and seller actions are hidden until retry succeeds.`}
           onRetry={onRefresh}
         />
@@ -782,7 +782,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
       return (
         <View style={styles.fullError}>
           <SellerInlineError
-            title="Returns unavailable"
+            title={warranty ? 'Warranty claims unavailable' : 'Returns unavailable'}
             message={loadError}
             onRetry={() => load()}
           />
@@ -793,7 +793,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
     if (loadError) return null;
     return (
       <SellerEmptyState
-        icon="return-down-back-outline"
+        icon={warranty ? 'shield-checkmark-outline' : 'return-down-back-outline'}
         title={filterActive ? 'No matching requests' : warranty ? 'No warranty claims yet' : 'No return requests yet'}
         message={filterActive
           ? 'Try another status or clear your search to see more requests.'
@@ -861,8 +861,8 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
                 </View>
                 <View style={styles.modalTitleCopy}>
                   <Text style={styles.modalEyebrow}>CONFIRM STATUS</Text>
-                  <Text style={styles.modalTitle}>{ACTION_LABELS[dialog?.status] || 'Update return'}</Text>
-                  <Text style={styles.meta}>Return #{dialog?.request?.returnNumber} - Order #{dialog?.request?.orderId}</Text>
+                  <Text style={styles.modalTitle}>{ACTION_LABELS[dialog?.status] || (warranty ? 'Update claim' : 'Update return')}</Text>
+                  <Text style={styles.meta}>{warranty ? 'Claim' : 'Return'} #{dialog?.request?.returnNumber} - Order #{dialog?.request?.orderId}</Text>
                 </View>
                 <TouchableOpacity
                   style={styles.closeButton}
@@ -870,7 +870,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
                   disabled={submitting}
                   activeOpacity={0.72}
                   accessibilityRole="button"
-                  accessibilityLabel="Close return update"
+                  accessibilityLabel={warranty ? 'Close claim update' : 'Close return update'}
                   accessibilityState={{ disabled: submitting }}
                 >
                   <Ionicons name="close" size={20} color={palette.colors.text} />
@@ -914,7 +914,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
                 disabled={confirmDisabled}
                 activeOpacity={0.78}
                 accessibilityRole="button"
-                accessibilityLabel={dialog?.status === 'rejected' ? 'Confirm return rejection' : 'Confirm return status update'}
+                accessibilityLabel={dialog?.status === 'rejected' ? (warranty ? 'Confirm claim rejection' : 'Confirm return rejection') : (warranty ? 'Confirm claim status update' : 'Confirm return status update')}
                 accessibilityState={{ disabled: confirmDisabled, busy: submitting }}
               >
                 {submitting

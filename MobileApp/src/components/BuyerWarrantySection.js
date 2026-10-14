@@ -23,6 +23,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
   const { palette } = useTheme(), styles = useMemo(() => createStyles(palette), [palette]);
   const [groups, setGroups] = useState([]), [claims, setClaims] = useState([]), [error, setError] = useState('');
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [dialog, setDialog] = useState(null);
+  const [formError, setFormError] = useState('');
   const [reason, setReason] = useState(''), [quantity, setQuantity] = useState('1'), [photos, setPhotos] = useState([]);
   const generation = useRef(0), working = useRef(false), key = useRef(null);
   const load = useCallback(async ({ quiet = false } = {}) => {
@@ -59,7 +60,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
     return () => { listener.remove(); if (interval) clearInterval(interval); };
   }, [load, focused, activeClaim, dialog]);
   const open = selection => {
-    key.current = Crypto.randomUUID(); setDialog(selection); setReason(''); setQuantity('1');
+    key.current = Crypto.randomUUID(); setDialog(selection); setReason(''); setQuantity('1'); setFormError('');
     setPhotos(selection.claim ? selection.claim.evidence.map((id, index) => ({ _id: id, url: selection.claim.evidenceUrls[index] })) : []);
   };
   const pickPhotos = async () => {
@@ -69,7 +70,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
     const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 6 - photos.length, quality: 0.85 });
     if (picked.canceled) return;
     if (picked.assets.length + photos.length > 6 || picked.assets.some(asset => asset.fileSize > 5242880 || asset.mimeType && !['image/jpeg', 'image/png', 'image/webp'].includes(asset.mimeType))) { Alert.alert('Choose supported photos', 'Attach up to 6 JPEG, PNG or WebP photos, each up to 5 MB.'); return; }
-    working.current = true; setBusy(true);
+    working.current = true; setBusy(true); setFormError('');
     try {
       for (const asset of picked.assets) {
         const form = new FormData(), mime = asset.mimeType || 'image/jpeg', name = asset.fileName || `warranty-${Date.now()}.jpg`;
@@ -81,7 +82,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
         if (!/^[a-f\d]{24}$/iu.test(evidence?._id || '') || !/^https:\/\//u.test(evidence?.url || '')) throw new Error('Uploaded photo could not be verified.');
         setPhotos(previous => [...previous, evidence]);
       }
-    } catch (failure) { Feedback.show({ type: 'error', text1: 'Photo upload failed', text2: failure.response?.data?.msg || failure.message }); }
+    } catch (failure) { setFormError(failure.response?.data?.msg || failure.message || 'The photo could not be uploaded. Try again.'); }
     finally { working.current = false; setBusy(false); }
   };
   const submit = async () => {
@@ -91,7 +92,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
     if (error || reason.trim().length < 10 || !photos.length || !Number.isSafeInteger(count) || count < 1
       || dialog.claim && current?.status !== 'rejected'
       || !dialog.claim && (!current?.eligible || count > current.availableQuantity)) { Alert.alert('Complete the claim', 'Refresh the details, explain the issue, attach a photo and select an eligible quantity.'); return; }
-    working.current = true; setBusy(true);
+    working.current = true; setBusy(true); setFormError('');
     try {
       const body = { reasonDetails: reason.trim(), evidenceIds: photos.map(photo => photo._id), requestKey: key.current };
       const response = dialog.claim ? await api.post(`${API}/${dialog.claim._id}/appeal`, body)
@@ -100,7 +101,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
         || dialog.claim && response.data.returnRequest._id !== dialog.claim._id
         || !dialog.claim && (response.data.returnRequest.items[0].orderItemId !== dialog.item.orderItemId || response.data.returnRequest.items[0].quantity !== count)) throw new Error('Claim confirmation could not be verified. Refresh before trying again.');
       setDialog(null); await load(); publishAfterSalesChange(order._id); Feedback.show({ type: 'success', text1: dialog.claim ? 'Original claim appealed' : 'Warranty claim sent to seller' });
-    } catch (failure) { Feedback.show({ type: 'error', text1: 'Claim not completed', text2: failure.response?.data?.msg || failure.message }); }
+    } catch (failure) { setFormError(failure.response?.data?.msg || failure.message || 'The claim could not be completed. Check the details and try again.'); }
     finally { working.current = false; setBusy(false); }
   };
   const act = (claim, action) => Alert.alert(action === 'cancel' ? 'Cancel warranty request?' : 'Replacement received?', action === 'cancel' ? 'Your original purchase stays unchanged.' : 'Confirm only after the replacement arrives. Your original warranty deadline stays unchanged.', [{ text: 'Not now', style: 'cancel' }, { text: 'Confirm', onPress: async () => {
@@ -123,9 +124,10 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
     </>}
     <Modal visible={Boolean(dialog)} transparent animationType="fade" onRequestClose={() => !working.current && setDialog(null)}><View style={styles.overlay}><GlassPanel variant="modal" style={styles.modal}><KeyboardAwareFormScrollView contentContainerStyle={styles.content}>
       <Text style={styles.title}>{dialog?.claim ? 'Appeal original claim' : 'Claim warranty'}</Text><Text style={styles.muted}>{dialog?.claim ? 'This appeal keeps the original claim and warranty deadline.' : dialog?.item?.name}</Text>
-      {!dialog?.claim && <><Text style={styles.label}>Quantity</Text><TextInput accessibilityLabel="Claim quantity" keyboardType="number-pad" value={quantity} onChangeText={setQuantity} style={styles.input} editable={!busy} /></>}
-      <Text style={styles.label}>Describe the issue</Text><TextInput accessibilityLabel="Warranty reason" value={reason} onChangeText={setReason} style={[styles.input, styles.multiline]} multiline maxLength={1500} editable={!busy} placeholder="Explain the fault and any troubleshooting." placeholderTextColor={palette.colors.textSecondary} textAlignVertical="top" />
+      {!dialog?.claim && <><Text style={styles.label}>Quantity</Text><TextInput accessibilityLabel="Claim quantity" keyboardType="number-pad" value={quantity} onChangeText={next => { setQuantity(next); setFormError(''); }} style={styles.input} editable={!busy} /></>}
+      <Text style={styles.label}>Describe the issue</Text><TextInput accessibilityLabel="Warranty reason" value={reason} onChangeText={next => { setReason(next); setFormError(''); }} style={[styles.input, styles.multiline]} multiline maxLength={1500} editable={!busy} placeholder="Explain the fault and any troubleshooting." placeholderTextColor={palette.colors.textSecondary} textAlignVertical="top" />
       {button(`Add photos (${photos.length}/6)`, pickPhotos, true)}<Text style={styles.muted}>1–6 JPEG, PNG or WebP photos, up to 5 MB each. Avoid personal or payment information.</Text><View style={styles.gallery}>{photos.map(photo => <View key={photo._id}><Image source={{ uri: photo.url }} style={styles.photo} contentFit="cover" /><TouchableOpacity disabled={busy} accessibilityLabel="Remove photo" onPress={() => setPhotos(photos.filter(row => row._id !== photo._id))}><Text style={styles.muted}>Remove</Text></TouchableOpacity></View>)}</View>
+      {!!formError && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.error}>{formError}</Text>}
       {busy && <ActivityIndicator color={palette.colors.primary} />}{button(dialog?.claim ? 'Submit appeal' : 'Submit warranty claim', submit)}{button('Cancel', () => setDialog(null), true)}
     </KeyboardAwareFormScrollView></GlassPanel></View></Modal>
   </View>;
@@ -133,6 +135,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
 const createStyles = p => StyleSheet.create({
   section: { marginTop: 24, gap: 12 }, heading: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   title: { fontSize: 20, color: p.colors.text, fontWeight: '800' }, label: { color: p.colors.text, fontSize: 14, fontWeight: '700' },
+  error: { color: p.colors.error, fontSize: 13, lineHeight: 19, fontWeight: '600' },
   text: { color: p.colors.text, fontSize: 13, lineHeight: 19 }, muted: { color: p.colors.textSecondary, fontSize: 12, lineHeight: 18 }, status: { color: p.colors.text, fontSize: 12, fontWeight: '700' },
   card: { padding: 16, borderRadius: 20, gap: 10 }, gallery: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, photo: { width: 80, height: 80, borderRadius: 12 }, history: { borderLeftWidth: 2, borderLeftColor: p.colors.primary, paddingLeft: 10, gap: 4 },
   button: { backgroundColor: p.colors.primary, borderRadius: 14, minHeight: 46, padding: 12, alignItems: 'center', justifyContent: 'center' }, buttonText: { color: '#fff', fontSize: 13, fontWeight: '700' }, secondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: p.colors.border },
