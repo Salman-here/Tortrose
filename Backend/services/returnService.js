@@ -433,7 +433,7 @@ const buildOrderReturnEligibility = async (order, { session = null, at = new Dat
       else if (policy.refundType === 'none') itemReason = 'No return resolution is configured for this item.';
       else if (fulfillment.status !== 'delivered' || !fulfillment.deliveredAt) itemReason = 'Return requests open after this seller portion is delivered.';
       else if (!itemDeadline || new Date(at).getTime() > itemDeadline.getTime()) itemReason = 'The return window has closed for this item.';
-      else if (item.remainingReturnableQuantity <= 0) itemReason = 'All eligible quantities already have a return request.';
+      else if (item.remainingReturnableQuantity <= 0) itemReason = 'These units already have a return or warranty claim, or have been refunded.';
 
       return {
         ...item,
