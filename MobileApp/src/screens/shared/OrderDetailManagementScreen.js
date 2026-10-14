@@ -28,6 +28,7 @@ import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../s
 import { useTheme } from '../../contexts/ThemeContext';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getOrderPaymentLabel } from '../../utils/paymentPresentation';
+import { getPaymentReviewPresentation } from '../../utils/safepayPaymentReviewPresentation';
 import {
   getConfirmationSourceLabel,
   hasWhatsAppPhone,
@@ -227,6 +228,8 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const confirmation = order.confirmation || {};
   const canVerifyOnWhatsApp = hasWhatsAppPhone(order) && !isOrderConfirmedByBuyer(order);
   const paymentMethodLabel = getOrderPaymentLabel(order);
+  const paymentReview = getPaymentReviewPresentation(order);
+  const paymentPositive = paymentReview ? paymentReview.status === 'won' : order.isPaid;
   const displayOrderId = order.orderId || `#${String(order._id || '').slice(-8).toUpperCase()}`;
   const hasCurrencyConversion = sellerCurrencyMoney
     && sellerCurrencyMoney.buyerCurrency !== sellerCurrencyMoney.currency;
@@ -323,9 +326,9 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
               <Text style={styles.paymentValue}>{paymentMethodLabel}</Text>
             </View>
             <View style={styles.paymentTile}>
-              <Ionicons name={order.isPaid ? 'checkmark-circle-outline' : 'time-outline'} size={19} color={order.isPaid ? palette.colors.success : palette.colors.warning} />
+              <Ionicons name={paymentPositive ? 'checkmark-circle-outline' : 'time-outline'} size={19} color={paymentPositive ? palette.colors.success : palette.colors.warning} />
               <Text style={styles.paymentCaption}>PAYMENT</Text>
-              <Text style={styles.paymentValue}>{order.isPaid ? 'Paid' : 'Not paid'}</Text>
+              <Text style={styles.paymentValue}>{paymentReview?.label || (order.isPaid ? 'Paid' : 'Not paid')}</Text>
             </View>
             <View style={styles.paymentTile}>
               <Ionicons name="phone-portrait-outline" size={19} color={palette.colors.secondary} />
@@ -333,6 +336,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
               <Text style={styles.paymentValue}>{order.orderSource || order.source || order.platform || 'Rozare checkout'}</Text>
             </View>
           </View>
+          {paymentReview && <Text style={styles.paymentValue}>{paymentReview.message}</Text>}
         </GlassPanel>
 
         <GlassPanel variant="card" style={styles.section}>

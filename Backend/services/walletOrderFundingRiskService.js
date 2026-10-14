@@ -65,7 +65,7 @@ const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) =
   // and spent Safepay top-ups while a refund/dispute is under reconciliation.
   const directPayments = await withSession(SafepayPayment.find({ order: orderId, purpose: 'order' })
     .select('_id order user environment currency appliedAt refundedMinor status riskPending'), session);
-  if (directPayments.some(payment => payment.riskPending || ['manual_review', 'refund_pending', 'refunded'].includes(payment.status))) {
+  if (directPayments.some(payment => payment.riskPending || ['manual_review', 'refund_pending', 'refunded', 'reversed'].includes(payment.status))) {
     throw provenanceError('The original card payment was reversed or is under payment review. A second refund is blocked.', 'RETURN_EXTERNAL_FUNDING_REVERSAL');
   }
   for (const payment of directPayments) await assertDirectCardRefundAccounted(payment, session);
@@ -82,13 +82,18 @@ const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) =
   if (!sourceIds.length) return { returnable: true, sourceIds: [] };
 
   const safepaySources = await withSession(WalletTransaction.find({ _id: { $in: sourceIds }, safepayPaymentId: { $ne: null } }).select('safepayPaymentId'), session);
-  const safepayRisk = safepaySources.length && await withSession(SafepayPayment.exists({ _id: { $in: safepaySources.map(row => row.safepayPaymentId) },
-    $or: [{ riskPending: true }, { status: { $in: ['manual_review', 'refund_pending', 'refunded'] } }] }), session);
+  const flaggedSources = safepaySources.length ? await withSession(SafepayPayment.find({ _id: { $in: safepaySources.map(row => row.safepayPaymentId) },
+    $or: [{ riskPending: true }, { status: { $in: ['manual_review', 'refund_pending', 'refunded', 'reversed'] } }] }), session) : [];
+  let safepayRisk = false;
+  for (const payment of flaggedSources) {
+    if (!await require('./safepayPaymentReviewFundingService').reviewedFundingIsHealthy(payment, orderId, session)) { safepayRisk = true; break; }
+  }
   const buyerRisk = await withSession(WalletTransaction.exists({
       type: 'reversal',
       direction: 'debit',
       status: { $in: ['pending', 'completed'] },
       'metadata.sourceType': 'wallet_top_up',
+      'metadata.provider': { $ne: 'safepay' },
       'metadata.sourcePaymentTransactionId': { $in: sourceIds },
       $or: [
         { 'metadata.refundExposureMinor': { $gt: 0 } },
@@ -99,6 +104,7 @@ const assertWalletOrderFundingReturnable = async ({ orderId, session = null }) =
       type: 'reversal',
       status: { $in: ['reserved', 'completed'] },
       'metadata.sourceType': 'wallet_top_up',
+      referenceType: { $ne: 'safepay_payment' },
       'metadata.sourceReferenceId': { $in: sourceIds },
     }), session);
   if (buyerRisk || sellerRisk || safepayRisk) {

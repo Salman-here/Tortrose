@@ -16,6 +16,7 @@ import {
     X,
 } from 'lucide-react';
 import Loader from '../common/Loader';
+import SafepayPaymentReviews from '../payments/SafepayPaymentReviews';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getAuthToken } from '../../utils/cookieHelper';
 import {
@@ -452,6 +453,7 @@ const AdminPayments = () => {
                     <p className="text-sm mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>{loadError}</p>
                     <button type="button" onClick={fetchOverview} className="mt-4 px-4 py-2 rounded-xl glass-inner text-sm font-semibold">Retry</button>
                 </div>
+                <SafepayPaymentReviews onResolved={fetchOverview} />
             </div>
         );
     }
@@ -491,6 +493,7 @@ const AdminPayments = () => {
                 </div>
             </div>
 
+            <SafepayPaymentReviews onResolved={fetchOverview} />
             {loadErrors.length > 0 && (
                 <details className="glass-inner rounded-2xl p-4" style={{ border: '1px solid rgba(249,115,22,0.35)' }}>
                     <summary className="cursor-pointer text-sm font-semibold">{loadErrors.length} seller accounting records need review and are excluded from these totals.</summary>

@@ -55,6 +55,7 @@ const isPaymentRiskLockReason = reason => (
   || /^Stripe dispute funds are held/.test(String(reason || ''))
   || /^Stripe reported a (refund|card dispute)/.test(String(reason || ''))
   || /^Wallet payment-risk legacy ledger quarantine/.test(String(reason || ''))
+  || /^Payment-risk liability/.test(String(reason || ''))
 );
 
 const isWalletPaymentRiskLock = wallet => Boolean(
@@ -221,7 +222,7 @@ const refreshWalletPaymentRiskStatus = async (walletId, session) => {
     const riskReason = summary.quarantinedLegacyCount > 0
       ? 'Wallet payment-risk legacy ledger quarantine requires manual reconciliation.'
       : summary.outstandingMinor > 0
-      ? 'Stripe payment-risk liability is outstanding. New credits will settle it before becoming available.'
+      ? 'Payment-risk liability is outstanding. New credits will settle it before becoming available.'
       : 'Stripe dispute funds are held until the card dispute is resolved.';
     // Payment risk composes with operational/manual locks. Never replace a
     // pre-existing fraud/admin reason, otherwise resolving the Stripe event

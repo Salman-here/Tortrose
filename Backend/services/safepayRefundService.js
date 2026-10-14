@@ -14,8 +14,9 @@ const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
 const { escapeHtml } = require('../utils/orderPresentation');
 const fail = () => Object.assign(new Error('Safepay refund evidence does not reconcile to the original charge.'), { code: 'SAFEPAY_REFUND_EVIDENCE_INVALID', statusCode: 409 });
 
-function refundEvidence(tracker, payment) {
-  if (!['TRACKER_REFUNDED', 'TRACKER_PARTIAL_REFUND'].includes(tracker.state)) return null;
+function refundEvidence(tracker, payment, { allowBankReview = false } = {}) {
+  if (!['TRACKER_REFUNDED', 'TRACKER_PARTIAL_REFUND'].includes(tracker.state)
+    && !(allowBankReview && ['TRACKER_DISPUTED', 'TRACKER_REVERSED', 'TRACKER_VOIDED'].includes(tracker.state))) return null;
   require('./safepayRefundCapabilityService').requireExternalRefundRail(tracker, payment);
   const charge = tracker.charge;
   if (!charge || charge.tracker !== payment.tracker || charge.amount?.currency !== payment.currency

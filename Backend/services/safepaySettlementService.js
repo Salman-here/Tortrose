@@ -174,6 +174,10 @@ async function quarantineSafepayPayment(payment, tracker, session, { skipRefundR
     for (const row of related) if (!seen.has(id(row))) { orders.push(row); seen.add(id(row)); }
   }
   const sellers = [...new Set([...orders.flatMap(order => (order.sellerSettlement || []).map(row => id(row.seller))), returnSeller].filter(Boolean))].sort();
+  if (!skipRefundReconciliation) {
+    const reviewed = await require('./safepayPaymentReviewService').observeBankReview(payment, tracker, { orders, sellers, session });
+    if (reviewed) return reviewed;
+  }
   for (const seller of sellers) {
     // Share the withdrawal transaction fence so a payout cannot race an
     // unaccounted refund/dispute from another payment provider.

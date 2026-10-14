@@ -377,7 +377,7 @@ function paymentResponse(payment) {
     refundedMinor: payment.refundedMinor,
     paymentRail: normalizeSafepayPaymentRail(payment.paymentRail),
     raastAttemptStatus: normalizeSafepayPaymentRail(payment.paymentRail) === 'raast' ? normalizeRaastAttemptStatus(payment.raastAttemptStatus) : null,
-    status: cardSaved ? 'authorized' : paid ? 'paid' : ['cancelled', 'failed', 'refunded', 'refund_pending', 'manual_review'].includes(payment.status) ? payment.status : 'pending',
+    status: cardSaved ? 'authorized' : paid ? 'paid' : ['cancelled', 'failed', 'refunded', 'reversed', 'refund_pending', 'manual_review'].includes(payment.status) ? payment.status : 'pending',
     isPaid: paid, completed: paid || cardSaved, cardSaved,
     ...(cardSaved && payment.cardSetup?.savedCardId ? { savedPaymentMethodId: payment.cardSetup.savedCardId } : {}),
     webhookProcessed: paid || cardSaved, providerState: payment.providerState, failureCode: payment.lastErrorCode || '' };

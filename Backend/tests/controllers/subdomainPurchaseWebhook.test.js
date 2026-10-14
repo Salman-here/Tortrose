@@ -291,7 +291,7 @@ describe('subdomain purchase webhook', () => {
     );
     expect(notices.every(row => row.financial === false && row.money.length === 0)).toBe(true);
     expect(notices.find(row => row.channel === 'email').payload.text)
-      .toContain('current price and currency are shown before checkout');
+      .toContain('Review the current price before you pay');
     expect(notices.find(row => row.channel === 'email').payload.text).not.toContain('$15');
     expect(updated.subdomainPurchase.expiryNotice.notificationEnqueuedAt).toBeTruthy();
     await expect(Notification.countDocuments({ user: seller._id })).resolves.toBe(0);

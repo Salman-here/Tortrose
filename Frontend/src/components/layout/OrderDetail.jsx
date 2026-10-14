@@ -9,6 +9,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useCurrency } from "../../contexts/CurrencyContext";
 import { getAuthToken } from "../../utils/cookieHelper";
 import { getConfirmationSourceLabel } from "../../utils/whatsapp";
+import { getPaymentReviewPresentation } from '../../utils/safepayPaymentReviewPresentation';
 import {
     getExactOrderItemUnitAmount,
     getOrderCurrency,
@@ -182,6 +183,8 @@ const OrderDetail = () => {
         );
     const primaryMoney = sellerCurrencyMoney ? sellerMoney : orderMoney;
     const primaryTotal = sellerCurrencyMoney?.summary.totalAmount ?? getOrderTotal(order);
+    const paymentReview = getPaymentReviewPresentation(order);
+    const paymentPositive = paymentReview ? paymentReview.status === 'won' : order?.isPaid;
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="p-4 sm:p-6">
@@ -203,13 +206,14 @@ const OrderDetail = () => {
                         <span className="hidden xs:inline">{order?.orderStatus?.charAt(0).toUpperCase() + order?.orderStatus.slice(1)}</span>
                     </span>
                     <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-full font-medium"
-                        style={order?.isPaid ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
-                        {order?.isPaid ? 'Paid' : 'Unpaid'}
+                        style={paymentPositive ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
+                        {paymentReview?.label || (order?.isPaid ? 'Paid' : 'Unpaid')}
                     </span>
                 </div>
             </div>
 
             {/* Buyer decision banner — shows how the order was confirmed or cancelled */}
+            {paymentReview && <div className="glass-inner rounded-2xl p-4 mx-4 sm:mx-6 my-4 text-sm space-y-2"><p>{paymentReview.message}</p>{paymentReview.lostMinor > 0 && <p>Recorded payment reversal: {orderMoney(paymentReview.lostMinor / 100)}. See Payments for your current balance.</p>}</div>}
             {(order?.confirmation?.confirmedAt || order?.confirmation?.declinedAt || order?.confirmation?.cancelledAt) && (() => {
                 const cancelled = order?.orderStatus === 'cancelled';
                 const confirmed = !!order.confirmation.confirmedAt && !cancelled;

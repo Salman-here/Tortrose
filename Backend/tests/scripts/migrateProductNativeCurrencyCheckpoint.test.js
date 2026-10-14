@@ -133,7 +133,13 @@ describe('bounded product-currency checkpoint runner', () => {
       productsCommitted: 205,
       cursor: { phase: 'done' },
     });
-    expect(bulkSizes).toEqual([100, 100, 5]);
+    // withTransaction may replay a callback after a transient Mongo error.
+    // The durable checkpoint above, not attempted bulkWrite calls, proves
+    // exactly three committed batches and 205 migrated products.
+    expect(bulkSizes[0]).toBe(100);
+    expect(bulkSizes[bulkSizes.length - 1]).toBe(5);
+    expect(bulkSizes.filter(size => size === 100).length).toBeGreaterThanOrEqual(2);
+    expect(bulkSizes.every(size => size === 100 || size === 5)).toBe(true);
     expect(await Product.countDocuments({
       priceVersion: 2,
       currency: 'PKR',

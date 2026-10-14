@@ -46,7 +46,7 @@ const schema = new mongoose.Schema({
   tracker: { type: String, default: null, match: /^track_[a-zA-Z0-9-]+$/ },
   providerSubscriptionId: { type: String, default: null, match: /^sub_[a-zA-Z0-9-]+$/ },
   providerPlanId: { type: String, default: null, match: /^plan_[a-zA-Z0-9-]+$/ },
-  status: { type: String, enum: ['new', 'creating', 'ready', 'authorized', 'paid', 'cancel_requested', 'cancelled', 'failed', 'refund_pending', 'refunded', 'manual_review'], default: 'new', index: true },
+  status: { type: String, enum: ['new', 'creating', 'ready', 'authorized', 'paid', 'cancel_requested', 'cancelled', 'failed', 'refund_pending', 'refunded', 'reversed', 'manual_review'], default: 'new', index: true },
   // Sensitive URL contains a short-lived provider auth token; never include
   // it in public order/profile serializers or notification payloads.
   checkoutUrl: { type: String, default: '', select: false },

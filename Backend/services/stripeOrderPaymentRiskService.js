@@ -462,7 +462,10 @@ const applySellerStripeRiskLedger = async ({
   safepayEnvironment = null,
 }) => {
   const isSafepay = provider === 'safepay';
-  if (!['stripe', 'safepay'].includes(provider) || (isSafepay && (eventType !== 'charge.refunded'
+  const safepayDisputeClosure = eventType === 'charge.dispute.closed'
+    && ['won', 'lost'].includes(disputeStatus) && disputeTransitionOverride?.terminal === true
+    && disputeTransitionOverride.resolution === disputeStatus;
+  if (!['stripe', 'safepay'].includes(provider) || (isSafepay && ((eventType !== 'charge.refunded' && !safepayDisputeClosure)
     || !safepayPaymentId || !/^track_[a-zA-Z0-9-]+$/.test(safepayTrackerId || '')
     || !['sandbox', 'production'].includes(safepayEnvironment)))) {
     throw riskError('Invalid provider binding for seller reversal accounting.', 'PAYMENT_RISK_PROVIDER_INVALID', 409);
@@ -478,6 +481,7 @@ const applySellerStripeRiskLedger = async ({
     ...(isSafepay ? { safepayPaymentId, safepayTrackerId, safepayEnvironment } : { stripePaymentIntentId: paymentIntentId }),
     'metadata.sourceType': sourceType,
     'metadata.sourceReferenceId': String(sourceReferenceId),
+    ...(isSafepay && sourceType === 'wallet_top_up' && orderId ? { order: orderId } : {}),
   };
   let activeRows = await SellerBalanceTransaction.find({
     ...scope,
@@ -596,7 +600,7 @@ const applySellerStripeRiskLedger = async ({
       Math.max(persistedRefundExposure, refundExposureMinor),
     );
   const disputeExposures = activeDisputeExposures(activeRows);
-  const durableDisputeExposures = directTrackTargets
+  const durableDisputeExposures = directTrackTargets || isSafepay
     ? new Map()
     : await getDurableDisputeExposures({
       session,
@@ -605,6 +609,11 @@ const applySellerStripeRiskLedger = async ({
       paymentIntentId,
       chargeId,
     });
+  if (isSafepay && financialDisputeEvent && disputeId) {
+    // Safepay's audited review, rather than StripePaymentRiskState, supplies
+    // the exact terminal principal for this provider-specific track.
+    durableDisputeExposures.set(disputeId, disputeExposureMinor);
+  }
   for (const [key, amount] of durableDisputeExposures) {
     disputeExposures.set(key, Math.max(disputeExposures.get(key) || 0, amount));
   }
@@ -854,7 +863,7 @@ const applySellerStripeRiskLedger = async ({
             ? `${isSafepay ? 'Safepay' : 'Stripe'} reversal allocation adjustment for ${orderLabel}`
             : track.riskTrack === 'refund'
               ? `${isSafepay ? 'Safepay' : 'Stripe'} refund reversal for ${orderLabel}`
-              : `Stripe dispute reserve for ${orderLabel}`,
+              : `${isSafepay ? 'Safepay' : 'Stripe'} ${completedDispute ? 'bank reversal' : 'dispute reserve'} for ${orderLabel}`,
           completedAt: track.riskTrack === 'refund' || completedDispute ? new Date() : null,
           metadata: {
             sourceType,

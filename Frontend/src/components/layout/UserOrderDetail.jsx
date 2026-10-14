@@ -23,6 +23,7 @@ import BuyerCancellationDialog from '../order/BuyerCancellationDialog';
 import { getConfirmationSourceLabel } from "../../utils/whatsapp";
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from "../../utils/orderConfirmationPresentation";
 import { getSafetyRefundPresentation } from '../../utils/safepaySafetyRefundPresentation';
+import { getPaymentReviewPresentation } from '../../utils/safepayPaymentReviewPresentation';
 import { getOrderPaymentLabel } from '../../utils/paymentPresentation';
 import { hasPendingCancellationRefund, startCancellationRefundRefresh } from '../../utils/orderCancellationPresentation';
 
@@ -135,6 +136,7 @@ const OrderDetail = () => {
             ? 'Due on delivery'
             : 'Pending';
     const safetyRefund = getSafetyRefundPresentation(order);
+    const paymentReview = getPaymentReviewPresentation(order);
 
     return (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="max-w-full p-4 sm:p-6">
@@ -155,8 +157,8 @@ const OrderDetail = () => {
                             {getStatusIcon(order?.orderStatus)}
                             <span className="hidden sm:inline">{order?.orderStatus?.charAt(0).toUpperCase() + order?.orderStatus.slice(1)}</span>
                         </span>
-                        <span className="px-2.5 py-1 text-xs rounded-full font-medium" style={order?.isPaid || safetyRefund?.status === 'refunded' ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
-                            {safetyRefund?.label || (order?.isPaid ? "Paid" : "Unpaid")}
+                        <span className="px-2.5 py-1 text-xs rounded-full font-medium" style={(paymentReview ? paymentReview.status === 'won' : order?.isPaid || safetyRefund?.status === 'refunded') ? { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 40%)' } : { background: 'rgba(239, 68, 68, 0.12)', color: 'hsl(0, 72%, 55%)' }}>
+                            {paymentReview?.label || safetyRefund?.label || (order?.isPaid ? "Paid" : "Unpaid")}
                         </span>
                     </div>
                 </div>
@@ -360,13 +362,17 @@ const OrderDetail = () => {
                             <div className="flex justify-between"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Method:</span><span className="font-medium" style={{ color: 'hsl(var(--foreground))' }}>{getOrderPaymentLabel(order)}</span></div>
                             <div className="flex justify-between items-center">
                                 <span style={{ color: 'hsl(var(--muted-foreground))' }}>Status:</span>
-                                {safetyRefund
+                                {paymentReview ? <span className="font-semibold">{paymentReview.label}</span> : safetyRefund
                                     ? <span className="font-semibold" style={{ color: 'hsl(var(--primary))' }}>{safetyRefund.label}</span>
                                     : order.isPaid
                                     ? <span className="flex items-center gap-1 font-semibold" style={{ color: 'hsl(150, 60%, 40%)' }}><CheckCircle className="w-4 h-4" /> Paid</span>
                                     : <span className="flex items-center gap-1 font-semibold" style={{ color: order.orderStatus === 'cancelled' ? 'hsl(0, 72%, 55%)' : 'hsl(30, 90%, 50%)' }}><Clock className="w-4 h-4" /> {unpaidStatusLabel}</span>
                                 }
                             </div>
+                            {paymentReview && <div className="glass-inner rounded-xl p-3 text-sm space-y-2">
+                                <p>{paymentReview.message}</p>
+                                {paymentReview.lostMinor > 0 && <p>Recorded bank reversal: {orderMoney(paymentReview.lostMinor / 100)}</p>}
+                            </div>}
                             {safetyRefund && (
                                 <div className="glass-inner rounded-xl p-3 space-y-2">
                                     <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{safetyRefund.message}</p>

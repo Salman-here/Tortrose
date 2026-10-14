@@ -61,6 +61,7 @@ function buildSafetyRefundView(order, payment, events = []) {
 }
 
 async function attachSafetyRefundViews(orders) {
+  orders = await require('./safepayPaymentReviewPresentationService').attachPaymentReviewViews(orders);
   const candidates = orders.filter(isSafetyRefundCheckout);
   if (!candidates.length) return orders;
   const paymentIds = candidates.map(order => id(order.safepayPaymentId)).filter(value => /^[a-f0-9]{24}$/i.test(value));

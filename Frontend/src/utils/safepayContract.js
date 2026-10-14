@@ -4,7 +4,7 @@ const PURPOSES = new Set(['order', 'wallet_top_up', 'card_setup', 'subdomain', '
 const fail = () => Object.assign(new Error('The secure payment response could not be verified. Please retry the same attempt.'), { code: 'SAFEPAY_CHECKOUT_INVALID', retainMutationAttempt: true });
 const hasConfirmedRail = payment => payment?.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true
   || payment?.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true
-  || ['refund_pending', 'refunded', 'manual_review'].includes(payment?.status) && (
+  || ['refund_pending', 'refunded', 'manual_review', 'reversed'].includes(payment?.status) && (
     Number.isSafeInteger(payment.capturedMinor) && payment.capturedMinor > 0 && payment.capturedMinor <= payment.amountMinor
     || ['TRACKER_ENDED', 'TRACKER_REFUNDED', 'TRACKER_PARTIAL_REFUND', 'TRACKER_DISPUTED'].includes(payment.providerState));
 export const validateSafepayPayment = (payment, expected) => {
@@ -19,7 +19,7 @@ export const validateSafepayPayment = (payment, expected) => {
     || hasConfirmedRail(expected) && expected.paymentRail && expected.paymentRail !== 'unknown' && paymentRail !== expected.paymentRail) throw fail();
   const status = payment.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true ? 'paid'
     : payment.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true ? 'authorized'
-    : ['cancelled', 'failed', 'refunded', 'refund_pending', 'manual_review'].includes(payment.status) ? payment.status : 'pending';
+    : ['cancelled', 'failed', 'refunded', 'refund_pending', 'manual_review', 'reversed'].includes(payment.status) ? payment.status : 'pending';
   return { ...payment, paymentRail, status, isPaid: status === 'paid' };
 };
 export const validateSafepayCheckout = response => {

@@ -21,6 +21,8 @@ const ALLOW_BLOCKED_EVENT_AUDIENCES = new Map([
   ['order.paid', new Set(['buyer', 'seller'])],
   ['order.stock_refund_completed', new Set(['buyer'])],
   ['order.payment_refund_completed', new Set(['buyer', 'seller'])],
+  ['payment.bank_review_opened', new Set(['buyer', 'seller'])],
+  ['payment.bank_review_resolved', new Set(['buyer', 'seller'])],
   ['order.seller_portion_cancelled', new Set(['seller'])],
   ['order.cancellation_refund_completed', new Set(['seller'])],
   ['order.payment_dispute_opened', new Set(['seller'])],

@@ -109,7 +109,9 @@ async function refreshOwnedSafepayOrderRail(order) {
       let evidence;
       try { evidence = require('./safepayRefundService').refundEvidence(tracker, payment); } catch (_) { throw needsReconciliation(); }
       if (!evidence || evidence.amountMinor !== payment.refundedMinor) throw needsReconciliation();
-    } else if (tracker.state !== 'TRACKER_ENDED' || payment.refundedMinor !== 0) throw needsReconciliation();
+    } else if ((tracker.state !== 'TRACKER_ENDED'
+      && !await require('./safepayPaymentReviewService').isResolvedBankWin(payment, tracker))
+      || payment.refundedMinor !== 0) throw needsReconciliation();
     if (!Number.isSafeInteger(payment.refundedMinor) || payment.refundedMinor < 0
         || !Number.isSafeInteger(payment.walletRefundMinor) || payment.walletRefundMinor < 0
         || payment.refundedMinor + payment.walletRefundMinor > amountMinor) throw needsReconciliation();

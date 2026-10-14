@@ -522,7 +522,9 @@ describe('transactional order fulfillment transitions', () => {
         || record.payload.html
         || record.payload.message;
       expect(rendered).toContain('Rs1,880.00 PKR');
-      expect(rendered).toMatch(/does not by itself record or promise a refund/i);
+      // Match the approved buyer-facing copy while preserving the monetary
+      // assertion below: cancellation alone must never claim a paid refund.
+      expect(rendered).toMatch(/View your order for payment and refund details/i);
       expect(rendered).not.toMatch(/refunded|refund (was|has been)|credited/i);
     }
   });

@@ -41,10 +41,11 @@ async function accountedCardRefund(payment, session) {
   if (accounted !== payment.refundedMinor) throw reversed();
 }
 
-async function healthyPayment(payment, session) {
+async function healthyPayment(payment, session, walletOrderId = null) {
   if (!payment) throw invalid();
+  const reviewedFunding = walletOrderId && await require('./safepayPaymentReviewFundingService').reviewedFundingIsHealthy(payment, walletOrderId, session);
   if (payment.riskPending || ['manual_review', 'refund_pending', 'refunded', 'closed', 'failed'].includes(payment.status)) throw reversed();
-  if (payment.status !== 'paid' || !payment.appliedAt || !payment.paidAt
+  if ((!reviewedFunding && payment.status !== 'paid') || !payment.appliedAt || !payment.paidAt
       || payment.providerMode !== 'payment'
       || !Number.isSafeInteger(payment.amountMinor) || payment.amountMinor <= 0
       || payment.capturedMinor !== payment.amountMinor || !/^track_[A-Za-z0-9-]+$/.test(payment.tracker || '')
@@ -133,7 +134,7 @@ async function walletAuthority(order, expected, session) {
     if (safepaySource) {
       if (!mongoose.isValidObjectId(source.safepayPaymentId)) throw invalid();
       const payment = await Payment.findById(source.safepayPaymentId).session(session).lean();
-      await healthyPayment(payment, session);
+      await healthyPayment(payment, session, order._id);
       await bindCardFundedCredit(source, payment, session);
     }
   }

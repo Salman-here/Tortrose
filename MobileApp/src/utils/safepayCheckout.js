@@ -6,7 +6,7 @@ const unwrap = response => response?.data || response || {};
 const failure = message => Object.assign(new Error(message), { code: 'SAFEPAY_CHECKOUT_INVALID' });
 const hasConfirmedRail = payment => payment?.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true
   || payment?.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true
-  || ['refund_pending', 'refunded', 'manual_review'].includes(payment?.status) && (
+  || ['refund_pending', 'refunded', 'manual_review', 'reversed'].includes(payment?.status) && (
     Number.isSafeInteger(payment.capturedMinor) && payment.capturedMinor > 0 && payment.capturedMinor <= payment.amountMinor
     || ['TRACKER_ENDED', 'TRACKER_REFUNDED', 'TRACKER_PARTIAL_REFUND', 'TRACKER_DISPUTED'].includes(payment.providerState));
 const requirePaymentRail = (payment, expected) => {
@@ -56,7 +56,7 @@ export function normalizeSafepayStatus(response, expectedPaymentId, expected) {
   }
   const status = payment.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true
     ? 'authorized' : payment.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true
-    ? 'paid' : ['cancelled', 'failed', 'refunded', 'refund_pending', 'manual_review'].includes(payment.status) ? payment.status : 'pending';
+    ? 'paid' : ['cancelled', 'failed', 'refunded', 'refund_pending', 'manual_review', 'reversed'].includes(payment.status) ? payment.status : 'pending';
   return { ...payment, status, isPaid: status === 'paid' };
 }
 

@@ -1113,7 +1113,8 @@ const getSellerScopedOrders = async (query, sellerId, sort = null, { lean = fals
     const finder = Order.find(dbQuery);
     if (sort) finder.sort(sort);
     const orders = lean ? await finder.lean() : await finder;
-    return orders.map(order => buildSellerOrderView(order, sellerProductIds, sellerId));
+    return require('../services/safepayPaymentReviewPresentationService').attachPaymentReviewViews(
+        orders.map(order => buildSellerOrderView(order, sellerProductIds, sellerId)), { sellerId });
 };
 
 const READ_ONLY_CHECKOUT_QUOTE = Symbol('read-only-checkout-quote');
@@ -3292,7 +3293,8 @@ exports.getOrderDetail = async (req, res) => {
                 return res.status(403).json({ msg: 'You can only view orders containing your products' })
             }
 
-            const filteredOrder = buildSellerOrderView(order, sellerProductIds, userId)
+            const [filteredOrder] = await require('../services/safepayPaymentReviewPresentationService').attachPaymentReviewViews(
+                [buildSellerOrderView(order, sellerProductIds, userId)], { sellerId: userId })
             const presentedOrder = await withAuthoritativeOrderConfirmationDelivery(filteredOrder)
             return res.status(200).json({ msg: 'Order fetched successfully.', order: presentedOrder })
         }
@@ -3339,7 +3341,7 @@ exports.trackGuestOrder = async (req, res) => {
         const storeLogosBySeller = await loadStoreLogosBySeller(order);
         res.status(200).json({
             msg: 'Order found',
-            order: buildBuyerOrderView(order, { storeLogosBySeller }),
+            order: (await attachSafetyRefundViews([buildBuyerOrderView(order, { storeLogosBySeller })]))[0],
         });
     } catch (error) {
         console.error('Error tracking guest order:', error);

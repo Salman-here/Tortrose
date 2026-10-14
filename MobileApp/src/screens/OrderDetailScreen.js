@@ -20,6 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../config/api';
 import { getSafetyRefundPresentation } from '../utils/safepaySafetyRefundPresentation';
+import { getPaymentReviewPresentation } from '../utils/safepayPaymentReviewPresentation';
 import { getOrderPaymentLabel } from '../utils/paymentPresentation';
 import { cancellationRefundPresentation, cancellationSuccessCopy, hasPendingCancellationRefund, startCancellationRefundRefresh } from '../utils/orderCancellationPresentation';
 import { useIsFocused } from '@react-navigation/native';
@@ -289,7 +290,8 @@ export default function OrderDetailScreen({ route, navigation }) {
   );
   const cancellable = !refreshing && canCancelOrder(order);
   const safetyRefund = getSafetyRefundPresentation(order);
-  const paymentPositive = order.isPaid || safetyRefund?.status === 'refunded';
+  const paymentReview = getPaymentReviewPresentation(order);
+  const paymentPositive = paymentReview ? paymentReview.status === 'won' : order.isPaid || safetyRefund?.status === 'refunded';
 
   return (
     <GlassBackground>
@@ -463,12 +465,12 @@ export default function OrderDetailScreen({ route, navigation }) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.paymentTitle}>{getOrderPaymentLabel(order)}</Text>
                 <Text style={styles.paymentSub}>
-                  {safetyRefund ? safetyRefund.message : order.isPaid ? `Paid${order.paidAt ? ` on ${formatDate(order.paidAt)}` : ''}` : order.paymentMethod === 'cash_on_delivery' ? 'Payment is collected at delivery' : 'Payment has not completed'}
+                  {paymentReview ? paymentReview.message : safetyRefund ? safetyRefund.message : order.isPaid ? `Paid${order.paidAt ? ` on ${formatDate(order.paidAt)}` : ''}` : order.paymentMethod === 'cash_on_delivery' ? 'Payment is collected at delivery' : 'Payment has not completed'}
                 </Text>
               </View>
               <View style={[styles.paidBadge, { backgroundColor: paymentPositive ? 'rgba(16,185,129,0.13)' : 'rgba(245,158,11,0.13)' }]}>
                 <Ionicons name={paymentPositive ? 'shield-checkmark' : 'time-outline'} size={13} color={paymentPositive ? palette.colors.success : palette.colors.warning} />
-                <Text style={[styles.paidText, { color: paymentPositive ? palette.colors.success : palette.colors.warning }]}>{safetyRefund?.label || (order.isPaid ? 'PAID' : 'UNPAID')}</Text>
+                <Text style={[styles.paidText, { color: paymentPositive ? palette.colors.success : palette.colors.warning }]}>{paymentReview?.label || safetyRefund?.label || (order.isPaid ? 'PAID' : 'UNPAID')}</Text>
               </View>
             </View>
             {safetyRefund?.available && <GlassPanel variant="inner" style={{ padding: spacing.md, marginTop: spacing.sm }}>

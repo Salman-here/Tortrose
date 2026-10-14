@@ -14,7 +14,7 @@ const sameTime = (a, b) => Boolean(a && b && Number.isFinite(new Date(a).getTime
 const minor = value => Number.isSafeInteger(value) && value >= 0;
 const rejected = () => ({ outcome: 'skipped', code: 'NOTIFICATION_NO_LONGER_ACTIONABLE',
   reason: 'The Safepay notification does not match its authoritative owner, transition and frozen money.' });
-const MODEL_TYPES = new Set(['SafepayBillingOperation', 'SafepaySubdomainGrant', 'SafepayRefundEvent', 'SafepayPayment']);
+const MODEL_TYPES = new Set(['SafepayBillingOperation', 'SafepaySubdomainGrant', 'SafepayRefundEvent', 'SafepayPayment', 'SafepayPaymentReview']);
 const isSafepayNotification = record => MODEL_TYPES.has(record.aggregateType)
   || (record.aggregateType === 'SellerSubscription' && String(record.eventKey || '').startsWith('safepay-sub:'));
 const sellerRecipient = (record, seller) => record.recipient?.kind === 'user'
@@ -138,6 +138,39 @@ async function refundReview(record) {
 
 async function verifySafepayNotificationAuthority(record) {
   switch (record.aggregateType) {
+    case 'SafepayPaymentReview': {
+      const review = await require('../models/SafepayPaymentReview').findById(record.aggregateId).lean();
+      const payment = review && await Payment.findById(review.payment).lean();
+      const order = payment?.purpose === 'order' ? await Order.findById(payment.order).lean() : null;
+      const request = payment?.purpose === 'return_settlement' ? await require('../models/ReturnRequest').findById(payment.returnRequest).lean() : null;
+      const status = record.payload?.data?.outcome;
+      if (!review || !payment || status !== review.status || !['pending', 'won', 'lost'].includes(status)
+          || payment.environment !== review.environment || payment.tracker !== review.tracker
+          || payment.currency !== review.currency || payment.purpose !== review.purpose || payment.amountMinor !== review.originalAmountMinor
+          || (payment.purpose === 'order' && (!order || id(order.safepayPaymentId) !== id(payment) || id(order.user) !== id(payment.user)))
+          || (payment.purpose === 'return_settlement' && (!request || id(request.seller) !== id(payment.user) || id(request.settlement?.safepayPaymentId) !== id(payment)))
+          || id(record.payload?.data?.reviewId) !== id(review) || record.payload?.data?.purpose !== payment.purpose
+          || record.payload?.data?.orderId !== (order ? id(order) : '')
+          || !sameTime(record.occurredAt, status === 'pending' ? review.createdAt : review.resolvedAt)
+          || record.eventType !== (status === 'pending' ? 'payment.bank_review_opened' : 'payment.bank_review_resolved')) return rejected();
+      const recipient = record.recipient || {}, seller = recipient.audienceRole === 'seller';
+      const buyerId = order?.user || request?.buyer || (payment.purpose === 'wallet_top_up' ? payment.user : null);
+      if (seller) {
+        if (!review.sellers.some(value => id(value) === id(recipient.user)) || !sellerRecipient(record, recipient.user)) return rejected();
+      } else if (recipient.audienceRole !== 'buyer' || (buyerId ? recipient.kind !== 'user' || id(recipient.user) !== id(buyerId)
+          : recipient.kind !== 'guest' || recipient.guestKey !== `order:${order._id}`)
+          || recipient.destinationPolicy !== (order ? 'event_snapshot' : 'current_user')) return rejected();
+      if (!seller && order && ((recipient.email || '') !== String(order.shippingInfo?.email || '').trim().toLowerCase()
+          || (recipient.phone || '') !== tryOrderBuyerPhoneE164(order).replace(/\D/g, ''))) return rejected();
+      const index = seller ? review.sellerTotals.findIndex(row => id(row.seller) === id(recipient.user)) : -1;
+      const amount = seller ? review.sellerTotals[index]?.amountMinor || 0 : payment.purpose === 'return_settlement' ? 0 : review.principalMinor;
+      if (record.financial !== (status === 'lost' && amount > 0)) return rejected();
+      if (record.financial && !moneyMatches(record, 'principal', amount, review.currency, 'SafepayPaymentReview', review,
+        seller ? `sellerTotals[${index}].amountMinor` : 'principalMinor')) return rejected();
+      const link = seller ? '/seller-dashboard/payments' : order ? `/user-dashboard/order/detail/${order._id}` : '/user-dashboard/wallet';
+      if (record.payload?.linkTo !== link || id(record.payload?.relatedOrder) !== (order || request ? id(order?._id || request.order) : '')) return rejected();
+      return record.eventKey === `safepay-bank-review:${review._id}:${status}:${seller ? id(recipient.user) : 'buyer'}:v1` ? null : rejected();
+    }
     case 'SafepayBillingOperation': return billingOperation(record);
     case 'SafepaySubdomainGrant': return subdomainReceipt(record);
     case 'SafepayRefundEvent': return refundReceipt(record);

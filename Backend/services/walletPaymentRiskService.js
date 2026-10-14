@@ -1453,6 +1453,10 @@ const flagWalletTopUpPaymentRisk = async ({ charge, eventId, eventType }) => (
 );
 
 module.exports = {
+  // Provider-neutral, transaction-bound provenance helpers. They neither call
+  // Stripe nor infer a missing seller/order/FX snapshot.
+  freezeFundingSnapshot,
+  consumeBuyerTopUpFunding,
   paymentIntentIdOf,
   resolveWalletPaymentRiskSource,
   flagWalletCreditPaymentRisk,
