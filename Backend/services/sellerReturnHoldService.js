@@ -5,7 +5,7 @@ const { toMinorUnits, fromMinorUnits, convertMoneyByRates } = require('./moneyMa
 const { returnEligibilityDeadline, isReturnWindowOpen } = require('./returnPolicyService');
 const id = value => String(value?._id || value || '');
 const ACTIVE_RETURN_STATUSES = new Set(['requested', 'approved', 'pickup_scheduled', 'picked_up',
-  'in_transit_to_seller', 'received_by_seller', 'under_review', 'accepted_pending_payment']);
+  'in_transit_to_seller', 'received_by_seller', 'under_review', 'accepted_pending_payment', 'replacement_approved', 'replacement_shipped']);
 
 // Only checkout snapshots are consulted. Editing a store/product policy cannot
 // shorten a purchased item's return window. All allocation arithmetic is cents.
@@ -18,9 +18,9 @@ function sellerReturnHold(order, sellerId, { returns = [], at = new Date(), rema
   const fulfillment = (order.sellerFulfillment || []).find(row => id(row.seller) === id(sellerId));
   const deliveredAt = fulfillment?.deliveredAt || order.deliveredAt;
   const policy = (order.sellerPolicies || []).find(row => id(row.seller) === id(sellerId))?.returnPolicy;
-  const relevant = returns.filter(row => id(row.order) === id(order) && id(row.seller) === id(sellerId));
+  const relevant = returns.filter(row => row.kind !== 'warranty' && id(row.order) === id(order) && id(row.seller) === id(sellerId));
   const active = relevant.filter(row => ACTIVE_RETURN_STATUSES.has(row.status));
-  const completed = relevant.filter(row => row.status === 'returned');
+  const completed = relevant.filter(row => ['returned', 'replacement_delivered'].includes(row.status));
   let heldMinor = 0;
   const details = items.map(item => {
     const key = money.itemKeys[(order.orderItems || []).indexOf(item)];

@@ -214,6 +214,7 @@ describe('seller return-status notification transaction', () => {
 
   test('replacement approval and its buyer channels commit together', async () => {
     const { seller, request } = await createFixture();
+    request.policySnapshot.refundType = 'replacement_only';
     request.status = 'under_review';
     request.statusHistory.push({
       status: 'under_review',

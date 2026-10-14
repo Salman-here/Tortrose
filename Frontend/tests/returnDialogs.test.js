@@ -29,7 +29,7 @@ function baseContext() {
   const calls = { closed: [], portals: 0, writes: [] };
   const context = { React, motion: { div: motionDiv }, AnimatePresence: ({ children }) => React.createElement(React.Fragment, null, children),
     getReturnItemVariantLabels, inspectReturnPresentationSnapshot, RETURN_STATUS_LABELS, RETURN_STATUS_TRANSITIONS, returnResolutionLabel, returnStatusTone,
-    API: '/api/returns', document: { body: {} }, useAuth: () => ({ currentUser: { _id: 'seller-1' } }),
+    API: '/api/returns', document: { body: {} }, useAuth: () => ({ currentUser: { _id: 'seller-1' } }), useSearchParams: () => [new URLSearchParams(), () => {}],
     useCallback: fn => fn, useEffect() {}, useRef: value => ({ current: value }),
     useReturnDialogAccessibility: () => ({ current: null }),
     createPortal: element => { calls.portals++; return element; },
@@ -42,13 +42,13 @@ function baseContext() {
 
 function seller(dialog = null, busy = false, variantItem = item) {
   const f = baseContext();
-  const states = [[{ ...request, items: [variantItem] }], false, '', 'all', '', dialog, '', busy];
+  const states = [[{ ...request, items: [variantItem] }], false, '', 'all', '', dialog, '', '', { shippingMethod: 'courier', carrier: '', trackingNumber: '' }, busy];
   let stateIndex = 0;
   f.context.useState = () => {
     const index = stateIndex++;
     return [states[index], value => { if (index === 5) f.calls.closed.push(value); }];
   };
-  const code = sellerSource.slice(sellerSource.indexOf('const actionLabels')).replace('export default function', 'function');
+  const code = sellerSource.slice(sellerSource.indexOf('const actionLabels')).replace('export default function', 'function').replaceAll('import.meta.env.VITE_API_URL', "''");
   const Component = vm.runInNewContext(transpile(code) + '\nReturnOrdersPanel;', f.context);
   const tree = Component({ formatPrice: amount => `PKR ${amount.toFixed(2)}` });
   return { ...f, tree, html: renderToStaticMarkup(tree) };

@@ -298,7 +298,7 @@ describe('ProductFormScreen Property Tests', () => {
         useStorePolicy: false,
         returnsEnabled: true,
         returnDuration: 14,
-        refundType: 'store_credit',
+        refundType: 'full_refund',
         warrantyEnabled: true,
         warrantyDuration: 12,
         warrantyDescription: 'Manufacturer warranty',

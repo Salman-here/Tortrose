@@ -74,7 +74,7 @@ export const buildProductReturnPolicy = (policy = DEFAULT_PRODUCT_RETURN_POLICY)
     useStorePolicy: false,
     returnsEnabled: policy.returnsEnabled === true,
     returnDuration: policy.returnsEnabled ? Math.trunc(Number(policy.returnDuration) || 0) : 0,
-    refundType: policy.returnsEnabled ? policy.refundType : 'none',
+    refundType: policy.returnsEnabled ? (policy.refundType === 'store_credit' ? 'full_refund' : policy.refundType) : 'none',
     warrantyEnabled: policy.warrantyEnabled === true,
     warrantyDuration: policy.warrantyEnabled ? Math.trunc(Number(policy.warrantyDuration) || 0) : 0,
     warrantyDescription: String(policy.warrantyDescription || '').trim().slice(0, 200),

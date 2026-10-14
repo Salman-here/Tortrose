@@ -14,8 +14,8 @@ const one = (name, channel = 'email') => {
 beforeAll(async () => { entries = await buildRuntimeNotificationGalleryEntries(); });
 
 test('inventory contains source-exact active descriptors and no fabricated historical versions', () => {
-  expect(entries.filter(item => item.channel === 'email' && item.activity === 'active')).toHaveLength(123);
-  expect(entries.filter(item => item.channel === 'whatsapp' && item.activity === 'active')).toHaveLength(115);
+  expect(entries.filter(item => item.channel === 'email' && item.activity === 'active')).toHaveLength(145);
+  expect(entries.filter(item => item.channel === 'whatsapp' && item.activity === 'active')).toHaveLength(137);
   expect(new Set(entries.map(item => `${item.channel}:${item.name}`)).size).toBe(entries.length);
   for (const entry of entries) {
     expect(['active', 'legacy', 'review-required', 'exception']).toContain(entry.activity);
@@ -115,7 +115,7 @@ test('retained billing helpers remain visible without claiming active Safepay el
   expect(one('Retained invoice payment failed').after.html).toContain('was unsuccessful');
   expect(one('Safepay subscription ending soon — standard')).toMatchObject({ activity: 'active' });
   expect(one('Retained downgrade scheduled — founder / bonus available').after.html).toContain('30% founder discount');
-  expect(runtimeGalleryCounts(entries)).toEqual({ active: { email: 123, whatsapp: 115 }, legacy: { email: 16, whatsapp: 16 },
+  expect(runtimeGalleryCounts(entries)).toEqual({ active: { email: 145, whatsapp: 137 }, legacy: { email: 16, whatsapp: 16 },
     exception: { email: 4, whatsapp: 4 }, reviewRequired: { email: 0, whatsapp: 0 }, sourceCallSites: 54 });
   expect(notificationCallSiteInventory()).toHaveLength(54);
 });

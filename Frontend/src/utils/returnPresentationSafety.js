@@ -14,7 +14,7 @@ import { readReturnItemVariants } from './returnItemVariants.js';
 const RETURN_STATUSES = new Set([
   'requested', 'approved', 'pickup_scheduled', 'picked_up',
   'in_transit_to_seller', 'received_by_seller', 'under_review',
-  'accepted_pending_payment', 'returned', 'replacement_approved',
+  'accepted_pending_payment', 'returned', 'replacement_approved', 'replacement_shipped', 'replacement_delivered',
   'rejected', 'cancelled_by_buyer',
 ]);
 const REFUND_TYPES = new Set(['full_refund', 'replacement_only', 'store_credit']);
@@ -181,8 +181,32 @@ export const inspectReturnPresentationSnapshot = (request) => {
   if (
     (policy?.refundType === 'replacement_only'
       && ['accepted_pending_payment', 'returned'].includes(value.status))
-    || (policy?.refundType !== 'replacement_only' && value.status === 'replacement_approved')
+    || (policy?.refundType !== 'replacement_only' && ['replacement_approved', 'replacement_shipped', 'replacement_delivered'].includes(value.status))
   ) errors.push('statusResolution');
+  if (value.kind === 'warranty') {
+    const warranty = value.warrantySnapshot;
+    if (value.evidenceHistory !== undefined && (!Array.isArray(value.evidenceHistory) || value.evidenceHistory.some((entry, index) =>
+      !plainObject(entry) || entry.version !== index || !canonicalDate(entry.submittedAt)
+      || !canonicalText(entry.reason, { min: 10, max: 1500 }) || !Array.isArray(entry.urls) || !entry.urls.length || entry.urls.length > 6
+      || entry.urls.some(url => typeof url !== 'string' || !/^https:\/\//u.test(url) || url.length > 2000)))) errors.push('warranty.evidenceHistory');
+    if (!plainObject(warranty) || warranty.version !== 1
+      || !positiveSafeInteger(warranty.months) || warranty.months > 120
+      || !canonicalDate(warranty.deliveredAt) || !canonicalDate(warranty.deadline)
+      || !canonicalDate(value.requestedAt) || value.requestedAt > warranty.deadline
+      || warranty.deadline <= warranty.deliveredAt || value.items?.length !== 1
+      || !Array.isArray(value.evidenceUrls) || value.evidenceUrls.length < 1 || value.evidenceUrls.length > 6
+      || value.evidenceUrls.some(url => typeof url !== 'string' || !/^https:\/\//u.test(url))
+      || !['refund', 'replacement', null].includes(value.resolution)
+      || !['requested', 'rejected', 'cancelled_by_buyer'].includes(value.status) && value.resolution === null
+      || value.resolution && policy?.refundType !== (value.resolution === 'refund' ? 'full_refund' : 'replacement_only')) errors.push('warranty');
+  }
+  if (['replacement_shipped', 'replacement_delivered'].includes(value.status)) {
+    const shipment = value.replacement;
+    if (!plainObject(shipment) || shipment.inventoryCommitted !== true || !canonicalDate(shipment.shippedAt)
+      || !['courier', 'hand_delivery'].includes(shipment.shippingMethod)
+      || shipment.shippingMethod === 'courier' && (!canonicalText(shipment.carrier, { min: 2, max: 100 }) || !canonicalText(shipment.trackingNumber, { min: 3, max: 160 }))
+      || value.status === 'replacement_delivered' && !canonicalDate(shipment.deliveredAt)) errors.push('replacement');
+  }
 
   const items = Array.isArray(value.items) ? value.items : [];
   if (!items.length) errors.push('items');
@@ -352,6 +376,7 @@ export const inspectBuyerReturnEligibilityResponse = (payload, orderContext) => 
       const image = canonicalText(item?.image, { max: 5000 });
       const purchasedQuantity = item?.purchasedQuantity;
       const alreadyRequestedQuantity = item?.alreadyRequestedQuantity;
+      const warrantyRequestedQuantity = item?.warrantyRequestedQuantity ?? 0;
       const remainingReturnableQuantity = item?.remainingReturnableQuantity;
       const unitPrice = item?.unitPrice;
       const lineSubtotal = item?.lineSubtotal;
@@ -379,6 +404,7 @@ export const inspectBuyerReturnEligibilityResponse = (payload, orderContext) => 
         !nonNegativeSafeInteger(alreadyRequestedQuantity)
         || alreadyRequestedQuantity > purchasedQuantity
       ) errors.push(`${itemPrefix}.alreadyRequestedQuantity`);
+      if (!nonNegativeSafeInteger(warrantyRequestedQuantity) || warrantyRequestedQuantity > alreadyRequestedQuantity) errors.push(`${itemPrefix}.warrantyRequestedQuantity`);
       if (
         !nonNegativeSafeInteger(remainingReturnableQuantity)
         || remainingReturnableQuantity !== purchasedQuantity - alreadyRequestedQuantity
@@ -422,6 +448,7 @@ export const inspectBuyerReturnEligibilityResponse = (payload, orderContext) => 
         ...readReturnItemVariants(item),
         purchasedQuantity,
         alreadyRequestedQuantity,
+        warrantyRequestedQuantity,
         remainingReturnableQuantity,
         unitPrice,
         lineSubtotal,
@@ -604,6 +631,11 @@ export const inspectBuyerReturnRequest = (request, orderContext) => {
         refundType: value.policySnapshot.refundType,
       },
       refund: financial.refund,
+      ...(value.replacement?.shippedAt ? { replacement: {
+        shippingMethod: value.replacement.shippingMethod, carrier: value.replacement.carrier,
+        trackingNumber: value.replacement.trackingNumber, shippedAt: value.replacement.shippedAt,
+        deliveredAt: value.replacement.deliveredAt, inventoryCommitted: value.replacement.inventoryCommitted,
+      } } : {}),
     } : null,
   };
 };
@@ -737,7 +769,7 @@ export const inspectBuyerReturnsResponse = (payload, orderContext, eligibilityIn
         const consumedQuantity = consumed.has(item.orderItemId)
           ? consumed.get(item.orderItemId).quantity
           : 0;
-        if (item.alreadyRequestedQuantity !== consumedQuantity) {
+        if (item.alreadyRequestedQuantity !== consumedQuantity + item.warrantyRequestedQuantity) {
           errors.push(`eligibility.groups.${groupIndex}.items.${itemIndex}.consumedQuantity`);
         }
       });

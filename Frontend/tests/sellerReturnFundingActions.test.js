@@ -16,7 +16,7 @@ function fixture(status = 'pending', errorData) {
   let retainedKey = 'first-attempt';
   let next = 1;
   const context = {
-    inspectReturnPresentationSnapshot: () => ({ valid: true }),
+    inspectReturnPresentationSnapshot: () => ({ valid: true, currency: 'PKR', refund: { totalAmount: 230 } }),
     currentUser: { _id: 'seller-1' }, API: '/api/returns', localStorage: {},
     setSubmitting() {}, setDialog() {}, authHeaders: () => ({}),
     createScopedMutationStorageKey: (_, owner) => owner,

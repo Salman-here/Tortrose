@@ -18,6 +18,7 @@ jest.mock('../../src/components/common/EmptyState', () => ({ ErrorState: ({ mess
   return React.createElement(require('react-native').Text, null, message);
 } }));
 jest.mock('../../src/components/BuyerReturnsSection', () => 'BuyerReturnsSection');
+jest.mock('../../src/components/BuyerWarrantySection', () => 'BuyerWarrantySection');
 jest.mock('../../src/utils/invoiceUtils', () => ({ shareInvoice: jest.fn() }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Icon' }));
 jest.mock('expo-image', () => ({ Image: 'Image' }));

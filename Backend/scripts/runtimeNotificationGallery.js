@@ -254,7 +254,7 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   const financialNames = ['ORDER_LIFECYCLE_STATUS_COPY', 'ORDER_CANCELLATION_BUYER_DETAIL', 'orderLifecycleBuyerTemplates',
     'SELLER_FULFILLMENT_STATUS_COPY', 'sellerFulfillmentBuyerTemplates', 'paidBuyerTemplates', 'paidSellerTemplates',
     'noChargeBuyerTemplates', 'noChargeSellerTemplates', 'codSellerPlacedTemplates', 'codSellerDecisionTemplates',
-    'returnBuyerTemplates', 'returnSellerTemplates'];
+    'returnBuyerTemplates', 'returnSellerTemplates', ...(source(financialPath).text.includes('const warrantySettlementTemplates') ? ['warrantySettlementTemplates'] : [])];
   const financial = declarations(financialPath, financialNames, deps);
   const f = financial.result;
   for (const status of Object.keys(f.ORDER_LIFECYCLE_STATUS_COPY)) {
@@ -285,6 +285,15 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
     f.returnBuyerTemplates('RET-PREVIEW', 'ORD-PREVIEW', liability), { group: 'Returns', route: `/user-dashboard/order/detail/${IDS.order}?returnId=${IDS.request}` });
   record(financialPath, financial.lines.returnSellerTemplates, 'Seller return settlement', f.returnSellerTemplates('RET-PREVIEW', 'ORD-PREVIEW'),
     { role: 'seller', group: 'Returns', route: `/seller-dashboard/order-management?tab=returns&returnId=${IDS.request}` });
+  if (f.warrantySettlementTemplates) {
+  for (const liabilityApplied of [false, true]) record(financialPath, financial.lines.warrantySettlementTemplates,
+    `Buyer warranty refund ${liabilityApplied ? 'allocated to Wallet liability' : 'full Wallet credit'}`,
+    f.warrantySettlementTemplates({ claimNumber: 'WAR-PREVIEW', orderNumber: 'ORD-PREVIEW', liabilityApplied }),
+    { group: 'Warranty', route: `/user-dashboard/order/detail/${IDS.order}?warrantyId=${IDS.request}` });
+  record(financialPath, financial.lines.warrantySettlementTemplates, 'Seller warranty settlement',
+    f.warrantySettlementTemplates({ claimNumber: 'WAR-PREVIEW', orderNumber: 'ORD-PREVIEW', seller: true }),
+    { role: 'seller', group: 'Warranty', route: `/seller-dashboard/order-management?tab=warranty&warrantyId=${IDS.request}` });
+  }
 
   const withdrawalDeps = { ...deps,
     withdrawalRequestedSnapshot: () => money('requested_amount', 200000), withdrawalPayoutSnapshot: () => money('payout_amount', 200000) };
@@ -380,9 +389,10 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
       : name === './notificationMoneySnapshotService' ? snapshot : blocked(name) }));
 
   const returnsPath = 'services/returnNotificationService.js';
-  const returnLabels = require('../services/returnPolicyService').RETURN_STATUS_LABELS;
+  const returnLabels = declarations('services/returnPolicyService.js', ['RETURN_STATUS_LABELS'], deps).result.RETURN_STATUS_LABELS;
   const returns = declarations(returnsPath, ['notificationBody', 'buyerReturnLink', 'sellerReturnLink', 'statusNotificationOccurrence',
     ...(source(returnsPath).text.includes('const RETURN_NOTIFICATION_COPY') ? ['RETURN_NOTIFICATION_COPY'] : []),
+    ...(source(returnsPath).text.includes('const WARRANTY_NOTIFICATION_COPY') ? ['WARRANTY_NOTIFICATION_COPY'] : []),
     'snapshotPhone', 'snapshotEmail', 'notifySellerReturnRequested', 'enqueueReturnCancellationNotifications', 'notifyBuyerReturnStatus'], {
     ...deps, RETURN_STATUS_LABELS: returnLabels, sellerTemplates: pureSourceModule('services/whatsapp/sellerMessageTemplates.js'),
     enqueueReturnSettlementNotifications: () => blocked('return settlement belongs to captured financial templates') });
@@ -394,6 +404,18 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   for (const status of Object.keys(returnLabels).filter(value => !['returned', 'cancelled_by_buyer'].includes(value))) {
     await run(returnsPath, `Buyer ${returnLabels[status].toLowerCase()}`, returns.lines.notifyBuyerReturnStatus,
       () => returns.result.notifyBuyerReturnStatus({ ...request, status, statusHistory: [{ status, changedAt: NOW, note: 'Sample status update.' }] }, order));
+  }
+  if (returns.result.WARRANTY_NOTIFICATION_COPY) {
+  const claim = { ...request, kind: 'warranty', returnNumber: 'WAR-PREVIEW', appealVersion: 0 };
+  await run(returnsPath, 'Seller new warranty claim', returns.lines.notifySellerReturnRequested, () => returns.result.notifySellerReturnRequested(claim, order));
+  await run(returnsPath, 'Seller original warranty appeal', returns.lines.notifySellerReturnRequested, () => returns.result.notifySellerReturnRequested({ ...claim, status: 'requested', appealVersion: 1, statusHistory: [{ status: 'requested', changedAt: NOW }] }, order));
+  for (const status of Object.keys(returnLabels).filter(value => !['returned', 'cancelled_by_buyer'].includes(value))) await run(returnsPath,
+    `Buyer warranty ${status.replace(/_/g, ' ')}`, returns.lines.notifyBuyerReturnStatus,
+    () => returns.result.notifyBuyerReturnStatus({ ...claim, status, resolution: 'replacement', statusHistory: [{ status, changedAt: NOW, note: 'Your item will be replaced under the purchased warranty.' }] }, order));
+  await run(returnsPath, 'Buyer warranty approved for Wallet refund', returns.lines.notifyBuyerReturnStatus,
+    () => returns.result.notifyBuyerReturnStatus({ ...claim, status: 'approved', resolution: 'refund', statusHistory: [{ status: 'approved', changedAt: NOW, note: 'Your original purchase amount will be refunded to Rozare Wallet.' }] }, order));
+  await run(returnsPath, 'Warranty cancelled by buyer', returns.lines.enqueueReturnCancellationNotifications,
+    () => returns.result.enqueueReturnCancellationNotifications({ ...claim, status: 'cancelled_by_buyer', statusHistory: [{ status: 'cancelled_by_buyer', changedAt: NOW, note: 'I decided to keep the product.' }] }, order));
   }
 
   const operationalPath = 'services/sellerOperationalNotificationService.js';
@@ -584,10 +606,10 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
         throw new Error(`Empty source preview: ${channel}:${item.name}`);
       }
       const role = event.recipient.audienceRole;
-      const name = item.name.includes('Return cancelled') || item.name.includes('Card refund') || item.sourcePath.endsWith('buyerCancellationService.js')
+      const name = item.name.includes('Return cancelled') || item.name.includes('Warranty cancelled') || item.name.includes('Card refund') || item.sourcePath.endsWith('buyerCancellationService.js')
         ? `${item.name} — ${role}` : item.name;
       entries.push({ channel, group: item.group || (event.metadata?.category === 'subscription' ? 'Subscriptions'
-        : /[Rr]eturn/.test(name) ? 'Returns' : /withdrawal|wallet/i.test(name) ? 'Wallet & payouts'
+        : /[Ww]arranty/.test(name) ? 'Warranty' : /[Rr]eturn/.test(name) ? 'Returns' : /withdrawal|wallet/i.test(name) ? 'Wallet & payouts'
           : /[Ss]tore|[Pp]roduct|[Pp]ayout|[Ss]ubdomain|[Ss]eller welcome/.test(name) ? 'Stores & products' : 'Orders'),
         name, kind: 'Current source template', sourcePath: item.sourcePath, sourceLine: item.sourceLine,
         activity: item.activity || 'active', captureMode: item.mode, eventType: event.eventType || 'source.template_builder',

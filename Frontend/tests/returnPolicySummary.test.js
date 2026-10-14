@@ -8,7 +8,7 @@ const fullReturn = { returnsEnabled: true, returnDuration: 14, refundType: 'full
 test('the frozen item override is displayed even before delivery or after its window closes', () => {
   for (const reason of ['not delivered', 'window closed', 'quantity already returned']) {
     assert.equal(returnGroupPolicyLabel({ policy: noReturns, eligible: false, reason,
-      items: [{ returnPolicy: fullReturn }] }), '14-day returns - Rozare Wallet refund');
+      items: [{ returnPolicy: fullReturn }] }), '14-day returns - Refund to Rozare Wallet');
   }
 });
 

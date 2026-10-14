@@ -34,6 +34,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import StoreAvatar from '../components/common/StoreAvatar';
 import BuyerReturnsSection from '../components/BuyerReturnsSection';
+import BuyerWarrantySection from '../components/BuyerWarrantySection';
 import BuyerCancellationModal from '../components/BuyerCancellationModal';
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from '../utils/orderConfirmationPresentation';
 import { shareInvoice } from '../utils/invoiceUtils';
@@ -444,6 +445,7 @@ export default function OrderDetailScreen({ route, navigation }) {
           </Section>}
 
           {order.awaitingPayment !== true && <BuyerReturnsSection order={order} formatMoney={orderMoney} />}
+          {order.awaitingPayment !== true && <BuyerWarrantySection key={order._id} order={order} formatMoney={orderMoney} />}
 
           <Section title="Delivery details" subtitle="Where this order is going" icon="location-outline" styles={styles}>
             <InfoRow icon="person-outline" label="Recipient" value={order.shippingInfo?.fullName} styles={styles} palette={palette} />

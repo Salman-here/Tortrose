@@ -347,11 +347,12 @@ export function resolveSellerNotificationTarget(notification) {
   // Return notifications also carry their order id. Honour the explicit
   // returns destination first so the seller can act on the return itself.
   if (/^\/seller-dashboard\/order-management(?:[/?#]|$)/i.test(linkTo)
-    && (getQueryParam(linkTo, 'tab') === 'returns' || getQueryParam(linkTo, 'returnId'))) {
+    && (['returns', 'warranty'].includes(getQueryParam(linkTo, 'tab')) || getQueryParam(linkTo, 'returnId') || getQueryParam(linkTo, 'warrantyId'))) {
     const returnRequestId = getQueryParam(linkTo, 'returnId');
+    const warrantyId = getQueryParam(linkTo, 'warrantyId');
     return {
       screen: 'SellerOrderManagement',
-      params: { tab: 'returns', ...(returnRequestId ? { returnRequestId } : {}) },
+      params: { tab: warrantyId || getQueryParam(linkTo, 'tab') === 'warranty' ? 'warranty' : 'returns', ...(returnRequestId ? { returnRequestId } : {}), ...(warrantyId ? { warrantyId } : {}) },
     };
   }
 

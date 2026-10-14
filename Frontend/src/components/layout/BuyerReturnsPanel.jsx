@@ -22,6 +22,7 @@ import {
 } from '../../utils/returnPresentationSafety';
 import { getReturnItemVariantLabels } from '../../utils/returnItemVariants';
 import { useReturnDialogAccessibility } from '../../utils/returnDialogAccessibility';
+import ReplacementReceipt from './ReplacementReceipt';
 
 const API = `${import.meta.env.VITE_API_URL}api/returns`;
 const reasonOptions = [
@@ -40,6 +41,7 @@ const UNRESOLVED_RETURN_STATUSES = new Set([
   'requested', 'approved', 'pickup_scheduled', 'picked_up',
   'in_transit_to_seller', 'received_by_seller', 'under_review',
   'accepted_pending_payment',
+  'replacement_approved', 'replacement_shipped',
 ]);
 const activeReturnForSeller = (requests, orderId, sellerId) => requests.find(request => (
   request.order === orderId && request.seller._id === sellerId
@@ -506,6 +508,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               </button>
             )}
           </div>
+          <ReplacementReceipt request={request} onChanged={load} />
           {request.statusHistory.length > 0 && (
             <div className="mt-4 space-y-2">
               {request.statusHistory.map((entry, index) => (

@@ -18,6 +18,7 @@ import CurrencySelector from '../common/CurrencySelector';
 import { PRESET_CATEGORIES } from '../../utils/categories';
 import { getAuthToken } from "../../utils/cookieHelper";
 import FounderPromotionModal from '../subscription/FounderPromotionModal';
+import { RETURN_RESOLUTION_CHOICES, editableReturnResolution } from '../../utils/returns';
 import { selectAuthoritativeSellerMetrics } from '../../utils/currencySafety';
 import {
     inspectProductFormSubmission,
@@ -1726,7 +1727,7 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages, ca
                                         <Truck size={20} />
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Custom Return Policy</p>
+                                        <p className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Custom Return & Warranty Policy</p>
                                         <p className="text-xs mt-0.5" style={{ color: 'hsl(var(--muted-foreground))' }}>Override the store-default policy for this product only.</p>
                                     </div>
                                     <span className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 mt-1" style={{ background: customOn ? 'hsl(150,60%,45%)' : 'rgba(0,0,0,0.15)' }}>
@@ -1747,12 +1748,13 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages, ca
                                                     <div className="grid grid-cols-2 gap-3 pl-7">
                                                         <div>
                                                             <label className="block text-xs font-semibold mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Days</label>
-                                                            <input type="number" min={1} value={product.returnPolicy?.returnDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, returnDuration: parseInt(e.target.value) || 0 } })} className="glass-input text-sm py-2" />
+                                                            <input type="number" min={1} value={product.returnPolicy?.returnDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, returnDuration: Number(e.target.value) || 0 } })} className="glass-input text-sm py-2" />
                                                         </div>
                                                         <div>
-                                                            <label className="block text-xs font-semibold mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Refund Type</label>
-                                                            <select value={product.returnPolicy?.refundType || 'none'} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, refundType: e.target.value } })} className="glass-input text-sm py-2 cursor-pointer">
-                                                                <option value="none">No Refund</option><option value="full_refund">Full Refund</option><option value="replacement_only">Replacement</option><option value="store_credit">Store Credit</option>
+                                                            <label className="block text-xs font-semibold mb-1" style={{ color: 'hsl(var(--muted-foreground))' }}>Return Resolution</label>
+                                                            <select value={editableReturnResolution(product.returnPolicy?.refundType)} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, refundType: e.target.value } })} className="glass-input text-sm py-2 cursor-pointer">
+                                                                <option value="none" disabled>Choose a resolution</option>
+                                                                {RETURN_RESOLUTION_CHOICES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                                                             </select>
                                                         </div>
                                                     </div>
@@ -1761,11 +1763,12 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages, ca
                                                     <input type="checkbox" checked={product.returnPolicy?.warrantyEnabled || false}
                                                         onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, warrantyEnabled: e.target.checked } })}
                                                         className="h-4 w-4 rounded" style={{ accentColor: 'hsl(45, 80%, 45%)' }} />
-                                                    <span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>Warranty</span>
+                                                    <span className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>Warranty (months)</span>
                                                     {product.returnPolicy?.warrantyEnabled && (
-                                                        <input type="number" min={1} placeholder="Months" value={product.returnPolicy?.warrantyDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, warrantyDuration: parseInt(e.target.value) || 0 } })} className="glass-input text-sm py-1.5 w-24" />
+                                                        <input type="number" min={1} max={120} placeholder="Months" value={product.returnPolicy?.warrantyDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, warrantyDuration: Number(e.target.value) || 0 } })} className="glass-input text-sm py-1.5 w-24" />
                                                     )}
                                                 </label>
+                                                {product.returnPolicy?.warrantyEnabled && <label className="block text-xs font-semibold">Warranty details (optional)<textarea className="glass-input mt-2" maxLength={200} value={product.returnPolicy?.warrantyDescription || ''} onChange={event => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, warrantyDescription: event.target.value } })} placeholder="Describe covered defects or exclusions." /></label>}
                                             </div>
                                         </motion.div>
                                     )}

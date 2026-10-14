@@ -152,10 +152,12 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
     // refund plus a full-charge dispute may legitimately exceed one sale.
     // Never cap their combined exposure or release one track with another.
     const kind = row.type === 'return_refund' ? 'returnRefundDebits' : 'paymentReversalDebits';
+    const warrantyFunding = row.type === 'return_refund' && row.metadata?.warrantyFunding === true;
     const track = row.type === 'return_refund' ? 'return-refunds' : row.metadata?.riskTrackKey || 'reversals';
     const key = id(row.order) + ':' + track;
-    const group = liabilities.get(key) || { entitlement, source: 0, kind };
+    const group = liabilities.get(key) || { entitlement, source: 0, kind, warrantySource: 0 };
     group.source = add(group.source, sign * sourceAmount);
+    if (warrantyFunding) group.warrantySource = add(group.warrantySource, sign * sourceAmount);
     liabilities.set(key, group);
   }
   for (const { entitlement: e, source, kind } of liabilities.values()) {
@@ -168,13 +170,17 @@ function computeNativeSellerAccounting({ sellerId, orders, productIds = new Set(
   for (const e of deliveredOnline) {
     const refunded = [...liabilities.values()].filter(row => id(row.entitlement.order) === id(e.order))
       .reduce((sum, row) => add(sum, nativeLiabilityMinor(row.source, e.buyerTotal, e.total)), 0);
+    const ordinaryRefunded = [...liabilities.values()].filter(row => id(row.entitlement.order) === id(e.order))
+      .reduce((sum, row) => add(sum, nativeLiabilityMinor(row.source - row.warrantySource, e.buyerTotal, e.total)), 0);
     const hold = sellerReturnHold(e.order, sellerId, { returns, at, remainingMinor: Math.max(0, e.total - refunded) });
     buckets[e.currency].returnWindowHeldAmount = add(buckets[e.currency].returnWindowHeldAmount, hold.heldMinor);
     report.returnWindowHeldAmount = add(report.returnWindowHeldAmount, reportAmount(e.order, hold.heldMinor, e.currency));
     // Refunded revenue reverses its proportional deduction. Return holds keep
     // the corresponding NET earnings pending; neither fee nor funds release
     // while a timely return is unresolved. Withdrawals never recompute a fee.
-    const remaining = Math.max(0, e.total - refunded);
+    // Warranty compensation uses new seller funds, with no return-window
+    // reservation or reversal of an already-incurred payment processing fee.
+    const remaining = Math.max(0, e.total - ordinaryRefunded);
     const releasedFee = proportionalMinor(e.feeMinor, remaining - hold.heldMinor, e.total);
     const remainingFee = proportionalMinor(e.feeMinor, remaining, e.total);
     buckets[e.currency].onlineFeeDeductions = add(buckets[e.currency].onlineFeeDeductions, releasedFee);

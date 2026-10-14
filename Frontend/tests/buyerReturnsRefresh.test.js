@@ -572,7 +572,7 @@ for (const status of ['requested', 'approved', 'pickup_scheduled', 'picked_up',
   });
 }
 
-for (const status of ['returned', 'replacement_approved', 'rejected', 'cancelled_by_buyer']) {
+for (const status of ['returned', 'replacement_delivered', 'rejected', 'cancelled_by_buyer']) {
   test(`verified ${status} refresh releases only the active-request block`, async () => {
     const app = harness();
     await app.flush();
@@ -580,9 +580,16 @@ for (const status of ['returned', 'replacement_approved', 'rejected', 'cancelled
     await app.flush();
     assert.equal(app.state.selectedGroup, null);
     const terminal = snapshot(status);
-    if (status === 'replacement_approved') terminal.requests[0].policySnapshot = {
-      ...terminal.requests[0].policySnapshot, refundType: 'replacement_only',
-    };
+    if (status === 'replacement_delivered') {
+      terminal.requests[0].policySnapshot = { ...terminal.requests[0].policySnapshot, refundType: 'replacement_only' };
+      terminal.requests[0].replacement = { shippingMethod: 'hand_delivery', inventoryCommitted: true,
+        shippedAt: terminal.requests[0].updatedAt, deliveredAt: terminal.requests[0].updatedAt };
+      const context = inspectBuyerReturnOrderContext(order);
+      const coverage = inspectBuyerReturnEligibilityResponse(terminal.eligibility, context);
+      assert.deepEqual(coverage.errors, []);
+      const checked = inspectBuyerReturnsResponse({ success: true, complete: true, totalReturns: terminal.requests.length, returns: terminal.requests }, context, coverage);
+      assert.deepEqual(checked.errors, []);
+    }
     app.install(terminal);
     await app.advance(5000);
     assert.equal(app.state.loadError, '');

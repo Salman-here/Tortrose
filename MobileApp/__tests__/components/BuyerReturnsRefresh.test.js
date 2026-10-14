@@ -345,13 +345,17 @@ test.each(['requested', 'approved', 'pickup_scheduled', 'picked_up',
   },
 );
 
-test.each(['returned', 'replacement_approved', 'rejected', 'cancelled_by_buyer'])(
+test.each(['returned', 'replacement_delivered', 'rejected', 'cancelled_by_buyer'])(
   'verified %s refresh releases the same-store CTA', async status => {
     const screen = render(<BuyerReturnsSection {...props} />);
     await flush();
     expect(requestButton(screen).props.disabled).toBe(true);
     const terminal = snapshot(status);
-    if (status === 'replacement_approved') terminal.requests[0].policySnapshot.refundType = 'replacement_only';
+    if (status === 'replacement_delivered') {
+      terminal.requests[0].policySnapshot = { ...terminal.requests[0].policySnapshot, refundType: 'replacement_only' };
+      terminal.requests[0].replacement = { shippingMethod: 'hand_delivery', inventoryCommitted: true,
+        shippedAt: terminal.requests[0].updatedAt, deliveredAt: terminal.requests[0].updatedAt };
+    }
     installSnapshot(terminal);
     await advance(5000);
     expect(requestButton(screen).props.disabled).toBe(false);

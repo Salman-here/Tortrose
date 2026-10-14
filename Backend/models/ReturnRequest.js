@@ -34,6 +34,8 @@ const RETURN_STATUSES = [
     'accepted_pending_payment',
     'returned',
     'replacement_approved',
+    'replacement_shipped',
+    'replacement_delivered',
     'rejected',
     'cancelled_by_buyer',
 ];
@@ -86,6 +88,33 @@ const statusHistorySchema = new mongoose.Schema(
 const returnRequestSchema = new mongoose.Schema(
     {
         returnNumber: { type: String, required: true, unique: true, index: true },
+        kind: { type: String, enum: ['return', 'warranty'], default: 'return', immutable: true, index: true },
+        evidence: [{ type: mongoose.Schema.Types.ObjectId, ref: 'AfterSalesEvidence' }],
+        evidenceUrls: [{ type: String, maxlength: 2000 }],
+        evidenceHistory: [{ version: { type: Number, min: 0, validate: Number.isSafeInteger },
+            evidence: [{ type: mongoose.Schema.Types.ObjectId, ref: 'AfterSalesEvidence' }],
+            urls: [{ type: String, maxlength: 2000 }], reason: { type: String, maxlength: 1500 }, submittedAt: { type: Date, required: true } }],
+        warrantySnapshot: {
+            version: { type: Number, enum: [1], default: undefined, immutable: true },
+            months: { type: Number, min: 1, max: 120, validate: Number.isSafeInteger, immutable: true },
+            deliveredAt: { type: Date, immutable: true }, deadline: { type: Date, immutable: true },
+            description: { type: String, maxlength: 200, immutable: true },
+        },
+        resolution: { type: String, enum: ['refund', 'replacement', null], default: null },
+        decisionReason: { type: String, maxlength: 1000, default: '' },
+        appealVersion: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
+        lastAppealKey: { type: String, maxlength: 128, select: false },
+        lastAppealFingerprint: { type: String, maxlength: 64, select: false },
+        replacement: {
+            inventoryCommitted: { type: Boolean, default: false },
+            shippedAt: { type: Date, default: null }, deliveredAt: { type: Date, default: null },
+            carrier: { type: String, maxlength: 100, default: '' },
+            trackingNumber: { type: String, maxlength: 160, default: '' },
+            shippingMethod: { type: String, enum: ['courier', 'hand_delivery', null], default: null },
+            dispatchKey: { type: String, maxlength: 128, select: false },
+            dispatchFingerprint: { type: String, maxlength: 64, select: false },
+            deliveredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        },
         // Versioned, buyer-scoped digest of the caller's complete idempotency
         // key. New requests never store or truncate the raw transport key.
         requestKey: {
@@ -131,7 +160,7 @@ const returnRequestSchema = new mongoose.Schema(
         status: { type: String, enum: RETURN_STATUSES, default: 'requested', index: true },
         refundFundingPolicy: { type: String, enum: ['held_order', 'seller_funded'], default: 'seller_funded', immutable: true },
         statusHistory: { type: [statusHistorySchema], default: [] },
-        requestedAt: { type: Date, default: Date.now },
+        requestedAt: { type: Date, default: Date.now, immutable: true },
         requestedNotificationSentAt: { type: Date, default: null },
         notificationKeys: { type: [String], default: [] },
         eligibilityDeadline: { type: Date, required: true, index: true },
@@ -259,10 +288,46 @@ const returnRequestSchema = new mongoose.Schema(
         sellerNote: { type: String, trim: true, maxlength: 1000, default: '' },
         buyerCancelledAt: { type: Date, default: null },
     },
-    { timestamps: true, optimisticConcurrency: true }
+    { timestamps: true, optimisticConcurrency: true, toJSON: { transform: (_doc, value) => {
+        delete value.requestFingerprint;
+        delete value.lastAppealKey;
+        delete value.lastAppealFingerprint;
+        if (value.replacement) {
+            delete value.replacement.dispatchKey;
+            delete value.replacement.dispatchFingerprint;
+        }
+        return value;
+    } } }
 );
 
 returnRequestSchema.pre('validate', function validateFrozenReturnMoney(next) {
+    if (this.kind === 'warranty') {
+        const saved = this.warrantySnapshot;
+        const validDate = value => value instanceof Date && Number.isFinite(value.getTime());
+        if (saved?.version !== 1 || !isPositiveSafeInteger(saved.months) || saved.months > 120
+            || !validDate(saved.deliveredAt) || !validDate(saved.deadline)
+            || saved.deadline <= saved.deliveredAt || !validDate(this.requestedAt)
+            || this.requestedAt > saved.deadline || this.items?.length !== 1
+            || !this.evidence?.length || this.evidence.length > 6 || this.evidence.length !== this.evidenceUrls?.length) {
+            this.invalidate('warrantySnapshot', 'A warranty claim requires original on-time coverage and owned photo evidence');
+        }
+        if (!['requested', 'rejected', 'cancelled_by_buyer'].includes(this.status)
+            && !['refund', 'replacement'].includes(this.resolution)) {
+            this.invalidate('resolution', 'An approved warranty requires a declared resolution');
+        }
+        if (this.resolution && this.policySnapshot?.refundType !== (this.resolution === 'refund' ? 'full_refund' : 'replacement_only')) {
+            this.invalidate('resolution', 'Warranty resolution must match its settlement policy');
+        }
+    }
+    if (['replacement_shipped', 'replacement_delivered'].includes(this.status)) {
+        if (this.policySnapshot?.refundType !== 'replacement_only' || !this.replacement?.inventoryCommitted
+            || !this.replacement.shippedAt || !this.replacement.shippingMethod) {
+            this.invalidate('replacement', 'A shipped replacement requires committed inventory and shipment details');
+        }
+        if (this.status === 'replacement_delivered' && (!this.replacement.deliveredAt || !this.replacement.deliveredBy)) {
+            this.invalidate('replacement.deliveredAt', 'Replacement delivery requires buyer confirmation');
+        }
+    }
     const refund = this.refund || {};
     const moneyValues = [
         refund.itemSubtotal,

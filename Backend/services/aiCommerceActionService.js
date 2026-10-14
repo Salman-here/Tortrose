@@ -43,11 +43,11 @@ async function sellerOrder(reference, user) {
   await require('./orderFulfillmentService').ensureOrderSellerFulfillment(order);
   return order;
 }
-async function ownedReturn(reference, user, view = 'buyer') {
+async function ownedReturn(reference, user, view = 'buyer', kind = 'return') {
   const owner = actor(user, view === 'seller');
   const value = clean(reference, 160);
   if (!value) throw fail('Tell me which return request you mean.');
-  const scope = { [view === 'seller' ? 'seller' : 'buyer']: owner.id };
+  const scope = { [view === 'seller' ? 'seller' : 'buyer']: owner.id, kind: kind === 'warranty' ? 'warranty' : { $ne: 'warranty' } };
   const rows = await Return.find({ ...scope, ...(mongoose.isValidObjectId(value) ? { _id: value } : { returnNumber: value }) }).limit(2);
   if (rows.length !== 1) throw fail(rows.length ? 'This return reference is ambiguous. Choose the return from your list.' : 'Return request not found in your account.', 'RETURN_NOT_FOUND', 404);
   return rows[0];
@@ -101,8 +101,36 @@ function basicOrder(order) {
 }
 
 async function readCommerceTool(name, args, user) {
-  const owner = actor(user, ['get_seller_returns', 'get_my_withdrawals', 'get_subdomain_status', 'get_verification_status'].includes(name));
+  const owner = actor(user, ['get_seller_returns', 'get_seller_warranties', 'get_my_withdrawals', 'get_subdomain_status', 'get_verification_status'].includes(name));
   if (name === 'get_secure_flow') return require('./aiSecureFlowService').getSecureFlow(args.feature, user);
+  if (name === 'get_warranty_eligibility') {
+    const order = await purchase(args.orderId, user);
+    const coverage = await require('./warrantyService').buildWarrantyEligibility(order);
+    const url = `https://rozare.com/user-dashboard/order/detail/${order._id}#warranty`;
+    return { success: true, requiresSecureAction: true, data: { ...coverage, url },
+      message: `Coverage uses the original purchased terms and delivery date. Submit photos/reasons or appeal an original on-time claim at ${url}. No claim or payment was created.` };
+  }
+  if (['get_my_warranties', 'get_seller_warranties', 'get_warranty_status'].includes(name)) {
+    if (args.view !== undefined && !['buyer', 'seller'].includes(args.view)) throw fail('Choose your buyer or seller view.');
+    const view = name === 'get_seller_warranties' ? 'seller' : name === 'get_warranty_status' ? args.view || (user.role === 'seller' ? 'seller' : 'buyer') : 'buyer';
+    actor(user, view === 'seller');
+    let claims;
+    if (name === 'get_warranty_status') claims = [await ownedReturn(args.claimId, user, view, 'warranty')];
+    else {
+      const filter = { kind: 'warranty', [view === 'seller' ? 'seller' : 'buyer']: owner.id, ...(args.status && args.status !== 'all' ? { status: args.status } : {}) };
+      if (args.orderId) filter.order = (view === 'seller' ? await sellerOrder(args.orderId, user) : await purchase(args.orderId, user))._id;
+      claims = await Return.find(filter).sort({ createdAt: -1 }).limit(limit(args.limit));
+    }
+    const data = await Promise.all(claims.map(async claim => ({ ...await verifiedReturn(claim), kind: 'warranty',
+      originalWarranty: claim.warrantySnapshot, plannedResolution: claim.resolution, sellerDecisionReason: claim.decisionReason,
+      statusLabel: ({ requested: 'Warranty claim received', approved: 'Warranty claim approved', rejected: 'Warranty claim declined', returned: 'Warranty Wallet refund completed' })[claim.status] || RETURN_STATUS_LABELS[claim.status],
+      appealVersion: claim.appealVersion, photoCount: claim.evidence?.length || 0,
+      replacement: { shippingMethod: claim.replacement?.shippingMethod, carrier: claim.replacement?.carrier,
+        trackingNumber: claim.replacement?.trackingNumber, shippedAt: claim.replacement?.shippedAt, deliveredAt: claim.replacement?.deliveredAt },
+      nextStatuses: [], canAccept: false, securePath: view === 'seller' ? `/seller-dashboard/order-management?tab=warranty&warrantyId=${claim._id}`
+        : `/user-dashboard/order/detail/${claim.order}?warrantyId=${claim._id}` })));
+    return { success: true, data: { claims: data, count: data.length, scope: view }, message: 'Warranty claims are separate from returns and do not add earnings holds. Review photos, decisions, appeals, funding and replacement dispatch on the secure claim screen. No action was performed.' };
+  }
   if (name === 'get_saved_payment_methods') {
     const result = await require('./safepayCustomerService').listCards(owner.id);
     return { success: true, data: { provider: 'safepay', environment: result.environment,
@@ -168,7 +196,7 @@ async function readCommerceTool(name, args, user) {
   }
   if (['get_my_returns', 'get_seller_returns'].includes(name)) {
     const scope = name === 'get_seller_returns' ? 'seller' : 'buyer';
-    const filter = { [scope]: owner.id, ...(args.status && args.status !== 'all' ? { status: args.status } : {}) };
+    const filter = { [scope]: owner.id, kind: { $ne: 'warranty' }, ...(args.status && args.status !== 'all' ? { status: args.status } : {}) };
     if (args.orderId) {
       const order = scope === 'seller' ? await sellerOrder(args.orderId, user) : await purchase(args.orderId, user);
       filter.order = order._id;

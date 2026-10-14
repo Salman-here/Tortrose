@@ -72,6 +72,8 @@ const UNRESOLVED_RETURN_STATUSES = [
   'received_by_seller',
   'under_review',
   'accepted_pending_payment',
+  'replacement_approved',
+  'replacement_shipped',
 ];
 const REASON_CATEGORIES = [
   'damaged',
@@ -317,20 +319,22 @@ const getSellerPolicy = async (order, sellerId, session = null) => {
   };
 };
 
-const getConsumedQuantities = async (orderId, session = null) => {
+const getConsumedQuantities = async (orderId, session = null, { financialOnly = false } = {}) => {
   const requests = await queryWithSession(
     ReturnRequest.find({
       order: orderId,
       status: { $nin: CLOSED_WITHOUT_CONSUMING_QUANTITY },
-    }).select('status seller items refund.shippingAmount refund.totalAmount policySnapshot.refundType').lean(),
+    }).select('kind status seller items refund.shippingAmount refund.totalAmount policySnapshot.refundType').lean(),
     session
   );
   const consumed = new Map();
+  const warrantyConsumed = new Map();
   const settledQuantities = new Map();
   const shippingRefundedBySeller = new Set();
   const refundedMinorBySeller = new Map();
 
   for (const request of requests) {
+    if (request.status === 'replacement_delivered' && (financialOnly || request.kind === 'warranty')) continue;
     const sellerId = toId(request.seller);
     if (!sellerId) throw returnFinancialDataError('A stored return has no seller owner.');
     const shippingAmount = requireExactReturnMoney(
@@ -361,6 +365,7 @@ const getConsumedQuantities = async (orderId, session = null) => {
         throw returnFinancialDataError('Stored return quantities are outside the supported range.');
       }
       consumed.set(key, nextConsumed);
+      if (request.kind === 'warranty') warrantyConsumed.set(key, (warrantyConsumed.get(key) || 0) + quantity);
       if (request.status === 'returned') {
         const nextSettled = (settledQuantities.get(key) || 0) + quantity;
         if (!Number.isSafeInteger(nextSettled)) {
@@ -373,12 +378,12 @@ const getConsumedQuantities = async (orderId, session = null) => {
   const refundedAmountBySeller = new Map(
     [...refundedMinorBySeller].map(([sellerId, minor]) => [sellerId, fromMinorUnits(minor)]),
   );
-  return { consumed, settledQuantities, shippingRefundedBySeller, refundedAmountBySeller };
+  return { consumed, warrantyConsumed, settledQuantities, shippingRefundedBySeller, refundedAmountBySeller };
 };
 
 const buildOrderReturnEligibility = async (order, { session = null, at = new Date() } = {}) => {
   const sellerByItem = await getItemSellerMap(order, session);
-  const { consumed } = await getConsumedQuantities(order._id, session);
+  const { consumed, warrantyConsumed } = await getConsumedQuantities(order._id, session);
   const groupedItems = new Map();
 
   for (const item of order.orderItems || []) {
@@ -395,6 +400,7 @@ const buildOrderReturnEligibility = async (order, { session = null, at = new Dat
       image: item.image || '',
       purchasedQuantity,
       alreadyRequestedQuantity: consumedQuantity,
+      warrantyRequestedQuantity: warrantyConsumed.get(toId(item._id)) || 0,
       remainingReturnableQuantity: Math.max(0, purchasedQuantity - consumedQuantity),
       unitPrice: purchasedQuantity > 0 ? lineSubtotal / purchasedQuantity : 0,
       lineSubtotal,
@@ -648,6 +654,8 @@ const buildSettlementShippingAllocation = async ({ request, order, sellerEntitle
   let pendingShippingOwner = null;
 
   for (const other of relatedRequests) {
+    // A replacement never refunds the purchase or owns its shipping money.
+    if (other.policySnapshot?.refundType === 'replacement_only') continue;
     const otherId = toId(other?._id);
     const isCurrent = otherId === toId(request._id);
     const shippingAmount = requireExactReturnMoney(
@@ -876,6 +884,7 @@ const createReturnRequest = async (input) => {
       const unresolvedReturn = await ReturnRequest.findOne({
         order: order._id,
         seller: sellerId,
+        kind: { $ne: 'warranty' },
         status: { $in: UNRESOLVED_RETURN_STATUSES },
       }).select('_id returnNumber status').session(session).lean();
       if (unresolvedReturn) {
@@ -936,7 +945,7 @@ const createReturnRequest = async (input) => {
         throw error;
       }
 
-      const selectedRefundTypes = [...new Set(selected.map(item => item.returnPolicy.refundType))];
+      const selectedRefundTypes = [...new Set(selected.map(item => item.returnPolicy.refundType === 'store_credit' ? 'full_refund' : item.returnPolicy.refundType))];
       if (selectedRefundTypes.length !== 1) {
     const error = new Error('Items with different return resolutions must be submitted as separate return requests.');
     error.statusCode = 400;
@@ -1008,7 +1017,7 @@ const createReturnRequest = async (input) => {
     policySnapshot: {
       returnsEnabled: true,
       returnDuration: selectedPolicy.returnDuration,
-      refundType: selectedPolicy.refundType,
+      refundType: selectedPolicy.refundType === 'store_credit' ? 'full_refund' : selectedPolicy.refundType,
       policyDescription: selectedPolicy.policyDescription || '',
     },
     refund,
@@ -1042,7 +1051,7 @@ const previewReturnRequest = async (input) => {
   const groups = await buildOrderReturnEligibility(order);
   const group = groups.find(entry => toId(entry.seller?._id) === prepared.sellerId);
   if (!group?.eligible) throw Object.assign(new Error(group?.reason || 'This seller portion is not eligible for return.'), { statusCode: 409, code: 'RETURN_NOT_ELIGIBLE' });
-  if (await ReturnRequest.exists({ order: order._id, seller: prepared.sellerId, status: { $in: UNRESOLVED_RETURN_STATUSES } })) {
+  if (await ReturnRequest.exists({ order: order._id, seller: prepared.sellerId, kind: { $ne: 'warranty' }, status: { $in: UNRESOLVED_RETURN_STATUSES } })) {
     throw Object.assign(new Error('Finish the current return for this seller before requesting another.'), { statusCode: 409, code: 'RETURN_REQUEST_ALREADY_OPEN' });
   }
   const selected = prepared.items.map(selection => {
@@ -1051,7 +1060,7 @@ const previewReturnRequest = async (input) => {
       new Error(item?.reason || 'The selected item or quantity cannot be returned.'), { statusCode: 409, code: 'RETURN_ITEM_NOT_ELIGIBLE' });
     return { ...item, quantity: selection.quantity };
   });
-  const policyTypes = new Set(selected.map(item => item.returnPolicy.refundType));
+  const policyTypes = new Set(selected.map(item => item.returnPolicy.refundType === 'store_credit' ? 'full_refund' : item.returnPolicy.refundType));
   if (policyTypes.size !== 1) throw Object.assign(new Error('Request items with different return resolutions separately.'), { statusCode: 409, code: 'MIXED_RETURN_RESOLUTIONS' });
   const quantities = await getConsumedQuantities(order._id);
   const refund = selectedReturnMoney({ order, sellerId: prepared.sellerId, sellerItems: group.items, selected,
@@ -1084,11 +1093,14 @@ const getReturnDetail = async ({ returnRequestId, actor }) => {
     error.statusCode = 403;
     throw error;
   }
+  if (actor?.role === 'seller' && actorId === toId(request.seller) && request.order?.sellerFulfillment) {
+    request.order.sellerFulfillment = request.order.sellerFulfillment.filter(row => toId(row.seller) === actorId);
+  }
   return request;
 };
 
 const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note, expectedUpdatedAt }) => {
-  if (['accepted_pending_payment', 'returned', 'replacement_approved'].includes(nextStatus)) {
+  if (['accepted_pending_payment', 'returned', 'replacement_approved', 'replacement_shipped', 'replacement_delivered'].includes(nextStatus)) {
     const error = new Error('Use the Accept Return action to finalize a return.');
     error.statusCode = 400;
     throw error;
@@ -1105,6 +1117,9 @@ const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note, ex
       error.statusCode = 403;
       throw error;
     }
+    if (request.kind === 'warranty' && nextStatus === 'approved') {
+      throw Object.assign(new Error('Declare a refund or replacement before approving this warranty claim.'), { statusCode: 400, code: 'WARRANTY_RESOLUTION_REQUIRED' });
+    }
     if (expectedUpdatedAt !== undefined && new Date(request.updatedAt).toISOString() !== expectedUpdatedAt) {
       throw Object.assign(new Error('The return changed after its preview. Review its latest status before confirming.'), { statusCode: 409, code: 'RETURN_PREVIEW_CHANGED' });
     }
@@ -1115,13 +1130,14 @@ const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note, ex
       throw error;
     }
     const clean = cleanNote(note);
-    if (nextStatus === 'rejected' && clean.length < 5) {
+    if (nextStatus === 'rejected' && clean.length < (request.kind === 'warranty' ? 10 : 5)) {
       const error = new Error('Add a clear rejection reason.');
       error.statusCode = 400;
       throw error;
     }
 
     request.status = nextStatus;
+    if (request.kind === 'warranty' && nextStatus === 'rejected') request.decisionReason = clean;
     request.sellerNote = clean || request.sellerNote;
     request.statusHistory.push({
       status: nextStatus,
@@ -1129,6 +1145,7 @@ const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note, ex
       changedBy: actor.id,
       actorRole: actor.role === 'admin' ? 'admin' : 'seller',
     });
+    await Order.updateOne({ _id: request.order }, { $inc: { returnVersion: 1 } }, { session });
     await request.save({ session });
     const order = await queryWithSession(Order.findById(request.order).lean(), session);
     if (!order) {
@@ -1162,6 +1179,7 @@ const cancelReturnRequest = async ({ returnRequestId, buyerId, note }) => runInT
     changedBy: buyerId,
     actorRole: 'buyer',
   });
+  await Order.updateOne({ _id: request.order }, { $inc: { returnVersion: 1 } }, { session });
   await request.save({ session });
   const order = await queryWithSession(Order.findById(request.order).lean(), session);
   if (!order) {
@@ -1195,6 +1213,11 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId, expectedRefu
     error.statusCode = 409;
     throw error;
   }
+  if (request.policySnapshot?.refundType === 'replacement_only'
+    || request.kind === 'warranty' && request.resolution !== 'refund') {
+    throw Object.assign(new Error('This claim does not have a declared refund resolution.'), { statusCode: 409, code: 'REFUND_RESOLUTION_MISMATCH' });
+  }
+  if (request.kind === 'warranty') await assertReturnRequestFinancialIdentity(request, { session });
   await assertWalletOrderFundingReturnable({ orderId: request.order, session });
 
   const order = await queryWithSession(
@@ -1327,7 +1350,7 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId, expectedRefu
   const beforeSourceMinor = cumulativeSourceMinor - toMinorUnits(request.refund.totalAmount);
   const nativeDebitMinor = nativeReturnFundingMinor(order, cumulativeSourceMinor, buyerTotalMinor, nativeTotalMinor, nativeMoney.currency)
     - nativeReturnFundingMinor(order, beforeSourceMinor, buyerTotalMinor, nativeTotalMinor, nativeMoney.currency);
-  const heldOrder = ['wallet', 'safepay'].includes(order.paymentMethod) && order.isPaid === true;
+  const heldOrder = request.kind !== 'warranty' && ['wallet', 'safepay'].includes(order.paymentMethod) && order.isPaid === true;
   const summary = heldOrder ? null : await buildSellerPaymentSummary(sellerId, { session, displayCurrency: nativeMoney.currency });
   const available = heldOrder ? 0 : requireExactReturnMoney(summary.balanceByCurrency?.[nativeMoney.currency]?.withdrawableBalance, 'native seller balance');
   if (!heldOrder && nativeDebitMinor > toMinorUnits(available)) {
@@ -1348,10 +1371,11 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId, expectedRefu
       order: order._id,
       referenceType: 'return_request',
       referenceId: String(request._id),
-      description: `Wallet refund for return ${request.returnNumber}`,
+      description: `Wallet refund for ${request.kind === 'warranty' ? 'warranty claim' : 'return'} ${request.returnNumber}`,
       completedAt: new Date(),
       metadata: {
         sellerSettlementVersion: SELLER_SETTLEMENT_VERSION,
+        ...(request.kind === 'warranty' ? { warrantyFunding: true } : {}),
         cumulativeSourceMinor,
         cumulativeUsdMinor,
         ...(order.sellerCurrencyMoneyVersion === 2 ? { nativeFundingVersion:2, nativeCurrency:nativeMoney.currency, nativeDebitMinor } : {}),
@@ -1366,19 +1390,22 @@ const settleFromSellerBalance = async ({ returnRequestId, sellerId, expectedRefu
     referenceType: 'return_request',
     referenceId: request._id,
     idempotencyKey: `return-refund:${request._id}`,
-    description: `Refund for return ${request.returnNumber}`,
-    metadata: { orderId: request.orderId, sellerId: String(sellerId) },
+    description: `Refund for ${request.kind === 'warranty' ? 'warranty claim' : 'return'} ${request.returnNumber}`,
+    metadata: { orderId: request.orderId, sellerId: String(sellerId), claimKind: request.kind || 'return' },
     allowLocked: true,
   }, session);
-  await attachReturnedWalletFundingProvenance({
-    walletTransaction,
-    orderId: request.order,
-    sellerId,
-    returnRequestId: request._id,
-    refundAmount: request.refund.totalAmount,
-    currency: request.currency,
-    session,
-  });
+  if (request.kind === 'warranty') {
+    // This is a NEW seller-funded obligation, not a release of the original
+    // buyer's card/Wallet principal. Keep its ledger proof, without moving or
+    // consuming an old payment's funding lot a second time.
+    walletTransaction.metadata = { ...walletTransaction.metadata, fundingProvenanceReturns: [],
+      warrantyFunding: { sellerBalanceTransaction: String(sellerDebit._id), source: 'seller_balance' } };
+    walletTransaction.markModified('metadata');
+    await walletTransaction.save({ session });
+  } else {
+    await attachReturnedWalletFundingProvenance({ walletTransaction, orderId: request.order, sellerId,
+      returnRequestId: request._id, refundAmount: request.refund.totalAmount, currency: request.currency, session });
+  }
 
   request.status = 'returned';
   request.settlement.fundingSource = heldOrder ? 'held_order' : 'seller_balance';
@@ -1409,6 +1436,10 @@ const approveReplacement = async ({ returnRequestId, sellerId }) => runInTransac
     const error = new Error('The return must be under review before approving a replacement.');
     error.statusCode = 409;
     throw error;
+  }
+  if (request.policySnapshot?.refundType !== 'replacement_only'
+      || request.kind === 'warranty' && request.resolution !== 'replacement') {
+    throw Object.assign(new Error('This claim does not have a declared replacement resolution.'), { statusCode: 409, code: 'REPLACEMENT_RESOLUTION_MISMATCH' });
   }
   request.status = 'replacement_approved';
   request.settlement.fundingSource = 'replacement';
@@ -2670,7 +2701,7 @@ const completeSafepayReturnSettlement = async (payment, tracker, session) => {
   await assertWalletOrderFundingReturnable({ orderId: request.order, session });
   const walletTransaction = await creditWalletInSession({ userId: request.buyer, amount: request.refund.totalAmount,
     currency: request.currency, type: 'return_refund', referenceType: 'return_request', referenceId: request._id,
-    idempotencyKey: `return-refund:${request._id}`, description: `Refund for return ${request.returnNumber}`,
+    idempotencyKey: `return-refund:${request._id}`, description: `Refund for ${request.kind === 'warranty' ? 'warranty claim' : 'return'} ${request.returnNumber}`,
     metadata: { orderId: request.orderId, sellerId: String(request.seller), provider: 'safepay',
       safepayPaymentId: toId(payment), safepayEnvironment: payment.environment }, allowLocked: true }, session);
   await attachSafepayReturnFundingProvenance({ walletTransaction, request, payment, session });
@@ -2705,6 +2736,7 @@ module.exports = {
   getItemSellerMap,
   getSellerFulfillment,
   getSellerPolicy,
+  getConsumedQuantities,
   buildOrderItemDiscountAllocations,
   buildOrderReturnEligibility,
   selectedReturnMoney,

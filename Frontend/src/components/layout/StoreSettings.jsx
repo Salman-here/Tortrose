@@ -17,6 +17,7 @@ import { selectAuthoritativeStoreAnalytics } from '../../utils/storeAnalyticsSaf
 import { normalizeCurrencyCode } from '../../utils/currencySafety';
 import { inspectSellerProductCurrencyState } from '../../utils/productFormCurrency';
 import StoreModerationNotice from '../common/StoreModerationNotice';
+import { RETURN_RESOLUTION_CHOICES, editableReturnResolution } from '../../utils/returns';
 
 const GPS_RADIUS_VISIBILITY_ENABLED = false;
 
@@ -1466,29 +1467,27 @@ const StoreSettings = () => {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Return Window (Days)</label>
-                                        <input type="number" min={1} max={365} value={storeData.returnPolicy.returnDuration} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, returnDuration: parseInt(e.target.value) || 0 } }))} className="glass-input" />
+                                        <input type="number" min={1} max={365} value={storeData.returnPolicy.returnDuration} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, returnDuration: Number(e.target.value) || 0 } }))} className="glass-input" />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Refund Type</label>
-                                        <select value={storeData.returnPolicy.refundType} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, refundType: e.target.value } }))} className="glass-input cursor-pointer">
+                                        <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Return Resolution</label>
+                                        <select value={editableReturnResolution(storeData.returnPolicy.refundType)} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, refundType: e.target.value } }))} className="glass-input cursor-pointer">
                                             <option value="none" disabled>Choose a resolution</option>
-                                            <option value="full_refund">Full Refund to Rozare Wallet</option>
-                                            <option value="replacement_only">Replacement Only</option>
-                                            <option value="store_credit">Rozare Wallet Credit</option>
+                                            {RETURN_RESOLUTION_CHOICES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                                         </select>
                                     </div>
-                                    <p className="md:col-span-2 text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>After you receive and review a return, fund the approved amount from your available seller balance or by card. The return completes only after the buyer's wallet is credited.</p>
+                                    <p className="md:col-span-2 text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{storeData.returnPolicy.refundType === 'replacement_only' ? 'Receive and inspect the item, then dispatch a replacement with tracking. The buyer does not pay again.' : 'After inspection, refund the approved original amount to Rozare Wallet. Online returns use the original held funds; other refunds use available seller funds or Safepay.'}</p>
                                 </div>
                             )}
                             <div className="flex items-center gap-3 glass-inner rounded-xl p-4">
                                 <input type="checkbox" checked={storeData.returnPolicy.warrantyEnabled} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, warrantyEnabled: e.target.checked } }))} className="h-4 w-4 rounded" style={{ accentColor: 'hsl(45, 80%, 45%)' }} />
-                                <div><p className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>Enable Warranty</p><p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Offer warranty on products</p></div>
+                                <div><p className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>Enable Warranty</p><p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Coverage starts at delivery. Declare a Wallet refund or replacement when reviewing each claim.</p></div>
                             </div>
                             {storeData.returnPolicy.warrantyEnabled && (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Warranty Duration (Months)</label>
-                                        <input type="number" min={1} max={120} value={storeData.returnPolicy.warrantyDuration} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, warrantyDuration: parseInt(e.target.value) || 0 } }))} className="glass-input" />
+                                        <input type="number" min={1} max={120} value={storeData.returnPolicy.warrantyDuration} onChange={e => setStoreData(prev => ({ ...prev, returnPolicy: { ...prev.returnPolicy, warrantyDuration: Number(e.target.value) || 0 } }))} className="glass-input" />
                                     </div>
                                     <div>
                                         <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'hsl(var(--muted-foreground))' }}>Warranty Description</label>

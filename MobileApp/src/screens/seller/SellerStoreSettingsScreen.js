@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import StoreModerationNotice from '../../components/common/StoreModerationNotice';
+import { RETURN_RESOLUTION_CHOICES, editableReturnResolution } from '../../utils/returns';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Alert, RefreshControl, Platform, ActivityIndicator, Switch, Linking,
@@ -899,12 +900,8 @@ export default function SellerStoreSettingsScreen({ navigation }) {
               />
               <Text style={[styles.label, { marginTop: spacing.lg }]}>Resolution</Text>
               <View style={styles.paymentPolicyGrid}>
-                {[
-                  { value: 'full_refund', title: 'Full refund', desc: 'Refund the approved amount to the buyer Rozare Wallet.', icon: 'wallet-outline' },
-                  { value: 'store_credit', title: 'Rozare Wallet credit', desc: 'Credit the approved amount to the buyer Rozare Wallet.', icon: 'card-outline' },
-                  { value: 'replacement_only', title: 'Replacement only', desc: 'Approve a replacement instead of a wallet refund.', icon: 'swap-horizontal-outline' },
-                ].map(option => {
-                  const active = formData.returnPolicy.refundType === option.value;
+                {RETURN_RESOLUTION_CHOICES.map(option => {
+                  const active = editableReturnResolution(formData.returnPolicy.refundType) === option.value;
                   return (
                     <TouchableOpacity key={option.value} style={[styles.paymentPolicyCard, active && styles.paymentPolicyCardActive]} onPress={() => updateReturnPolicy('refundType', option.value)} activeOpacity={0.8}>
                       <Ionicons name={option.icon} size={18} color={active ? palette.colors.primary : palette.colors.textSecondary} />

@@ -11,7 +11,10 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Linking,
 } from 'react-native';
+import { Image } from 'expo-image';
+import SellerAfterSalesActionModal from './SellerAfterSalesActionModal';
 import Modal from './common/AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -31,6 +34,7 @@ import {
   RETURN_STATUS_TRANSITIONS,
   returnResolutionLabel,
   returnStatusColor,
+  warrantyStatusLabel,
 } from '../utils/returns';
 import { inspectReturnPresentationSnapshot } from '../utils/returnPresentationSafety';
 import { isExactNonNegativeJsonMoney } from '../utils/sellerMoneySafety';
@@ -48,6 +52,8 @@ const STATUS_FILTERS = [
   ['accepted_pending_payment', 'Payment Due'],
   ['returned', 'Returned'],
   ['replacement_approved', 'Replacement'],
+  ['replacement_shipped', 'Replacement shipped'],
+  ['replacement_delivered', 'Replacement received'],
   ['rejected', 'Rejected'],
   ['cancelled_by_buyer', 'Cancelled'],
 ];
@@ -188,7 +194,11 @@ function MetaPill({ icon, children, styles, palette }) {
   );
 }
 
-export default function SellerReturnsPanel({ header, route, navigation }) {
+export default function SellerReturnsPanel({ header, route, navigation, kind = 'return' }) {
+  const warranty = kind === 'warranty';
+  const base = `/api/${warranty ? 'warranties' : 'returns'}`;
+  const linkedClaim = warranty ? route?.params?.warrantyId : null;
+  const statusText = value => warranty ? warrantyStatusLabel(value) : RETURN_STATUS_LABELS[value];
   const { palette } = useTheme();
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const { formatAmount } = useCurrency();
@@ -202,6 +212,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
   const [dialog, setDialog] = useState(null);
+  const [specialAction, setSpecialAction] = useState(null);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submittingRequestId, setSubmittingRequestId] = useState('');
@@ -213,17 +224,19 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
     setDialog(null);
     setNote('');
     try {
-      const response = await api.get('/api/returns/seller', {
+      const targeted = linkedClaim && !search.trim() && status === 'all';
+      const response = await api.get(targeted ? `${base}/${linkedClaim}` : `${base}/seller`, {
         params: {
           ...(status !== 'all' ? { status } : {}),
           ...(search.trim() ? { search: search.trim() } : {}),
         },
       });
       if (requestId !== requestSequence.current) return;
-      if (!Array.isArray(response.data?.returns)) {
+      const rows = targeted ? (response.data?.returnRequest?.kind === 'warranty' ? [response.data.returnRequest] : null) : response.data?.returns;
+      if (!Array.isArray(rows)) {
         throw new Error('The returns service sent an invalid response. Please try again.');
       }
-      setRequests(response.data.returns);
+      setRequests(rows);
       setHasLoaded(true);
     } catch (error) {
       if (requestId !== requestSequence.current) return;
@@ -234,7 +247,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
         setRefreshing(false);
       }
     }
-  }, [search, status]);
+  }, [search, status, base, linkedClaim]);
 
   useEffect(() => {
     setLoading(true);
@@ -281,16 +294,17 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       setDialog(null);
       return;
     }
-    if (dialog.status === 'rejected' && note.trim().length < 5) {
+    if (dialog.status === 'rejected' && note.trim().length < (warranty ? 10 : 5)) {
       Feedback.show({ type: 'error', text1: 'Add a clear rejection reason' });
       return;
     }
     setSubmitting(true);
     setSubmittingRequestId(String(dialog.request._id));
     try {
-      await api.patch(`/api/returns/${dialog.request._id}/status`, {
+      await api.patch(`${base}/${dialog.request._id}/status`, {
         status: dialog.status,
         note: note.trim(),
+        expectedUpdatedAt: dialog.request.updatedAt,
       });
       Feedback.show({ type: 'success', text1: 'Return updated', text2: 'The buyer was notified on Rozare and WhatsApp.' });
       setDialog(null);
@@ -332,10 +346,11 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
       const fingerprint = JSON.stringify({ returnRequestId: String(request._id) });
       const attempt = fundingSource === 'card'
         ? await getOrCreatePersistedMutationAttemptInLedger({ storage: AsyncStorage, storageKey, fingerprint, keyPrefix: 'mobile-return' }) : null;
-      const response = await api.post(`/api/returns/${request._id}/accept`, {
+      const response = await api.post(`${base}/${request._id}/accept`, {
         ...(fundingSource ? { fundingSource } : {}),
         ...(attempt ? { paymentProvider: 'safepay', requestKey: attempt.key } : {}),
         platform: 'mobile',
+        expectedRefundAmount: snapshot.refund.totalAmount, expectedRefundCurrency: snapshot.currency, expectedReturnUpdatedAt: request.updatedAt,
       });
       if (response.data?.requiresPayment) {
         setDialog(null);
@@ -416,12 +431,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
     const deadline = formatDateTime(request.eligibilityDeadline);
     const itemCount = snapshot.itemCount;
     const requestBusy = submitting && submittingRequestId === String(request._id);
-    const resolution = returnResolutionLabel(request.policySnapshot?.refundType);
+    const resolution = warranty && !request.resolution ? 'Awaiting your decision' : returnResolutionLabel(request.policySnapshot?.refundType);
     const requestItems = Array.isArray(request.items) ? request.items : [];
     const statusHistory = Array.isArray(request.statusHistory) ? request.statusHistory : [];
     const returnNumber = displayText(request.returnNumber, 'Unavailable');
     const orderId = displayText(request.orderId, 'Unavailable');
-    const statusLabel = RETURN_STATUS_LABELS[request.status] || displayText(request.status, 'Unknown status');
+    const statusLabel = statusText(request.status) || displayText(request.status, 'Unknown status');
 
     return (
       <GlassPanel variant="card" style={styles.card}>
@@ -442,7 +457,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
             <Ionicons name="return-down-back-outline" size={21} color={palette.colors.primary} />
           </View>
           <View style={styles.cardTitleCopy}>
-            <Text style={styles.returnNumber}>Return #{returnNumber}</Text>
+            <Text style={styles.returnNumber}>{warranty ? 'Claim' : 'Return'} #{returnNumber}</Text>
             {!!requestedAt && <Text style={styles.meta}>Requested {requestedAt}</Text>}
           </View>
           <View style={[styles.badge, { backgroundColor: `${color}18`, borderColor: `${color}45` }]}>
@@ -547,6 +562,15 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
           )}
         </View>
 
+        {warranty && snapshot.valid && <View style={{ gap: 10, marginTop: 14 }}>
+          <Text style={styles.meta}>Original {request.warrantySnapshot.months}-month warranty · {formatDateTime(request.warrantySnapshot.deadline)}{request.appealVersion ? ` · Appeal ${request.appealVersion}` : ''}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{request.evidenceUrls.map((url, index) => <TouchableOpacity key={`${url}-${index}`} onPress={() => Linking.openURL(url).catch(() => Feedback.show({ type: 'error', text1: 'Unable to open photo' }))} accessibilityLabel={`View claim photo ${index + 1}`}><Image source={{ uri: url }} style={{ width: 80, height: 80, borderRadius: 12 }} contentFit="cover" /></TouchableOpacity>)}</View>
+          {!!request.decisionReason && <Text style={styles.reasonBody}>Your decision: {request.decisionReason}</Text>}
+          {request.evidenceHistory?.length > 1 && request.evidenceHistory.map(entry => <View key={entry.version} style={styles.reasonBox}><Text style={styles.reasonLabel}>{entry.version ? `Appeal ${entry.version}` : 'Original on-time claim'}</Text><Text style={styles.meta}>{formatDateTime(entry.submittedAt)}</Text><Text style={styles.reasonBody}>{entry.reason}</Text><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>{entry.urls.map((url, index) => <TouchableOpacity key={`${entry.version}-${index}`} accessibilityLabel={`View submission ${entry.version} photo ${index + 1}`} onPress={() => Linking.openURL(url).catch(() => Feedback.show({ type: 'error', text1: 'Unable to open photo' }))}><Image source={{ uri: url }} style={{ width: 72, height: 72, borderRadius: 12 }} contentFit="cover" /></TouchableOpacity>)}</View></View>)}
+        </View>}
+        {snapshot.valid && request.replacement?.shippedAt && <View style={styles.reasonBox}><Text style={styles.reasonLabel}>Replacement shipment</Text><Text style={styles.reasonBody}>{request.replacement.shippingMethod === 'courier' ? `${request.replacement.carrier} · ${request.replacement.trackingNumber}` : 'Hand delivery'}</Text>{!!request.replacement.deliveredAt && <Text style={styles.meta}>Buyer confirmed: {formatDateTime(request.replacement.deliveredAt)}</Text>}</View>}
+        {snapshot.valid && request.status === 'replacement_approved' && <TouchableOpacity style={[styles.acceptButton, { alignSelf: 'flex-start', marginTop: 12 }]} disabled={submitting} onPress={() => setSpecialAction({ type: 'dispatch', request })}><Text style={styles.acceptText}>Dispatch replacement</Text></TouchableOpacity>}
+
         {transitions.length > 0 && (
           <View style={styles.actionSection}>
             <Text style={styles.actionLabel}>Next action</Text>
@@ -558,12 +582,12 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
             >
               {transitions.map(nextStatus => {
                 const isReject = nextStatus === 'rejected';
-                const label = ACTION_LABELS[nextStatus] || RETURN_STATUS_LABELS[nextStatus] || nextStatus;
+                const label = warranty && request.status === 'requested' ? (nextStatus === 'approved' ? 'Approve claim' : 'Decline claim') : ACTION_LABELS[nextStatus] || RETURN_STATUS_LABELS[nextStatus] || nextStatus;
                 return (
                   <TouchableOpacity
                     key={nextStatus}
                     style={[styles.actionButton, isReject && styles.rejectButton, submitting && styles.disabled]}
-                    onPress={() => { setNote(''); setDialog({ request, status: nextStatus }); }}
+                    onPress={() => { setNote(''); if (warranty && request.status === 'requested') setSpecialAction({ type: 'decision', request, status: nextStatus }); else setDialog({ request, status: nextStatus }); }}
                     disabled={submitting}
                     activeOpacity={0.76}
                     accessibilityRole="button"
@@ -596,7 +620,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
             {statusHistory.map((rawEntry, index) => {
               const entry = rawEntry && typeof rawEntry === 'object' && !Array.isArray(rawEntry) ? rawEntry : {};
               const changedAt = formatDateTime(entry.changedAt);
-              const entryStatus = RETURN_STATUS_LABELS[entry.status] || displayText(entry.status, 'Unknown status');
+              const entryStatus = statusText(entry.status) || displayText(entry.status, 'Unknown status');
               const entryNote = displayText(entry.note, '');
               return (
                 <View key={`${displayText(entry.status, 'unknown')}-${displayText(entry.changedAt, 'unknown')}-${index}`} style={styles.historyRow}>
@@ -626,6 +650,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   const filterHeader = (
     <View>
       {header}
+      {linkedClaim && <TouchableOpacity onPress={() => navigation?.setParams?.({ warrantyId: undefined })} style={{ padding: 14 }}><Text style={styles.filterText}>View all warranty claims</Text></TouchableOpacity>}
       {initialLoading ? (
         <ReturnFiltersSkeleton styles={styles} />
       ) : (
@@ -635,8 +660,8 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
               <Ionicons name="return-down-back-outline" size={20} color={palette.colors.primary} />
             </View>
             <View style={styles.filterHeadingCopy}>
-              <Text style={styles.filterEyebrow}>RETURN OPERATIONS</Text>
-              <Text style={styles.filterTitle}>Return requests</Text>
+              <Text style={styles.filterEyebrow}>{warranty ? 'WARRANTY CARE' : 'RETURN OPERATIONS'}</Text>
+              <Text style={styles.filterTitle}>{warranty ? 'Warranty claims' : 'Return requests'}</Text>
               <Text style={styles.filterSubtitle}>
                 {loadError ? 'Results are hidden until a fresh load succeeds.' : `${activeFilterLabel} returns in this view`}
               </Text>
@@ -671,7 +696,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
             <TextInput
               value={search}
               onChangeText={setSearch}
-              placeholder="Search return number, order or reason"
+              placeholder={warranty ? 'Search claim, order or reason' : 'Search return number, order or reason'}
               placeholderTextColor={palette.colors.textSecondary}
               style={styles.searchInput}
               returnKeyType="search"
@@ -769,10 +794,10 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
     return (
       <SellerEmptyState
         icon="return-down-back-outline"
-        title={filterActive ? 'No matching returns' : 'No return requests yet'}
+        title={filterActive ? 'No matching requests' : warranty ? 'No warranty claims yet' : 'No return requests yet'}
         message={filterActive
           ? 'Try another status or clear your search to see more requests.'
-          : 'New buyer return requests will appear here with their refund and replacement details.'}
+          : warranty ? 'Review buyer photos, declare the resolution and manage original on-time appeals here.' : 'New buyer return requests will appear here with their refund and replacement details.'}
         actionLabel={filterActive ? 'Clear filters' : undefined}
         onAction={filterActive ? clearFilters : undefined}
       />
@@ -780,13 +805,14 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
   })();
 
   const visibleRequests = (loading && hasLoaded) || loadError ? [] : requests;
-  const rejectionNoteInvalid = dialog?.status === 'rejected' && note.trim().length < 5;
+  const rejectionNoteInvalid = dialog?.status === 'rejected' && note.trim().length < (warranty ? 10 : 5);
   const dialogSnapshotInvalid = Boolean(dialog?.request)
     && !inspectReturnPresentationSnapshot(dialog.request).valid;
   const confirmDisabled = submitting || rejectionNoteInvalid || dialogSnapshotInvalid;
 
   return (
     <>
+      {specialAction && <SellerAfterSalesActionModal key={`${specialAction.request._id}-${specialAction.type}`} action={specialAction} kind={kind} onClose={() => setSpecialAction(null)} onSuccess={load} />}
       <FlatList
         data={visibleRequests}
         keyExtractor={(item, index) => (typeof item?._id === 'string' && item._id ? item._id : `invalid-return-${index}`)}
@@ -873,7 +899,7 @@ export default function SellerReturnsPanel({ header, route, navigation }) {
                   style={[styles.noteHelper, rejectionNoteInvalid && styles.noteHelperError]}
                   accessibilityLiveRegion="polite"
                 >
-                  {dialog?.status === 'rejected' ? 'At least 5 characters required' : 'Keep the update clear and useful.'}
+                  {dialog?.status === 'rejected' ? `At least ${warranty ? 10 : 5} characters required` : 'Keep the update clear and useful.'}
                 </Text>
                 <Text style={styles.characterCount}>{note.length}/1000</Text>
               </View>

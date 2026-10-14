@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import api, { API_ENDPOINTS, API_UPLOAD_TIMEOUT_MS } from '../../config/api';
 import SmartTagGenerator from '../../components/SmartTagGenerator';
+import { RETURN_RESOLUTION_CHOICES, editableReturnResolution } from '../../utils/returns';
 import Loader from '../../components/common/Loader';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
@@ -45,11 +46,7 @@ export const normalizeInitialImages = normalizeInitialProductImages;
 export { buildProductImagePayload, buildProductPayload, buildProductReturnPolicy };
 export const validateProductForm = validateProductFormContract;
 
-const REFUND_TYPES = [
-  { value: 'full_refund', label: 'Full refund', icon: 'cash-outline' },
-  { value: 'store_credit', label: 'Store credit', icon: 'wallet-outline' },
-  { value: 'replacement_only', label: 'Replacement', icon: 'swap-horizontal-outline' },
-];
+const REFUND_TYPES = RETURN_RESOLUTION_CHOICES;
 
 const isRemoteImage = (uri) => /^https?:\/\//i.test(String(uri || ''));
 
@@ -761,7 +758,7 @@ export default function ProductFormScreen({ navigation, route }) {
                     <Text style={styles.label}>Approved return resolution <Text style={{ color: palette.colors.error }}>*</Text></Text>
                     <View style={styles.refundTypeGrid}>
                       {REFUND_TYPES.map((option) => {
-                        const active = returnPolicy.refundType === option.value;
+                        const active = editableReturnResolution(returnPolicy.refundType) === option.value;
                         return (
                           <TouchableOpacity
                             key={option.value}
@@ -804,7 +801,7 @@ export default function ProductFormScreen({ navigation, route }) {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.policyToggleTitle}>Product warranty</Text>
-                    <Text style={styles.policyToggleText}>Offer repair, replacement, or coverage terms.</Text>
+                    <Text style={styles.policyToggleText}>Coverage from delivery. Resolve claims with a Wallet refund or replacement.</Text>
                   </View>
                   <Switch
                     value={returnPolicy.warrantyEnabled === true}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { RETURN_RESOLUTION_CHOICES, editableReturnResolution } from '../../utils/returns';
 import useProductModerationUpdates from '../../hooks/useProductModerationUpdates';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
@@ -1057,14 +1058,15 @@ const ProductForm = ({ product, setProduct, onSave, onClose, uploadingImages }) 
                                 </div>
                                 {product.returnPolicy?.returnsEnabled && (
                                     <div className="grid grid-cols-2 gap-3">
-                                        <input type="number" min={1} placeholder="Return days" value={product.returnPolicy?.returnDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, returnDuration: parseInt(e.target.value) || 0 } })} className="glass-input text-sm" />
-                                        <select value={product.returnPolicy?.refundType || 'none'} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, refundType: e.target.value } })} className="glass-input text-sm cursor-pointer">
-                                            <option value="none">No Refund</option><option value="full_refund">Full Refund</option><option value="replacement_only">Replacement</option><option value="store_credit">Store Credit</option>
+                                        <input type="number" min={1} placeholder="Return days" value={product.returnPolicy?.returnDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, returnDuration: Number(e.target.value) || 0 } })} className="glass-input text-sm" />
+                                        <select aria-label="Return Resolution" value={editableReturnResolution(product.returnPolicy?.refundType)} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, refundType: e.target.value } })} className="glass-input text-sm cursor-pointer">
+                                            <option value="none" disabled>Choose a resolution</option>
+                                            {RETURN_RESOLUTION_CHOICES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                                         </select>
                                     </div>
                                 )}
                                 {product.returnPolicy?.warrantyEnabled && (
-                                    <input type="number" min={1} placeholder="Warranty months" value={product.returnPolicy?.warrantyDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, warrantyDuration: parseInt(e.target.value) || 0 } })} className="glass-input text-sm" />
+                                    <input type="number" min={1} placeholder="Warranty months" value={product.returnPolicy?.warrantyDuration || ''} onChange={e => setProduct({ ...product, returnPolicy: { ...product.returnPolicy, warrantyDuration: Number(e.target.value) || 0 } })} className="glass-input text-sm" />
                                 )}
                             </div>
                         )}

@@ -85,6 +85,7 @@ function PrimaryViewTabs({ active, onChange, styles, palette }) {
       {[
         { id: 'orders', label: 'Orders', icon: 'receipt-outline' },
         { id: 'returns', label: 'Returns', icon: 'return-down-back-outline' },
+        { id: 'warranty', label: 'Warranty', icon: 'shield-checkmark-outline' },
       ].map((item) => {
         const selected = active === item.id;
         return (
@@ -112,7 +113,7 @@ export default function OrderManagementScreen({ navigation, route }) {
   const isAdmin = route?.params?.isAdmin === true;
 
   const [primaryView, setPrimaryView] = useState(
-    !isAdmin && route?.params?.tab === 'returns' ? 'returns' : 'orders',
+    !isAdmin && ['returns', 'warranty'].includes(route?.params?.tab) ? route.params.tab : 'orders',
   );
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -133,7 +134,7 @@ export default function OrderManagementScreen({ navigation, route }) {
   const initialLoadStarted = useRef(false);
 
   useEffect(() => {
-    if (!isAdmin && route?.params?.tab === 'returns') setPrimaryView('returns');
+    if (!isAdmin && ['returns', 'warranty'].includes(route?.params?.tab)) setPrimaryView(route.params.tab);
   }, [isAdmin, route?.params?.tab]);
 
   const filters = useMemo(() => ({ search, status, paymentStatus, startDate, endDate }), [
@@ -492,16 +493,16 @@ export default function OrderManagementScreen({ navigation, route }) {
       <SafeAreaView style={styles.safeArea} edges={Platform.OS === 'android' ? [] : ['top']}>
         <SellerScreenHeader
           navigation={navigation}
-          title={primaryView === 'returns' ? 'Return Centre' : 'Order Centre'}
-          subtitle={primaryView === 'returns' ? 'Review requests and fund approved returns' : 'Fulfilment, verification and reports'}
-          icon={primaryView === 'returns' ? 'return-down-back-outline' : 'receipt-outline'}
+          title={primaryView === 'warranty' ? 'Warranty Care' : primaryView === 'returns' ? 'Return Centre' : 'Order Centre'}
+          subtitle={primaryView === 'warranty' ? 'Claims, appeals and declared resolutions' : primaryView === 'returns' ? 'Review requests and fund approved returns' : 'Fulfilment, verification and reports'}
+          icon={primaryView === 'warranty' ? 'shield-checkmark-outline' : primaryView === 'returns' ? 'return-down-back-outline' : 'receipt-outline'}
           rightIcon="refresh-outline"
           rightLabel="Refresh"
           onRightPress={primaryView === 'orders' ? onRefresh : undefined}
         />
 
-        {primaryView === 'returns' && !isAdmin ? (
-          <SellerReturnsPanel header={viewTabs} route={route} navigation={navigation} />
+        {['returns', 'warranty'].includes(primaryView) && !isAdmin ? (
+          <SellerReturnsPanel key={primaryView} kind={primaryView === 'warranty' ? 'warranty' : 'return'} header={viewTabs} route={route} navigation={navigation} />
         ) : (
           <FlatList
             data={orders}

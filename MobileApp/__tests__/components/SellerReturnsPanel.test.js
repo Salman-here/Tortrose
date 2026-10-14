@@ -5,6 +5,8 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 const mockFormatAmount = jest.fn(value => `$${Number(value).toFixed(2)}`);
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
+jest.mock('expo-image', () => ({ Image: 'Image' }));
+jest.mock('expo-crypto', () => ({ randomUUID: () => '64b00000-0000-4000-8000-000000000001' }));
 
 jest.mock('../../src/components/common/KeyboardAwareFormScrollView', () => {
   const ReactModule = require('react');
@@ -153,7 +155,7 @@ describe('SellerReturnsPanel', () => {
       fireEvent.press(screen.getByText('Accept return'));
       const choices = dialog.mock.calls.at(-1)[2];
       await act(async () => { await choices.find(choice => choice.text === 'Seller Balance').onPress(); });
-      expect(api.post).toHaveBeenCalledWith(expect.stringContaining('/accept'), { fundingSource: 'seller_balance', platform: 'mobile' });
+      expect(api.post).toHaveBeenCalledWith(expect.stringContaining('/accept'), expect.objectContaining({ fundingSource: 'seller_balance', platform: 'mobile', expectedRefundAmount: 230, expectedRefundCurrency: 'PKR' }));
       expect(mockFormatAmount).toHaveBeenCalledWith(1999.90, { targetCurrency: currency, showCode: true });
       expect(Feedback.show).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', text1: 'Could not accept return' }));
     } finally { dialog.mockRestore(); }

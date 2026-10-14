@@ -81,6 +81,22 @@ test('cumulative refund and reversal debits cancel the exact original seller cre
   expect(s.balanceByCurrency.PKR.returnRefundDebits + s.balanceByCurrency.PKR.paymentReversalDebits).toBe(2800);
   expect(s.balanceByCurrency.USD.withdrawableBalance).toBe(10);
 });
+
+test.each(Object.keys(rates).flatMap(native => Object.keys(rates).map(buyer => [native, buyer])))('mixed return and warranty refunds preserve exact cumulative %s cents for a %s purchase', (native, buyer) => {
+  const sale = order(native, buyer), total = sale.orderSummary.totalAmount;
+  sale.onlineFeeSnapshot = require('../../services/onlineOrderFeeService').buildOnlineOrderFee(sale);
+  const first = Math.round(total * 0.333 * 100) / 100;
+  const second = Math.round((total - first) * 100) / 100;
+  const debit = (amount, warrantyFunding) => ({ order: sale._id, sourceAmount: amount, sourceCurrency: buyer,
+    amountUSD: Math.round(amount / rates[buyer] * 100) / 100, type: 'return_refund', direction: 'debit', status: 'completed',
+    referenceType: 'return_request', metadata: { warrantyFunding } });
+  const before = summary([sale], { reportingCurrency: native });
+  const combined = summary([sale], { reportingCurrency: native, transactions: [debit(first, false), debit(second, true)] });
+  expect(combined.balanceByCurrency[native].returnRefundDebits).toBe(10 * rates[native]);
+  expect(combined.balanceByCurrency[native].onlineFeeDeductions).toBeGreaterThan(0);
+  expect(combined.balanceByCurrency[native].onlineFeeDeductions).toBeLessThan(before.balanceByCurrency[native].onlineFeeDeductions);
+  expect(getExchangeRateSnapshot).not.toHaveBeenCalled();
+});
 test('a post-payout refund creates a same-currency deficit, not a debit from another balance', () => {
   const o = order('PKR');
   const s = summary([o, order('USD')], { transactions: [{ order:o._id, sourceAmount:2800, sourceCurrency:'PKR', amountUSD:10,

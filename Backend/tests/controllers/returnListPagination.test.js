@@ -55,8 +55,8 @@ test('buyer return list exposes exact deterministic continuation metadata', asyn
     query: { orderId: ORDER_ID, page: '2', limit: '100' },
   }, res);
 
-  expect(mockCountDocuments).toHaveBeenCalledWith({ buyer: BUYER_ID, order: ORDER_ID });
-  expect(mockFind).toHaveBeenCalledWith({ buyer: BUYER_ID, order: ORDER_ID });
+  expect(mockCountDocuments).toHaveBeenCalledWith({ buyer: BUYER_ID, order: ORDER_ID, kind: { $ne: 'warranty' } });
+  expect(mockFind).toHaveBeenCalledWith({ buyer: BUYER_ID, order: ORDER_ID, kind: { $ne: 'warranty' } });
   expect(mockSort).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
   expect(mockSkip).toHaveBeenCalledWith(100);
   expect(mockLimit).toHaveBeenCalledWith(100);

@@ -976,6 +976,20 @@ const returnSellerTemplates = (returnNumber, orderNumber) => ({
   },
 });
 
+const warrantySettlementTemplates = ({ claimNumber, orderNumber, seller = false, liabilityApplied = false }) => {
+  const title = 'Warranty refund completed';
+  const summary = seller
+    ? `Warranty claim #${claimNumber} for order #${orderNumber} is complete. The buyer’s refund of {{money.refund_total}} has been credited to their Rozare Wallet.`
+    : `Your warranty claim #${claimNumber} for order #${orderNumber} is complete. Refund: {{money.refund_total}}.`;
+  const detail = !seller && liabilityApplied
+    ? 'Available Wallet credit: {{money.refund_wallet_available}}. Applied to your outstanding Wallet balance owed: {{money.refund_liability_applied}}. Balance still owed: {{money.refund_remaining_liability}}.'
+    : !seller ? 'The refund is available in your Rozare Wallet for your next purchase.' : 'View Orders → Warranty in Seller Dashboard for the settlement details.';
+  return { inapp: { title, body: `${summary} ${detail}` }, push: { title, body: summary },
+    email: { subject: `${title} — ${claimNumber}`, text: `${summary}\n\n${detail}`,
+      html: `<p>${escapeHtml(summary)}</p><p>${escapeHtml(detail)}</p>` },
+    whatsapp: { message: `*${title}*\n\n${summary}\n\n${detail}` } };
+};
+
 const loadReturnWalletTransaction = async (returnRequest, suppliedTransaction, session) => {
   const expectedId = stringId(returnRequest?.settlement?.walletTransaction);
   if (!expectedId) {
@@ -1007,6 +1021,7 @@ async function enqueueReturnSettlementNotifications(returnRequest, order, {
     throw outboxError('The return notification buyer does not own the related order.');
   }
   const returnNumber = safeText(returnRequest?.returnNumber || id, 100);
+  const warranty = returnRequest.kind === 'warranty';
   const orderNumber = safeText(returnRequest?.orderId || order?.orderId || relatedOrder, 100);
   const occurredAt = requireEventDate(returnRequest?.settlement?.settledAt, 'Return settlement timestamp');
   const refundMoney = returnRefundSnapshot(returnRequest);
@@ -1070,13 +1085,13 @@ async function enqueueReturnSettlementNotifications(returnRequest, order, {
       allowBlocked: true,
     },
     channels: selectedBuyerChannels,
-    templates: returnBuyerTemplates(returnNumber, orderNumber, liabilityApplied),
+    templates: warranty ? warrantySettlementTemplates({ claimNumber: returnNumber, orderNumber, liabilityApplied }) : returnBuyerTemplates(returnNumber, orderNumber, liabilityApplied),
     metadata: {
       category: 'order',
-      linkTo: `/user-dashboard/order/detail/${relatedOrder}?returnId=${id}`,
+      linkTo: `/user-dashboard/order/detail/${relatedOrder}?${warranty ? 'warrantyId' : 'returnId'}=${id}`,
       channelId: 'orders',
       relatedOrder,
-      data: { type: 'return_settled', returnRequestId: id, orderId: relatedOrder },
+      data: { type: 'return_settled', returnRequestId: id, orderId: relatedOrder, ...(warranty ? { claimKind: 'warranty' } : {}) },
     },
     money: buyerMoney,
     session,
@@ -1096,14 +1111,14 @@ async function enqueueReturnSettlementNotifications(returnRequest, order, {
       allowBlocked: true,
     },
     channels: sellerChannels,
-    templates: returnSellerTemplates(returnNumber, orderNumber),
+    templates: warranty ? warrantySettlementTemplates({ claimNumber: returnNumber, orderNumber, seller: true }) : returnSellerTemplates(returnNumber, orderNumber),
     metadata: {
       category: 'order',
-      linkTo: `/seller-dashboard/order-management?tab=returns&returnId=${id}`,
+      linkTo: `/seller-dashboard/order-management?tab=${warranty ? 'warranty' : 'returns'}&${warranty ? 'warrantyId' : 'returnId'}=${id}`,
       channelId: 'seller',
       whatsappCategory: 'return_update',
       relatedOrder,
-      data: { type: 'return_settled', returnRequestId: id, orderId: relatedOrder },
+      data: { type: 'return_settled', returnRequestId: id, orderId: relatedOrder, ...(warranty ? { claimKind: 'warranty' } : {}) },
     },
     money: sellerMoney,
     session,

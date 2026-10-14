@@ -20,6 +20,8 @@ export const RETURN_STATUS_LABELS = Object.freeze({
   accepted_pending_payment: 'Accepted - refund payment pending',
   returned: 'Returned - wallet refund issued',
   replacement_approved: 'Replacement approved',
+  replacement_shipped: 'Replacement shipped',
+  replacement_delivered: 'Replacement received',
   rejected: 'Return rejected',
   cancelled_by_buyer: 'Cancelled by buyer',
 });
@@ -46,14 +48,23 @@ export const RETURN_STATUS_TRANSITIONS = Object.freeze({
 });
 
 export const returnResolutionLabel = (value) => ({
-  full_refund: 'Full refund to Rozare Wallet',
-  store_credit: 'Rozare Wallet credit',
+  full_refund: 'Refund to Rozare Wallet',
+  store_credit: 'Refund to Rozare Wallet',
   replacement_only: 'Replacement only',
 }[value] || 'No return resolution');
 
 export const returnStatusColor = (status, palette) => {
-  if (['returned', 'replacement_approved'].includes(status)) return palette.colors.success;
+  if (['returned', 'replacement_delivered'].includes(status)) return palette.colors.success;
   if (['rejected', 'cancelled_by_buyer'].includes(status)) return palette.colors.error;
   if (status === 'accepted_pending_payment') return palette.colors.warning;
   return palette.colors.primary;
 };
+
+export const RETURN_RESOLUTION_CHOICES = Object.freeze([
+  { value: 'full_refund', label: 'Refund to Rozare Wallet', title: 'Refund to Rozare Wallet', icon: 'wallet-outline', desc: 'Refund the original approved amount to the buyer’s Rozare Wallet.' },
+  { value: 'replacement_only', label: 'Replacement only', title: 'Replacement only', icon: 'swap-horizontal-outline', desc: 'Replace the returned product without another buyer payment.' },
+]);
+export const editableReturnResolution = value => value === 'store_credit' ? 'full_refund' : value || 'none';
+export const warrantyStatusLabel = status => ({ requested: 'Claim received', approved: 'Claim approved',
+  rejected: 'Claim declined', returned: 'Wallet refund completed', under_review: 'Warranty inspection',
+  accepted_pending_payment: 'Refund funding pending' }[status] || RETURN_STATUS_LABELS[status] || 'Claim update');

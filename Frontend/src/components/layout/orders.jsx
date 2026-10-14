@@ -25,11 +25,11 @@ const OrderManagement = () => {
     const [exporting, setExporting] = useState(false);
     const [exportFormat, setExportFormat] = useState('pdf');
     const [searchParams, setSearchParams] = useSearchParams();
-    const activeView = currentUser?.role === 'seller' && searchParams.get('tab') === 'returns' ? 'returns' : 'orders';
+    const activeView = currentUser?.role === 'seller' && ['returns', 'warranty'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'orders';
 
     const setActiveView = (view) => {
         const next = new URLSearchParams(searchParams);
-        if (view === 'returns') next.set('tab', 'returns');
+        if (['returns', 'warranty'].includes(view)) next.set('tab', view);
         else next.delete('tab');
         setSearchParams(next, { replace: true });
     };
@@ -134,7 +134,7 @@ const OrderManagement = () => {
             </div>
 
             {currentUser?.role === 'seller' && (
-                <div className="glass-panel p-1.5 mb-6 grid grid-cols-2 gap-1.5" role="tablist" aria-label="Order views">
+                <div className="glass-panel p-1.5 mb-6 grid grid-cols-3 gap-1.5" role="tablist" aria-label="Order views">
                     <button type="button" onClick={() => setActiveView('orders')} role="tab" aria-selected={activeView === 'orders'}
                         className="px-4 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-2 transition-all"
                         style={activeView === 'orders' ? { background: 'hsl(var(--primary))', color: 'white' } : { color: 'hsl(var(--muted-foreground))' }}>
@@ -145,11 +145,16 @@ const OrderManagement = () => {
                         style={activeView === 'returns' ? { background: 'hsl(150, 60%, 40%)', color: 'white' } : { color: 'hsl(var(--muted-foreground))' }}>
                         <RotateCcw size={15} /> Return Orders
                     </button>
+                    <button type="button" onClick={() => setActiveView('warranty')} role="tab" aria-selected={activeView === 'warranty'}
+                        className="px-2 sm:px-4 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-2"
+                        style={activeView === 'warranty' ? { background: 'hsl(var(--primary))', color: 'white' } : { color: 'hsl(var(--muted-foreground))' }}>
+                        <CheckCircle size={15} /> Warranty
+                    </button>
                 </div>
             )}
 
-            {activeView === 'returns' ? (
-                <ReturnOrdersPanel formatPrice={formatPrice} />
+            {['returns', 'warranty'].includes(activeView) ? (
+                <ReturnOrdersPanel key={activeView} kind={activeView === 'warranty' ? 'warranty' : 'return'} formatPrice={formatPrice} />
             ) : (
                 <>
 

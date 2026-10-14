@@ -18,6 +18,8 @@ const RETURN_STATUS_LABELS = Object.freeze({
   accepted_pending_payment: 'Accepted - refund payment pending',
   returned: 'Returned - wallet refund issued',
   replacement_approved: 'Replacement approved',
+  replacement_shipped: 'Replacement shipped',
+  replacement_delivered: 'Replacement delivered',
   rejected: 'Return rejected',
   cancelled_by_buyer: 'Cancelled by buyer',
 });
@@ -32,7 +34,9 @@ const RETURN_STATUS_TRANSITIONS = Object.freeze({
   under_review: ['rejected'],
   accepted_pending_payment: [],
   returned: [],
-  replacement_approved: [],
+  replacement_approved: ['replacement_shipped'],
+  replacement_shipped: ['replacement_delivered'],
+  replacement_delivered: [],
   rejected: [],
   cancelled_by_buyer: [],
 });
@@ -60,12 +64,13 @@ const normalizeReturnPolicy = (value = {}, { strict = false } = {}) => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const returnsEnabled = source.returnsEnabled === true;
   const returnDuration = Math.trunc(Number(source.returnDuration) || 0);
-  const refundType = normalizeRefundType(source.refundType);
+  const storedType = normalizeRefundType(source.refundType);
+  const refundType = strict && storedType === 'store_credit' ? 'full_refund' : storedType;
   const warrantyEnabled = source.warrantyEnabled === true;
   const warrantyDuration = Math.trunc(Number(source.warrantyDuration) || 0);
 
   if (strict && returnsEnabled) {
-    if (returnDuration < 1 || returnDuration > 365) {
+    if (!Number.isInteger(Number(source.returnDuration)) || returnDuration < 1 || returnDuration > 365) {
       throw returnPolicyError('Return window must be between 1 and 365 days.', 'INVALID_RETURN_WINDOW');
     }
     if (refundType === 'none') {
@@ -73,7 +78,7 @@ const normalizeReturnPolicy = (value = {}, { strict = false } = {}) => {
     }
   }
 
-  if (strict && warrantyEnabled && (warrantyDuration < 1 || warrantyDuration > 120)) {
+  if (strict && warrantyEnabled && (!Number.isInteger(Number(source.warrantyDuration)) || warrantyDuration < 1 || warrantyDuration > 120)) {
     throw returnPolicyError('Warranty duration must be between 1 and 120 months.', 'INVALID_WARRANTY_WINDOW');
   }
 

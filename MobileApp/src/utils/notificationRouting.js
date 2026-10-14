@@ -208,7 +208,8 @@ export function resolveNotificationTarget(notification, roleOrUser) {
       const linkedOrderId = decodePathPart(buyerOrderMatch[1]);
       if (linkedOrderId) {
         const linkedReturnId = queryParam(linkTo, 'returnId');
-        return detailTarget(linkedOrderId, linkedReturnId ? { returnId: linkedReturnId } : {});
+        const warrantyId = queryParam(linkTo, 'warrantyId');
+        return detailTarget(linkedOrderId, { ...(linkedReturnId ? { returnId: linkedReturnId } : {}), ...(warrantyId ? { warrantyId } : {}) });
       }
     }
 
@@ -236,12 +237,14 @@ export function resolveNotificationTarget(notification, roleOrUser) {
         if (linkedOrderId) return sellerOrderTarget(linkedOrderId);
         const tab = queryParam(linkTo, 'tab');
         const linkedReturnId = queryParam(linkTo, 'returnId') || returnRequestId;
+        const warrantyId = queryParam(linkTo, 'warrantyId');
         return {
           screen: 'SellerOrderManagement',
           params: {
             isAdmin: false,
             ...(tab ? { tab } : {}),
             ...(linkedReturnId ? { returnRequestId: linkedReturnId } : {}),
+            ...(warrantyId ? { warrantyId } : {}),
           },
         };
       }

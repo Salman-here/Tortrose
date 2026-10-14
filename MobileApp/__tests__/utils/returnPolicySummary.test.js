@@ -5,7 +5,7 @@ const full = { returnsEnabled: true, returnDuration: 14, refundType: 'full_refun
 
 test('item-specific frozen return terms do not disappear when the item is not yet eligible', () => {
   expect(returnGroupPolicyLabel({ policy: disabled, eligible: false, items: [{ returnPolicy: full }] }))
-    .toBe('14-day returns - Full refund to Rozare Wallet');
+    .toBe('14-day returns - Refund to Rozare Wallet');
 });
 
 test('mixed windows or return availability have an honest mixed-policy label', () => {

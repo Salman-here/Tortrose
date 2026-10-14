@@ -36,6 +36,7 @@ import {
   inspectBuyerReturnsResponse,
 } from '../utils/returnPresentationSafety';
 import { getReturnItemVariantLabels } from '../utils/returnItemVariants';
+import ReplacementReceipt from './ReplacementReceipt';
 
 const REASONS = [
   ['damaged', 'Arrived damaged'],
@@ -51,6 +52,7 @@ const UNRESOLVED_RETURN_STATUSES = new Set([
   'requested', 'approved', 'pickup_scheduled', 'picked_up',
   'in_transit_to_seller', 'received_by_seller', 'under_review',
   'accepted_pending_payment',
+  'replacement_approved', 'replacement_shipped',
 ]);
 const activeReturnForSeller = (requests, orderId, sellerId) => requests.find(request => (
   request.order === orderId && request.seller._id === sellerId
@@ -555,6 +557,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
                 </TouchableOpacity>
               )}
             </View>
+            <ReplacementReceipt request={request} onChanged={load} />
             {request.statusHistory.length > 0 && (
               <View style={styles.history}>
                 {request.statusHistory.map((entry, index) => (

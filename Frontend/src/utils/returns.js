@@ -20,6 +20,8 @@ export const RETURN_STATUS_LABELS = Object.freeze({
   accepted_pending_payment: 'Accepted - refund payment pending',
   returned: 'Returned - wallet refund issued',
   replacement_approved: 'Replacement approved',
+  replacement_shipped: 'Replacement shipped',
+  replacement_delivered: 'Replacement received',
   rejected: 'Return rejected',
   cancelled_by_buyer: 'Cancelled by buyer',
 });
@@ -41,7 +43,7 @@ export const BUYER_CANCELLABLE_RETURN_STATUSES = new Set([
 ]);
 
 export const returnStatusTone = (status) => {
-  if (['returned', 'replacement_approved'].includes(status)) {
+  if (['returned', 'replacement_delivered'].includes(status)) {
     return { background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 38%)' };
   }
   if (['rejected', 'cancelled_by_buyer'].includes(status)) {
@@ -54,7 +56,16 @@ export const returnStatusTone = (status) => {
 };
 
 export const returnResolutionLabel = (refundType) => ({
-  full_refund: 'Rozare Wallet refund',
-  store_credit: 'Rozare Wallet credit',
+  full_refund: 'Refund to Rozare Wallet',
+  store_credit: 'Refund to Rozare Wallet',
   replacement_only: 'Replacement only',
 }[refundType] || 'Seller resolution');
+
+export const RETURN_RESOLUTION_CHOICES = Object.freeze([
+  { value: 'full_refund', label: 'Refund to Rozare Wallet' },
+  { value: 'replacement_only', label: 'Replacement only' },
+]);
+export const editableReturnResolution = value => value === 'store_credit' ? 'full_refund' : value || 'none';
+export const warrantyStatusLabel = status => ({ requested: 'Claim received', approved: 'Claim approved',
+  rejected: 'Claim declined', returned: 'Wallet refund completed', under_review: 'Warranty inspection',
+  accepted_pending_payment: 'Refund funding pending' }[status] || RETURN_STATUS_LABELS[status] || 'Claim update');

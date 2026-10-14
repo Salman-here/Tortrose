@@ -20,10 +20,10 @@ const escapeHtml = value => String(value || '')
   .replace(/'/g, '&#039;');
 
 const buyerReturnLink = (returnRequest) =>
-  `/user-dashboard/order/detail/${returnRequest.order}?returnId=${returnRequest._id}`;
+  `/user-dashboard/order/detail/${returnRequest.order}?${returnRequest.kind === 'warranty' ? 'warrantyId' : 'returnId'}=${returnRequest._id}`;
 
 const sellerReturnLink = (returnRequest) =>
-  `/seller-dashboard/order-management?tab=returns&returnId=${returnRequest._id}`;
+  `/seller-dashboard/order-management?tab=${returnRequest.kind === 'warranty' ? 'warranty' : 'returns'}&${returnRequest.kind === 'warranty' ? 'warrantyId' : 'returnId'}=${returnRequest._id}`;
 
 const requireStoredReturnCurrency = (returnRequest) => {
   const rawCurrency = returnRequest?.currency;
@@ -90,12 +90,16 @@ const snapshotEmail = order => {
 
 const notifySellerReturnRequested = async (returnRequest, order, { session = null } = {}) => {
   if (!returnRequest?._id || !returnRequest?.seller || !returnRequest?.order) return false;
-  const occurredAt = returnRequest.requestedAt || returnRequest.createdAt;
+  const warranty = returnRequest.kind === 'warranty';
+  const appeal = warranty && returnRequest.appealVersion > 0;
+  const occurredAt = appeal ? statusNotificationOccurrence(returnRequest).occurredAt : returnRequest.requestedAt || returnRequest.createdAt;
+  const noun = warranty ? 'warranty claim' : 'return request';
+  const title = appeal ? 'Warranty appeal received' : warranty ? 'New warranty claim' : 'New return request';
   const buyerName = order?.shippingInfo?.fullName || 'A buyer';
   const body = notificationBody(
-    `${buyerName} requested return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${returnRequest.reasonDetails ? ` Reason: ${returnRequest.reasonDetails}` : ''}`
+    `${buyerName} ${appeal ? 'appealed' : 'submitted'} ${noun} #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${returnRequest.reasonDetails ? ` Reason: ${returnRequest.reasonDetails}` : ''}`
   );
-  const eventKey = `return:${returnRequest._id}:requested:seller:${returnRequest.seller}`;
+  const eventKey = `return:${returnRequest._id}:requested:seller:${returnRequest.seller}${appeal ? `:appeal:${returnRequest.appealVersion}` : ''}`;
   const records = await enqueueNotificationEvent({
     eventKey,
     eventType: 'return.requested',
@@ -110,14 +114,14 @@ const notifySellerReturnRequested = async (returnRequest, order, { session = nul
     },
     channels: ['inapp', 'push', 'email', 'whatsapp'],
     templates: {
-      inapp: { title: 'New return request', body },
-      push: { title: 'New return request', body: `Return #${returnRequest.returnNumber} for order #${returnRequest.orderId} is awaiting your review.` },
+      inapp: { title, body },
+      push: { title, body: `${warranty ? 'Warranty claim' : 'Return'} #${returnRequest.returnNumber} for order #${returnRequest.orderId} is awaiting your review.` },
       email: {
-        subject: `New return request for order #${returnRequest.orderId}`,
-        text: `${body}\n\nReview the return request in Seller Dashboard and respond to the buyer.`,
-        html: `<p>${escapeHtml(body)}</p><p>Review the return request in Seller Dashboard and respond to the buyer.</p>`,
+        subject: `${title} for order #${returnRequest.orderId}`,
+        text: `${body}\n\nReview the ${noun} in Seller Dashboard and respond to the buyer.`,
+        html: `<p>${escapeHtml(body)}</p><p>Review the ${noun} in Seller Dashboard and respond to the buyer.</p>`,
       },
-      whatsapp: { message: sellerTemplates.return_requested(returnRequest) },
+      whatsapp: { message: warranty ? `*${title}*\n\nClaim: #${returnRequest.returnNumber}\nOrder: #${returnRequest.orderId}\nReason: ${returnRequest.reasonDetails}\n\nReview the photos in Seller Dashboard → Orders → Warranty. Declare a refund or replacement when approving, or explain a rejection.` : sellerTemplates.return_requested(returnRequest) },
     },
     metadata: {
       category: 'order',
@@ -128,6 +132,7 @@ const notifySellerReturnRequested = async (returnRequest, order, { session = nul
         type: 'return_requested',
         returnRequestId: String(returnRequest._id),
         orderId: String(returnRequest.order),
+        ...(warranty ? { claimKind: 'warranty' } : {}),
       },
     },
     session,
@@ -152,13 +157,16 @@ const enqueueReturnCancellationNotifications = async (
     throw error;
   }
   const occurrence = statusNotificationOccurrence(returnRequest);
+  const warranty = returnRequest.kind === 'warranty';
+  const noun = warranty ? 'warranty claim' : 'return';
+  const heading = warranty ? 'Warranty claim' : 'Return';
   const cleanNote = String(occurrence.note || '').trim().slice(0, 500);
   const noteLine = cleanNote ? ` Note: ${cleanNote}` : '';
   const buyerBody = notificationBody(
-    `You cancelled return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
+    `You cancelled ${noun} #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
   );
   const sellerBody = notificationBody(
-    `The buyer cancelled return #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
+    `The buyer cancelled ${noun} #${returnRequest.returnNumber} for order #${returnRequest.orderId}.${noteLine}`
   );
   const eventRoot = `return:${returnRequest._id}:cancelled:${occurrence.occurredAt.getTime()}`;
   const aggregate = {
@@ -173,6 +181,7 @@ const enqueueReturnCancellationNotifications = async (
     returnRequestId: String(returnRequest._id),
     orderId: String(returnRequest.order),
     status: 'cancelled_by_buyer',
+    ...(warranty ? { claimKind: 'warranty' } : {}),
   };
 
   const seller = await enqueueNotificationEvent({
@@ -186,23 +195,23 @@ const enqueueReturnCancellationNotifications = async (
     },
     channels: ['inapp', 'push', 'email', 'whatsapp'],
     templates: {
-      inapp: { title: 'Return request cancelled', body: sellerBody },
-      push: { title: 'Return request cancelled', body: sellerBody },
+      inapp: { title: warranty ? 'Warranty claim cancelled' : 'Return request cancelled', body: sellerBody },
+      push: { title: warranty ? 'Warranty claim cancelled' : 'Return request cancelled', body: sellerBody },
       email: {
-        subject: `Return #${returnRequest.returnNumber} was cancelled`,
-        text: `${sellerBody}\n\nView the return in Seller Dashboard for details.`,
-        html: `<p>${escapeHtml(sellerBody)}</p><p>View the return in Seller Dashboard for details.</p>`,
+        subject: `${heading} #${returnRequest.returnNumber} was cancelled`,
+        text: `${sellerBody}\n\nView the ${noun} in Seller Dashboard for details.`,
+        html: `<p>${escapeHtml(sellerBody)}</p><p>View the ${noun} in Seller Dashboard for details.</p>`,
       },
       whatsapp: {
         message: [
-          '*Buyer cancelled a return request*',
+          warranty ? '*Buyer cancelled a warranty claim*' : '*Buyer cancelled a return request*',
           '',
-          `Return: #${returnRequest.returnNumber}`,
+          `${heading}: #${returnRequest.returnNumber}`,
           `Order: #${returnRequest.orderId}`,
           'Status: Cancelled by buyer',
           cleanNote ? `Note: ${cleanNote}` : '',
           '',
-          'View the return in Seller Dashboard for details.',
+          `View the ${noun} in Seller Dashboard for details.`,
         ].filter(Boolean).join('\n'),
       },
     },
@@ -222,27 +231,27 @@ const enqueueReturnCancellationNotifications = async (
   if (email) buyerChannels.push('email');
   if (phone) buyerChannels.push('whatsapp');
   const buyerTemplates = {
-    inapp: { title: 'Return cancelled', body: buyerBody },
-    push: { title: 'Return cancelled', body: buyerBody },
+    inapp: { title: `${heading} cancelled`, body: buyerBody },
+    push: { title: `${heading} cancelled`, body: buyerBody },
   };
   if (email) {
     buyerTemplates.email = {
-      subject: `Return #${returnRequest.returnNumber} cancelled`,
-      text: `${buyerBody}\n\nThis cancels the return request, not your original purchase. View your order in Rozare for details.`,
-      html: `<p>${escapeHtml(buyerBody)}</p><p>This cancels the return request, not your original purchase. View your order in Rozare for details.</p>`,
+      subject: `${heading} #${returnRequest.returnNumber} cancelled`,
+      text: `${buyerBody}\n\nYour original purchase is unchanged. View your order in Rozare for details.`,
+      html: `<p>${escapeHtml(buyerBody)}</p><p>Your original purchase is unchanged. View your order in Rozare for details.</p>`,
     };
   }
   if (phone) {
     buyerTemplates.whatsapp = {
       message: [
-        '*Your return request is cancelled*',
+        warranty ? '*Your warranty claim is cancelled*' : '*Your return request is cancelled*',
         '',
-        `Return: #${returnRequest.returnNumber}`,
+        `${heading}: #${returnRequest.returnNumber}`,
         `Order: #${returnRequest.orderId}`,
         'Status: Cancelled',
         cleanNote ? `Note: ${cleanNote}` : '',
         '',
-        'This cancels the return request, not your original purchase. View your order in Rozare for details.',
+        'Your original purchase is unchanged. View your order in Rozare for details.',
       ].filter(Boolean).join('\n'),
     };
   }
@@ -280,8 +289,24 @@ const RETURN_NOTIFICATION_COPY = Object.freeze({
   under_review: { title: 'Your return is being reviewed', detail: 'Your returned items are being reviewed. We will notify you when the return is resolved.' },
   accepted_pending_payment: { title: 'Return accepted — refund pending', detail: 'Your return was accepted. The refund has not been credited yet; we will notify you when it is completed.' },
   replacement_approved: { title: 'Replacement approved', detail: 'A replacement was approved for your return. View the return details for the next steps.' },
+  replacement_shipped: { title: 'Your replacement has shipped', detail: 'Your replacement is on its way. View tracking details and confirm receipt when it arrives.' },
+  replacement_delivered: { title: 'Replacement received', detail: 'You confirmed receipt of the replacement. Your original warranty deadline is unchanged.' },
   rejected: { title: 'Return request declined', detail: 'Your return request was declined. View the return details for the reason.' },
   cancelled_by_buyer: { title: 'Return request cancelled', detail: 'You cancelled this return request. Your original purchase is unchanged.' },
+});
+
+const WARRANTY_NOTIFICATION_COPY = Object.freeze({
+  requested: { title: 'Warranty claim received', detail: 'Your warranty claim is awaiting the seller’s decision.' },
+  approved: { title: 'Warranty claim approved', detail: 'View the seller’s planned resolution and collection instructions in your claim.' },
+  pickup_scheduled: { title: 'Warranty collection scheduled', detail: 'Collection has been scheduled. View your claim for instructions.' },
+  picked_up: { title: 'Warranty item collected', detail: 'Your warranty item has been collected.' },
+  in_transit_to_seller: { title: 'Warranty item on its way', detail: 'Your item is on its way to the seller.' },
+  received_by_seller: { title: 'Warranty item received', detail: 'The seller has received your item.' },
+  under_review: { title: 'Warranty inspection in progress', detail: 'The seller is inspecting the item under your original warranty.' },
+  accepted_pending_payment: { title: 'Warranty refund pending', detail: 'The seller has accepted the refund. It is not yet credited; we will notify you when it completes.' },
+  replacement_approved: { title: 'Warranty replacement approved', detail: 'The seller is preparing your replacement. You do not need to make another payment.' },
+  rejected: { title: 'Warranty claim declined', detail: 'Review the seller’s reason. You can appeal this original on-time claim, even if the warranty has since expired.' },
+  cancelled_by_buyer: { title: 'Warranty claim cancelled', detail: 'You cancelled this claim. Your original purchase is unchanged.' },
 });
 
 const notifyBuyerReturnStatus = async (
@@ -306,21 +331,23 @@ const notifyBuyerReturnStatus = async (
   if (!current?._id || !current?.buyer || !current?.order) return false;
   const occurrence = statusNotificationOccurrence(current);
   const cleanNote = String(occurrence.note ?? note ?? '').trim().slice(0, 500);
-  const copy = RETURN_NOTIFICATION_COPY[current.status];
+  const warranty = current.kind === 'warranty';
+  const copy = warranty ? WARRANTY_NOTIFICATION_COPY[current.status] || RETURN_NOTIFICATION_COPY[current.status] : RETURN_NOTIFICATION_COPY[current.status];
+  const noun = warranty ? 'Warranty claim' : 'Return';
   const label = copy?.title || RETURN_STATUS_LABELS[current.status] || 'Return update';
-  const noteLine = cleanNote ? ` Note: ${cleanNote}` : '';
+  const noteLine = `${warranty && current.resolution ? ` Planned resolution: ${current.resolution === 'refund' ? 'refund to Rozare Wallet' : 'replacement'}.` : ''}${cleanNote ? ` Note: ${cleanNote}` : ''}`;
   const body = notificationBody(
-    `Return #${current.returnNumber} for order #${current.orderId}: ${copy?.detail || 'Your return status has been updated.'}${noteLine}`
+    `${noun} #${current.returnNumber} for order #${current.orderId}: ${copy?.detail || 'Your claim status has been updated.'}${noteLine}`
   );
   const whatsappMessage = [
       `*${label}*`,
       '',
-      `Return: #${current.returnNumber}`,
+      `${noun}: #${current.returnNumber}`,
       `Order: #${current.orderId}`,
       copy?.detail || 'Your return status has been updated.',
-      cleanNote ? `Note: ${cleanNote}` : '',
+      noteLine.trim(),
       '',
-      'View your return in Rozare for details.',
+      `View your ${warranty ? 'warranty claim' : 'return'} in Rozare for details.`,
     ].filter(Boolean).join('\n');
   const phone = snapshotPhone(order);
   const email = snapshotEmail(order);
@@ -333,9 +360,9 @@ const notifyBuyerReturnStatus = async (
   };
   if (email) {
     templates.email = {
-      subject: `${label}: return #${current.returnNumber}`,
-      text: `${body}\n\nView your return in Rozare for details.`,
-      html: `<p>${escapeHtml(body)}</p><p>View your return in Rozare for details.</p>`,
+      subject: `${label}: ${warranty ? 'claim' : 'return'} #${current.returnNumber}`,
+      text: `${body}\n\nView your ${warranty ? 'warranty claim' : 'return'} in Rozare for details.`,
+      html: `<p>${escapeHtml(body)}</p><p>View your ${warranty ? 'warranty claim' : 'return'} in Rozare for details.</p>`,
     };
   }
   if (phone) templates.whatsapp = { message: whatsappMessage };
@@ -366,6 +393,7 @@ const notifyBuyerReturnStatus = async (
         returnRequestId: String(current._id),
         orderId: String(current.order),
         status: current.status,
+        ...(warranty ? { claimKind: 'warranty' } : {}),
       },
     },
     session,

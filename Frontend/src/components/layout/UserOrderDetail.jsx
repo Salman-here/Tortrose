@@ -18,6 +18,7 @@ import {
     getOrderTotal,
 } from "../../utils/orderItems";
 import BuyerReturnsPanel from "./BuyerReturnsPanel";
+import BuyerWarrantyPanel from './BuyerWarrantyPanel';
 import BuyerSellerFulfillmentGroups from "../order/BuyerSellerFulfillmentGroups";
 import BuyerCancellationDialog from '../order/BuyerCancellationDialog';
 import { getConfirmationSourceLabel } from "../../utils/whatsapp";
@@ -441,6 +442,7 @@ const OrderDetail = () => {
             </div>
 
             {order.awaitingPayment !== true && <BuyerReturnsPanel order={order} formatMoney={orderMoney} />}
+            {order.awaitingPayment !== true && <BuyerWarrantyPanel key={order._id} order={order} formatMoney={orderMoney} />}
 
             {showCancelConfirm && <BuyerCancellationDialog order={order} sellerIds={cancelSellerIds || undefined}
               formatMoney={orderMoney} onClose={() => setShowCancelConfirm(false)} onBusyChange={value => {
