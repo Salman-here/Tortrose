@@ -103,12 +103,12 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
   const updateStatus = async () => {
     if (!dialog?.request || !dialog?.status) return;
     if (!inspectReturnPresentationSnapshot(dialog.request).valid) {
-      toast.error('This return has an invalid financial snapshot. Refresh before updating its status.');
+      toast.error(`This ${warranty ? 'warranty claim' : 'return'} has invalid payment details. Refresh before updating its status.`);
       setDialog(null);
       return;
     }
     if (!(RETURN_STATUS_TRANSITIONS[dialog.request.status] || []).includes(dialog.status)) {
-      toast.error('This status change is no longer available. Refresh the return and try again.');
+      toast.error(`This status change is no longer available. Refresh the ${warranty ? 'claim' : 'return'} and try again.`);
       setDialog(null);
       return;
     }
@@ -124,7 +124,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
       setNote('');
       await load();
     } catch (error) {
-      toast.error(error.response?.data?.msg || 'Failed to update return status.');
+      toast.error(error.response?.data?.msg || `Unable to update the ${warranty ? 'warranty claim' : 'return'}.`);
     } finally {
       setSubmitting(false);
     }
@@ -133,7 +133,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
   const acceptReturn = async (request, fundingSource) => {
     const snapshot = inspectReturnPresentationSnapshot(request);
     if (!snapshot.valid) {
-      toast.error('This return has an invalid financial snapshot. Refresh before accepting it.');
+      toast.error(`This ${warranty ? 'warranty claim' : 'return'} has invalid payment details. Refresh before continuing.`);
       setDialog(null);
       return;
     }
@@ -145,7 +145,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
         || (!replacementOnly && ['held_order', 'seller_balance', 'card'].includes(fundingSource))
       );
     if (!actionValid) {
-      toast.error('This refund action is no longer available. Refresh the return and try again.');
+      toast.error(`This refund action is no longer available. Refresh the ${warranty ? 'claim' : 'return'} and try again.`);
       setDialog(null);
       return;
     }
@@ -173,7 +173,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
           await load(); return;
         }
       }
-      toast.success(response.data?.msg || 'Return completed and buyer notified.');
+      toast.success(response.data?.msg || `${warranty ? 'Warranty resolution' : 'Return'} completed and buyer notified.`);
       setDialog(null);
       await load();
     } catch (error) {
@@ -184,7 +184,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
       const availableText = isExactNonNegativeJsonMoney(available)
         ? ` Available balance: ${formatPrice(available, { sourceCurrency: availableCurrency, targetCurrency: availableCurrency, showCode: true })}.`
         : '';
-      toast.error(`${error.response?.data?.msg || 'Failed to accept return.'}${availableText}`);
+      toast.error(`${error.response?.data?.msg || `Unable to complete the ${warranty ? 'warranty resolution' : 'return'}.`}${availableText}`);
     } finally {
       setSubmitting(false);
     }
@@ -238,7 +238,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
       ) : loadError ? (
         <div className="glass-panel py-12 px-5 text-center" role="alert">
           <XCircle size={30} className="mx-auto mb-3" style={{ color: 'hsl(0, 72%, 55%)' }} />
-          <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Returns unavailable</p>
+          <p className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{warranty ? 'Warranty claims unavailable' : 'Returns unavailable'}</p>
           <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{loadError}</p>
           <button type="button" onClick={load} className="glass-button px-4 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center gap-2 mt-4">
             <RefreshCw size={14} /> Retry
@@ -375,7 +375,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
                   <h3 id="seller-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{dialog.type === 'dispatch' ? 'Dispatch replacement' : dialog.type === 'decision' ? (dialog.status === 'approved' ? 'Approve warranty claim' : 'Decline warranty claim') : dialog.type === 'accept' ? (warranty ? 'Complete warranty resolution' : 'Accept return') : actionLabels[dialog.status]}</h3>
                   <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{warranty ? 'Claim' : 'Return'} #{displayText(dialog.request.returnNumber, 'Unavailable')}</p>
                 </div>
-                <button type="button" className="glass-button p-2 rounded-lg disabled:opacity-50" disabled={submitting} onClick={closeDialog} aria-label="Close return update"><X size={16} /></button>
+                <button type="button" className="glass-button p-2 rounded-lg disabled:opacity-50" disabled={submitting} onClick={closeDialog} aria-label={warranty ? 'Close warranty update' : 'Close return update'}><X size={16} /></button>
               </div>
 
               {dialog.type === 'decision' ? <div className="space-y-4 mt-5">
@@ -416,11 +416,12 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
                 </>
               ) : (
                 <>
-                  <p className="text-sm mt-5" style={{ color: 'hsl(var(--muted-foreground))' }}>The return becomes completed only after the full amount is funded and credited to the buyer's Rozare Wallet.</p>
+                  <div className="glass-inner rounded-xl p-3 mt-5 flex items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Refund amount</span><strong className="text-sm">{formatPrice(dialog.request.refund.totalAmount, { sourceCurrency: dialog.request.currency, targetCurrency: dialog.request.currency, showCode: true })}</strong></div>
+                  <p className="text-sm mt-3" style={{ color: 'hsl(var(--muted-foreground))' }}>{warranty ? 'The warranty refund completes' : 'The return completes'} only after the full amount is funded and credited to the buyer's Rozare Wallet.</p>
                   <div className="grid gap-3 mt-4">
                     <button type="button" onClick={() => acceptReturn(dialog.request, 'seller_balance')} disabled={submitting} className="glass-button p-4 rounded-xl text-left inline-flex items-start gap-3 disabled:opacity-50">
                       <WalletCards size={19} className="mt-0.5 shrink-0" style={{ color: "var(--modal-success)" }} />
-                      <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Use seller balance</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Available delivered online revenue is debited atomically.</span></span>
+                      <span><strong className="block text-sm" style={{ color: 'hsl(var(--foreground))' }}>Use seller balance</strong><span className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>Fund the refund from your available online balance.</span></span>
                     </button>
                     <button type="button" onClick={() => acceptReturn(dialog.request, 'card')} disabled={submitting} className="glass-button p-4 rounded-xl text-left inline-flex items-start gap-3 disabled:opacity-50">
                       <CreditCard size={19} className="mt-0.5 shrink-0" style={{ color: "var(--modal-info)" }} />

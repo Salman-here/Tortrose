@@ -368,7 +368,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
         await load();
         return;
       }
-      Feedback.show({ type: 'success', text1: response.data?.msg || 'Return completed' });
+      Feedback.show({ type: 'success', text1: response.data?.msg || (warranty ? 'Warranty resolution completed' : 'Return completed') });
       setDialog(null);
       await load();
     } catch (error) {
@@ -381,7 +381,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
         : '';
       Feedback.show({
         type: 'error',
-        text1: 'Could not accept return',
+        text1: warranty ? 'Warranty resolution not completed' : 'Could not accept return',
         text2: `${getApiError(error, 'Try again.')}${availableText}`,
       });
     } finally {
@@ -394,7 +394,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
   const chooseFunding = (request) => {
     const snapshot = inspectReturnPresentationSnapshot(request);
     if (!snapshot.valid) {
-      Feedback.show({ type: 'error', text1: 'Return unavailable', text2: 'Refresh this return before choosing refund funding.' });
+      Feedback.show({ type: 'error', text1: warranty ? 'Warranty claim unavailable' : 'Return unavailable', text2: `Refresh this ${warranty ? 'claim' : 'return'} before choosing refund funding.` });
       return;
     }
     if (request.policySnapshot?.refundType === 'replacement_only') {
@@ -412,7 +412,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
     }
     Alert.alert(
       'Fund buyer wallet refund',
-      `Choose how to fund ${formatAmount(snapshot.refund.totalAmount, { targetCurrency: snapshot.currency })}. The return completes only after the buyer wallet is credited.`,
+      `Choose how to fund ${formatAmount(snapshot.refund.totalAmount, { targetCurrency: snapshot.currency })}. The ${warranty ? 'warranty refund' : 'return'} completes only after the buyer's Rozare Wallet is credited.`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Seller Balance', onPress: () => accept(request, 'seller_balance') },
