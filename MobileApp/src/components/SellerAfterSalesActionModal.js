@@ -44,7 +44,8 @@ export default function SellerAfterSalesActionModal({ action, kind, onClose, onS
 }
 const createStyles = p => StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(0,0,0,0.55)' },
-  modal: { width: '100%', maxWidth: 520, maxHeight: '90%', alignSelf: 'center', borderRadius: 24 },
+  // Keep the flex scroller inside a real viewport on Android and iOS.
+  modal: { width: '100%', maxWidth: 520, height: '88%', maxHeight: 760, padding: 0, alignSelf: 'center', borderRadius: 24 },
   content: { padding: 20, gap: 12 }, title: { color: p.colors.text, fontSize: 21, fontWeight: '800' },
   text: { color: p.colors.text, fontSize: 14 }, muted: { color: p.colors.textSecondary, fontSize: 12, lineHeight: 18 },
   field: { gap: 8 }, label: { color: p.colors.text, fontWeight: '700', fontSize: 13 },

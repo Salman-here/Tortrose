@@ -136,5 +136,7 @@ const createStyles = p => StyleSheet.create({
   text: { color: p.colors.text, fontSize: 13, lineHeight: 19 }, muted: { color: p.colors.textSecondary, fontSize: 12, lineHeight: 18 }, status: { color: p.colors.text, fontSize: 12, fontWeight: '700' },
   card: { padding: 16, borderRadius: 20, gap: 10 }, gallery: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, photo: { width: 80, height: 80, borderRadius: 12 }, history: { borderLeftWidth: 2, borderLeftColor: p.colors.primary, paddingLeft: 10, gap: 4 },
   button: { backgroundColor: p.colors.primary, borderRadius: 14, minHeight: 46, padding: 12, alignItems: 'center', justifyContent: 'center' }, buttonText: { color: '#fff', fontSize: 13, fontWeight: '700' }, secondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: p.colors.border },
-  overlay: { flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)', padding: 18 }, modal: { maxHeight: '90%', width: '100%', maxWidth: 520, borderRadius: 24, alignSelf: 'center' }, content: { padding: 20, gap: 12 }, input: { borderWidth: 1, borderColor: p.colors.border, color: p.colors.text, padding: 12, borderRadius: 14, minHeight: 46 }, multiline: { minHeight: 110 },
+  // The shared keyboard-aware scroller fills its parent. Give it a bounded
+  // viewport; maxHeight alone collapses the native form to an empty panel.
+  overlay: { flex: 1, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)', padding: 18 }, modal: { height: '88%', maxHeight: 760, width: '100%', maxWidth: 520, padding: 0, borderRadius: 24, alignSelf: 'center' }, content: { padding: 20, gap: 12 }, input: { borderWidth: 1, borderColor: p.colors.border, color: p.colors.text, padding: 12, borderRadius: 14, minHeight: 46 }, multiline: { minHeight: 110 },
 });
