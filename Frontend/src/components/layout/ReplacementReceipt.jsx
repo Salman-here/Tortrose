@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { getAuthToken } from '../../utils/cookieHelper';
 import { inspectReturnPresentationSnapshot } from '../../utils/returnPresentationSafety';
 import AfterSalesConfirmDialog from '../common/AfterSalesConfirmDialog';
+import { publishAfterSalesChange } from '../../utils/afterSalesRefresh';
 
 export default function ReplacementReceipt({ request, onChanged }) {
   const [busy, setBusy] = useState(false);
@@ -14,7 +15,7 @@ export default function ReplacementReceipt({ request, onChanged }) {
     try {
       const response = await axios.post(`${import.meta.env.VITE_API_URL}api/returns/${request._id}/replacement/receive`, {}, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
       if (!inspectReturnPresentationSnapshot(response.data?.returnRequest).valid || response.data.returnRequest.status !== 'replacement_delivered') throw new Error('Delivery confirmation could not be verified.');
-      setConfirming(false); await onChanged(); toast.success('Replacement received.');
+      setConfirming(false); await onChanged(); publishAfterSalesChange(request.order); toast.success('Replacement received.');
     } catch (error) { toast.error(error.response?.data?.msg || error.message || 'Unable to confirm receipt.'); }
     finally { setBusy(false); }
   };

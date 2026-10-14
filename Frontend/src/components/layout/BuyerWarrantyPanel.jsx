@@ -8,6 +8,7 @@ import { inspectWarrantyCoverage, inspectWarrantyList } from '../../utils/warran
 import { BUYER_CANCELLABLE_RETURN_STATUSES, warrantyStatusLabel, returnStatusTone } from '../../utils/returns';
 import { useReturnDialogAccessibility } from '../../utils/returnDialogAccessibility';
 import AfterSalesConfirmDialog from '../common/AfterSalesConfirmDialog';
+import { publishAfterSalesChange, subscribeAfterSalesChange } from '../../utils/afterSalesRefresh';
 
 const API = `${import.meta.env.VITE_API_URL}api/warranties`;
 const options = () => ({ headers: { Authorization: `Bearer ${getAuthToken()}` }, timeout: 20000 });
@@ -45,6 +46,9 @@ export default function BuyerWarrantyPanel({ order, formatMoney }) {
     } finally { if (generation.current === sequence) setLoading(false); }
   }, [order]);
   useEffect(() => { load(); return () => { generation.current += 1; }; }, [load]);
+  useEffect(() => subscribeAfterSalesChange(orderId => {
+    if (orderId === order._id && !mutation.current && !dialog && !confirmation) void load({ quiet: true });
+  }), [load, order._id, dialog, confirmation]);
   const activeClaim = claims.some(claim => !['returned', 'replacement_delivered', 'rejected', 'cancelled_by_buyer'].includes(claim.status));
   useEffect(() => {
     const refresh = () => { if (!mutation.current && !dialog && !confirmation && document.visibilityState === 'visible') load({ quiet: true }); };
@@ -90,7 +94,7 @@ export default function BuyerWarrantyPanel({ order, formatMoney }) {
       if (!inspectWarrantyList([response.data?.returnRequest], order)
         || dialog.claim && response.data.returnRequest._id !== dialog.claim._id
         || !dialog.claim && (response.data.returnRequest.items[0].orderItemId !== dialog.item.orderItemId || response.data.returnRequest.items[0].quantity !== quantity)) throw new Error('Claim confirmation could not be verified. Refresh before submitting again.');
-      setDialog(null); await load(); toast.success(dialog.claim ? 'Appeal sent under your original warranty.' : 'Warranty claim sent to the seller.');
+      setDialog(null); await load(); publishAfterSalesChange(order._id); toast.success(dialog.claim ? 'Appeal sent under your original warranty.' : 'Warranty claim sent to the seller.');
     } catch (failure) { toast.error(failure.response?.data?.msg || failure.message || 'Unable to submit this claim.'); }
     finally { mutation.current = false; setBusy(false); }
   };
@@ -100,7 +104,7 @@ export default function BuyerWarrantyPanel({ order, formatMoney }) {
     try {
       const response = await axios.post(`${API}/${claim._id}/${action === 'cancel' ? 'cancel' : 'replacement/receive'}`, {}, options());
       if (!inspectWarrantyList([response.data?.returnRequest], order) || response.data.returnRequest._id !== claim._id) throw new Error('Claim update could not be verified.');
-      setConfirmation(null); await load(); toast.success(action === 'cancel' ? 'Claim cancelled.' : 'Replacement received. Your original warranty deadline is unchanged.');
+      setConfirmation(null); await load(); publishAfterSalesChange(order._id); toast.success(action === 'cancel' ? 'Claim cancelled.' : 'Replacement received. Your original warranty deadline is unchanged.');
     } catch (failure) { toast.error(failure.response?.data?.msg || failure.message); }
     finally { mutation.current = false; setBusy(false); }
   };

@@ -37,6 +37,7 @@ import {
 } from '../utils/returnPresentationSafety';
 import { getReturnItemVariantLabels } from '../utils/returnItemVariants';
 import ReplacementReceipt from './ReplacementReceipt';
+import { publishAfterSalesChange, subscribeAfterSalesChange } from '../utils/afterSalesRefresh';
 
 const REASONS = [
   ['damaged', 'Arrived damaged'],
@@ -231,6 +232,9 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
   }, [load]);
 
   const returnPending = requests.some(request => UNRESOLVED_RETURN_STATUSES.has(request.status));
+  useEffect(() => subscribeAfterSalesChange(orderId => {
+    if (orderId === orderContext.orderId && isFocused && AppState.currentState === 'active' && !selectedGroup && !mutationInProgressRef.current) void load({ notify: false, silent: true });
+  }), [load, orderContext.orderId, isFocused, selectedGroup]);
   useEffect(() => {
     if (!returnPending || submitting || cancellingId || !isFocused) return;
     return startCancellationRefundRefresh(
@@ -384,6 +388,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         return;
       }
       requestKeyRef.current = null;
+      publishAfterSalesChange(orderContext.orderId);
       Feedback.show({
         type: 'success',
         text1: response.data.replayed ? 'Return request already received' : 'Return request sent',
@@ -455,6 +460,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
               return;
             }
             Feedback.show({ type: 'success', text1: 'Return request cancelled' });
+            publishAfterSalesChange(orderContext.orderId);
           } catch (error) {
             if (!isCurrentMutation()) return;
             const refreshed = await load({ notify: false });
@@ -462,6 +468,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
             const refetched = refreshed.requests.find(candidate => candidate._id === current._id);
             if (refreshed.valid && refetched?.status === 'cancelled_by_buyer') {
               Feedback.show({ type: 'success', text1: 'Return request cancelled' });
+              publishAfterSalesChange(orderContext.orderId);
               return;
             }
             Feedback.show({ type: 'error', text1: 'Could not cancel', text2: responseMessage(error, 'Try again.') });

@@ -14,6 +14,7 @@ import Feedback from '../utils/feedback';
 import { inspectWarrantyCoverage, inspectWarrantyList } from '../utils/warrantySafety';
 import { BUYER_CANCELLABLE_RETURN_STATUSES, returnStatusColor, warrantyStatusLabel } from '../utils/returns';
 import WarrantyEvidenceHistory from './WarrantyEvidenceHistory';
+import { publishAfterSalesChange, subscribeAfterSalesChange } from '../utils/afterSalesRefresh';
 
 const API = '/api/warranties';
 const date = value => new Date(value).toLocaleString();
@@ -46,6 +47,9 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
     } finally { if (sequence === generation.current) setLoading(false); }
   }, [order]);
   useEffect(() => { load(); return () => { generation.current += 1; }; }, [load]);
+  useEffect(() => subscribeAfterSalesChange(orderId => {
+    if (orderId === order._id && focused && AppState.currentState === 'active' && !working.current && !dialog) void load({ quiet: true });
+  }), [load, order._id, focused, dialog]);
   const activeClaim = claims.some(claim => !['returned', 'replacement_delivered', 'rejected', 'cancelled_by_buyer'].includes(claim.status));
   useEffect(() => {
     const refresh = () => { if (focused && !working.current && !dialog && AppState.currentState === 'active') load({ quiet: true }); };
@@ -95,7 +99,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
       if (!inspectWarrantyList([response.data?.returnRequest], order)
         || dialog.claim && response.data.returnRequest._id !== dialog.claim._id
         || !dialog.claim && (response.data.returnRequest.items[0].orderItemId !== dialog.item.orderItemId || response.data.returnRequest.items[0].quantity !== count)) throw new Error('Claim confirmation could not be verified. Refresh before trying again.');
-      setDialog(null); await load(); Feedback.show({ type: 'success', text1: dialog.claim ? 'Original claim appealed' : 'Warranty claim sent to seller' });
+      setDialog(null); await load(); publishAfterSalesChange(order._id); Feedback.show({ type: 'success', text1: dialog.claim ? 'Original claim appealed' : 'Warranty claim sent to seller' });
     } catch (failure) { Feedback.show({ type: 'error', text1: 'Claim not completed', text2: failure.response?.data?.msg || failure.message }); }
     finally { working.current = false; setBusy(false); }
   };
@@ -104,7 +108,7 @@ export default function BuyerWarrantySection({ order, formatMoney }) {
     try {
       const response = await api.post(`${API}/${claim._id}/${action === 'cancel' ? 'cancel' : 'replacement/receive'}`);
       if (!inspectWarrantyList([response.data?.returnRequest], order) || response.data.returnRequest._id !== claim._id) throw new Error('Claim update could not be verified.');
-      await load(); Feedback.show({ type: 'success', text1: action === 'cancel' ? 'Claim cancelled' : 'Replacement received' });
+      await load(); publishAfterSalesChange(order._id); Feedback.show({ type: 'success', text1: action === 'cancel' ? 'Claim cancelled' : 'Replacement received' });
     } catch (failure) { Feedback.show({ type: 'error', text1: 'Update not completed', text2: failure.response?.data?.msg || failure.message }); }
     finally { working.current = false; setBusy(false); }
   } }]);

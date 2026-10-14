@@ -4,6 +4,7 @@ import api from '../config/api';
 import Feedback from '../utils/feedback';
 import { useTheme } from '../contexts/ThemeContext';
 import { inspectReturnPresentationSnapshot } from '../utils/returnPresentationSafety';
+import { publishAfterSalesChange } from '../utils/afterSalesRefresh';
 export default function ReplacementReceipt({ request, onChanged }) {
   const { palette } = useTheme();
   const [busy, setBusy] = useState(false);
@@ -13,7 +14,7 @@ export default function ReplacementReceipt({ request, onChanged }) {
     try {
       const response = await api.post(`/api/returns/${request._id}/replacement/receive`);
       if (!inspectReturnPresentationSnapshot(response.data?.returnRequest).valid || response.data.returnRequest.status !== 'replacement_delivered') throw new Error('Delivery confirmation could not be verified.');
-      await onChanged(); Feedback.show({ type: 'success', text1: 'Replacement received' });
+      await onChanged(); publishAfterSalesChange(request.order); Feedback.show({ type: 'success', text1: 'Replacement received' });
     } catch (error) { Feedback.show({ type: 'error', text1: 'Unable to confirm receipt', text2: error.response?.data?.msg || error.message }); }
     finally { setBusy(false); }
   } }]);

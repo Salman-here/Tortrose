@@ -23,6 +23,7 @@ import {
 import { getReturnItemVariantLabels } from '../../utils/returnItemVariants';
 import { useReturnDialogAccessibility } from '../../utils/returnDialogAccessibility';
 import ReplacementReceipt from './ReplacementReceipt';
+import { publishAfterSalesChange, subscribeAfterSalesChange } from '../../utils/afterSalesRefresh';
 
 const API = `${import.meta.env.VITE_API_URL}api/returns`;
 const reasonOptions = [
@@ -208,6 +209,9 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
   }, [load]);
 
   const returnPending = requests.some(request => UNRESOLVED_RETURN_STATUSES.has(request.status));
+  useEffect(() => subscribeAfterSalesChange(orderId => {
+    if (orderId === orderContext.orderId && !selectedGroup && !mutationInProgressRef.current) void load({ notify: false, silent: true });
+  }), [load, orderContext.orderId, selectedGroup]);
   useEffect(() => {
     if (!returnPending || submitting || cancellingId) return;
     const isActive = () => mountedRef.current
@@ -360,6 +364,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         return;
       }
       requestKeyRef.current = null;
+      publishAfterSalesChange(orderContext.orderId);
       toast.success(response.data.replayed
         ? 'This return request was already received.'
         : 'Return request sent to the seller.');
@@ -421,6 +426,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         return;
       }
       toast.success('Return request cancelled.');
+      publishAfterSalesChange(orderContext.orderId);
     } catch (error) {
       if (!isMutationCurrent()) return;
       const refreshed = await load({ notify: false });
@@ -428,6 +434,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
       const refetched = refreshed.requests.find(request => request._id === requestId);
       if (refreshed.valid && refetched?.status === 'cancelled_by_buyer') {
         toast.success('Return request cancelled.');
+        publishAfterSalesChange(orderContext.orderId);
         return;
       }
       toast.error(responseMessage(error, 'Return request could not be cancelled.'));
