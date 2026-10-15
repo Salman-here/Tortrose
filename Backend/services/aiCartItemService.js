@@ -107,19 +107,23 @@ async function changeAICartItem(userId, args = {}, operation = 'update', { curre
       success: false, needsSelection: true, error: summarizeSelectionRequest(product, selection, 'add'),
       data: { ...preview(item, products), missingOptions: selection.missingOptions, invalidOptions: selection.invalidOptions, requiredOptions: selection.requiredOptions },
     };
-    item.qty = has(args, 'quantity') ? args.quantity : item.qty;
     item.selectedColor = selection.selectedColor;
     item.selectedOptions = selection.selectedOptions;
+    const duplicateLines = after.filter(line => id(line.product) === id(item.product)
+      && id(line._id) !== id(item._id) && key(line.selectedColor) === key(item.selectedColor) && optionsKey(line) === optionsKey(item));
+    // An explicit quantity is the FINAL quantity of the chosen variant, even
+    // when it merges with an existing destination. A color/size-only edit
+    // preserves all units by combining the source and destination quantities.
+    // Apply that distinction before checking stock; counting the destination
+    // twice could both buy extra units and wrongly reject an in-stock edit.
+    item.qty = has(args, 'quantity') ? args.quantity
+      : item.qty + duplicateLines.reduce((sum, line) => sum + line.qty, 0);
+    const duplicateIds = new Set(duplicateLines.map(line => id(line._id)));
+    after = after.filter(line => !duplicateIds.has(id(line._id)));
     const productLines = after.filter(line => id(line.product) === id(item.product));
     if (!Number.isSafeInteger(product.stock) || product.stock < 0 || productLines.some(line => !exactQuantity(line.qty))) return { success: false, error: 'This product has invalid stock or cart quantities. Please refresh your cart.' };
     const totalQuantity = productLines.reduce((sum, line) => sum + line.qty, 0);
     if (!Number.isSafeInteger(totalQuantity) || totalQuantity > product.stock) return { success: false, error: `Only ${product.stock} units of "${product.name}" are available, including all colors and sizes in your cart.` };
-    // If the chosen variant is already another line, coalesce it without
-    // dropping units. Every unrelated product/variant remains untouched.
-    const duplicateLines = productLines.filter(line => id(line._id) !== id(item._id) && key(line.selectedColor) === key(item.selectedColor) && optionsKey(line) === optionsKey(item));
-    item.qty += duplicateLines.reduce((sum, line) => sum + line.qty, 0);
-    const duplicateIds = new Set(duplicateLines.map(line => id(line._id)));
-    after = after.filter(line => !duplicateIds.has(id(line._id)));
   }
 
   const account = requestedCurrency === undefined ? await User.findById(userId).select('currency').lean() : null;

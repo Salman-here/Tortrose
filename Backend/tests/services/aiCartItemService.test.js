@@ -146,6 +146,60 @@ test('validates aggregate stock across different variants', async () => {
   expect(await read()).toEqual(before);
 });
 
+test.each([1, 2, 3, 4])('an explicit merged total of %s is applied once, not added to the destination quantity', async quantity => {
+  await Cart.updateOne({ user: buyer._id }, { $push: { cartItems: {
+    product: mug._id, qty: 1, selectedColor: 'Silver', selectedOptions: { Color: 'Silver', Capacity: '500ml' },
+  } } });
+  const result = await changeAICartItem(buyer._id, {
+    productName: 'mug', currentColor: 'Black', selectedColor: 'Silver', quantity,
+  });
+  expect(result.success).toBe(true);
+  const saved = await read();
+  expect(saved.cartItems).toHaveLength(2);
+  expect(saved.cartItems[0]).toMatchObject({ qty: quantity, selectedColor: 'Silver', selectedOptions: { Color: 'Silver', Capacity: '500ml' } });
+  expect(saved.cartItems[1]).toEqual(initial.cartItems[1]);
+  expect(result.data.item.quantity).toBe(quantity);
+  expect(result.data.totalQuantity).toBe(quantity + 1);
+  expect(saved.totalCartPrice).toBe(quantity * 3664.5 + 1000);
+});
+
+test('checks stock against the final merged cart, not an intermediate double-counted quantity', async () => {
+  await Product.updateOne({ _id: mug._id }, { $set: { stock: 3 } });
+  await Cart.updateOne({ user: buyer._id }, { $push: { cartItems: {
+    product: mug._id, qty: 1, selectedColor: 'Silver', selectedOptions: { Color: 'Silver', Capacity: '500ml' },
+  } } });
+  const result = await changeAICartItem(buyer._id, {
+    cartItemId: String(initial.cartItems[0]._id), selectedColor: 'Silver', quantity: 3,
+  });
+  expect(result.success).toBe(true);
+  expect((await read()).cartItems[0].qty).toBe(3);
+  const before = await read();
+  const exceeded = await changeAICartItem(buyer._id, { productName: 'mug', currentColor: 'Silver', quantity: 4 });
+  expect(exceeded.success).toBe(false);
+  expect(await read()).toEqual(before);
+});
+
+test('a merged final quantity still includes other sizes in the aggregate stock limit', async () => {
+  await Product.updateOne({ _id: mug._id }, { $set: { stock: 4 } });
+  await Cart.updateOne({ user: buyer._id }, { $push: { cartItems: { $each: [
+    { product: mug._id, qty: 1, selectedColor: 'Silver', selectedOptions: { Color: 'Silver', Capacity: '500ml' } },
+    { product: mug._id, qty: 1, selectedColor: 'Silver', selectedOptions: { Color: 'Silver', Capacity: '350ml' } },
+  ] } } });
+  const before = await read();
+  const exceeded = await changeAICartItem(buyer._id, {
+    cartItemId: String(initial.cartItems[0]._id), selectedColor: 'Silver', quantity: 4,
+  });
+  expect(exceeded.success).toBe(false);
+  expect(await read()).toEqual(before);
+  const allowed = await changeAICartItem(buyer._id, {
+    cartItemId: String(initial.cartItems[0]._id), selectedColor: 'Silver', quantity: 3,
+  });
+  expect(allowed.success).toBe(true);
+  const saved = await read();
+  expect(saved.cartItems).toHaveLength(3);
+  expect(saved.cartItems.find(line => line.selectedOptions?.Capacity === '350ml').qty).toBe(1);
+});
+
 test('a concurrent edit from another cart client is preserved and returns a retryable conflict', async () => {
   const realUpdate = Cart.updateOne.bind(Cart);
   jest.spyOn(Cart, 'updateOne').mockImplementationOnce(async (...args) => {

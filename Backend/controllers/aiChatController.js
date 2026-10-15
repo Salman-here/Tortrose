@@ -647,7 +647,7 @@ const userTools = [
     type: 'function',
     function: {
       name: 'update_cart_item',
-      description: 'Change ONE existing cart item color, size, other options or absolute quantity in one safe operation. Preserves unspecified options, quantity and all other items. Use for "make it silver instead", "same size but black", "only two of those". Read view_cart for its cartItemId, or supply a product name and current options. Never remove/re-add to change a variant.',
+      description: 'Change ONE existing cart item color, size, other options or absolute quantity in one safe operation. Preserves unspecified options and all other items. For a color/size-only change, OMIT quantity: the server preserves and merges all existing units if the destination variant is already in the cart. If the buyer explicitly requests a final quantity, quantity sets that FINAL merged total once. Read view_cart for its cartItemId, or supply a product name and current options. Never remove/re-add to change a variant.',
       parameters: {
         type: 'object',
         properties: {
@@ -656,7 +656,7 @@ const userTools = [
           productName: { type: 'string', description: 'Existing cart product name or partial name.' },
           currentColor: { type: 'string', description: 'OLD color, to identify which existing variant changes.' },
           currentOptions: { type: 'object', additionalProperties: { type: 'string' }, description: 'OLD options to disambiguate existing cart lines.' },
-          quantity: { type: 'integer', minimum: 1, description: 'Desired total quantity of this line; omitted preserves its quantity.' },
+          quantity: { type: 'integer', minimum: 1, description: 'Explicitly requested FINAL quantity of the resulting variant, including any already-existing matching line. Never add the destination quantity to this value. Omit for a color/size-only change so existing units are combined automatically.' },
           selectedColor: { type: 'string', description: 'NEW color explicitly chosen by the user.' },
           selectedOptions: { type: 'object', additionalProperties: { type: 'string' }, description: 'NEW option values. Only include changed options; other choices remain saved.' },
         },
