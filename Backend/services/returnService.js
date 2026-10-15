@@ -1524,7 +1524,7 @@ const assertReturnRequestFinancialIdentity = async (request, { session = null } 
   }
 
   const orderQuery = Order.findById(request.order).select(
-    'currency orderId user orderItems sellerShipping shippingMethod orderSummary appliedCoupons couponUsageVersion exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion checkoutRoundingSnapshot',
+    'currency orderId user orderItems sellerShipping shippingMethod orderSummary appliedCoupons couponUsageVersion exchangeRateSnapshot sellerSettlementVersion sellerSettlement sellerCurrencyMoneyVersion checkoutRoundingSnapshot shippingInfo.email shippingInfo.phone shippingInfo.phoneE164 shippingInfo.country shippingInfo.countryCode',
   );
   const order = await queryWithSession(orderQuery, session);
   if (!order) {

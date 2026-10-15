@@ -123,6 +123,26 @@ test('new COD card-funded return pays the full frozen buyer $1.01 without adding
   expect(await WalletTransaction.countDocuments({ type:'return_refund' })).toBe(1);
 });
 
+test('Safepay card-funded settlement retains the purchased buyer email and phone for every receipt channel', async () => {
+  const original = await order({ total: 475 });
+  const attempt = await cardAttempt(original);
+  await attempt.service.reconcilePayment(attempt.payment._id);
+  const receipts = await NotificationOutbox.find({ aggregateId: String(attempt.returned._id),
+    eventType: 'return.settled', 'recipient.audienceRole': 'buyer' })
+    .select('+recipient.email +recipient.phone').lean();
+  expect(receipts.map(row => row.channel).sort()).toEqual(['email', 'inapp', 'push', 'whatsapp']);
+  for (const receipt of receipts) {
+    expect(receipt.recipient.email).toBe(original.shippingInfo.email);
+    expect(receipt.recipient.phone).toBe('923001234567');
+    expect(receipt.payload.linkTo).toContain(String(original._id));
+    expect(receipt.money).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'refund_total', amountMinor: 47500, currency: 'PKR' })]));
+  }
+  await attempt.service.reconcilePayment(attempt.payment._id);
+  expect(await NotificationOutbox.countDocuments({ aggregateId: String(attempt.returned._id),
+    eventType: 'return.settled', 'recipient.audienceRole': 'buyer' })).toBe(4);
+  expect(await WalletTransaction.countDocuments({ type: 'return_refund' })).toBe(1);
+});
+
 test.each([['PKR', 'PKR'], ['PKR', 'USD'], ['USD', 'USD'], ['USD', 'PKR']])(
   'delivered COD %s seller / %s buyer can fund the exact NET available boundary without a withdrawal minimum', async (native, currency) => {
     // Align the PKR entitlement with a whole buyer USD cent (909 PKR = 3.03 USD).

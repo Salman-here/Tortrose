@@ -835,6 +835,33 @@ describe('financial notification domain contracts', () => {
     expect(result.seller[0].payload.body).toContain('£12.34 GBP');
   });
 
+  test('legacy account-only refund receipts gain missing buyer channels without replacing immutable receipts', async () => {
+    const buyer = id(), seller = id(), walletTransactionId = id();
+    const order = { _id: id(), orderId: 'ORD-REFUND-CONTACT-REPAIR', user: buyer,
+      shippingInfo: { email: 'buyer@example.com', phoneE164: '+923001234567' } };
+    const request = { _id: id(), order: order._id, orderId: order.orderId, buyer, seller,
+      kind: 'warranty', returnNumber: 'WAR-CONTACT-REPAIR', currency: 'PKR', status: 'returned',
+      refund: { totalAmount: 475 }, settlement: { status: 'completed', settledAt: new Date('2026-10-15T00:00:00.000Z'), walletTransaction: walletTransactionId } };
+    const walletTransaction = { _id: walletTransactionId, user: buyer, type: 'return_refund', direction: 'credit',
+      status: 'completed', amount: 475, currency: 'PKR', referenceType: 'return_request', referenceId: request._id,
+      metadata: { availableCreditedMinor: 47500, liabilityAppliedMinor: 0, remainingLiabilityMinor: 0 }, completedAt: request.settlement.settledAt };
+    const legacy = await enqueueReturnSettlementNotifications(request, { ...order, shippingInfo: undefined }, { sellerChannels: [], walletTransaction });
+    expect(legacy.buyer.map(row => row.channel).sort()).toEqual(['inapp', 'push']);
+    const oldHashes = legacy.buyer.map(row => ({ id: String(row._id), hash: row.contentHash }));
+    for (let replay = 0; replay < 2; replay += 1) {
+      const result = await enqueueReturnSettlementNotifications(request, order, { sellerChannels: [], walletTransaction });
+      expect(result.buyer).toHaveLength(4);
+      expect(await NotificationOutbox.countDocuments({ aggregateId: String(request._id) })).toBe(4);
+      for (const original of oldHashes) {
+        expect((await NotificationOutbox.findById(original.id).select('+contentHash')).contentHash).toBe(original.hash);
+      }
+      const whatsapp = result.buyer.find(row => row.channel === 'whatsapp');
+      expect(whatsapp.recipient.phone).toBe('923001234567');
+      expect(whatsapp.payload.message).toContain('Rs475.00 PKR');
+      expect(whatsapp.payload.message).toContain(`warrantyId=${request._id}`);
+    }
+  });
+
   test('return notifications disclose the exact Wallet liability allocation in every role', async () => {
     const buyer = id();
     const seller = id();

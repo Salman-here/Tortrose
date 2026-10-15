@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const WalletTransaction = require('../models/WalletTransaction');
+const NotificationOutbox = require('../models/NotificationOutbox');
 const { escapeHtml } = require('../utils/orderPresentation');
 const {
   enqueueNotificationEvent,
@@ -1068,7 +1069,7 @@ async function enqueueReturnSettlementNotifications(returnRequest, order, {
   if (!selectedBuyerChannels.length && !sellerChannels.length) {
     throw outboxError('Return settlement notifications require at least one recipient channel.');
   }
-  const buyer = selectedBuyerChannels.length ? await enqueueNotificationEvent({
+  const buyerEvent = {
     eventKey: `return:${id}:settled:buyer:v2`,
     eventType: 'return.settled',
     aggregateType: 'ReturnRequest',
@@ -1084,7 +1085,6 @@ async function enqueueReturnSettlementNotifications(returnRequest, order, {
       phone: tryOrderBuyerPhoneE164(order),
       allowBlocked: true,
     },
-    channels: selectedBuyerChannels,
     templates: warranty ? warrantySettlementTemplates({ claimNumber: returnNumber, orderNumber, liabilityApplied }) : returnBuyerTemplates(returnNumber, orderNumber, liabilityApplied),
     metadata: {
       category: 'order',
@@ -1095,7 +1095,28 @@ async function enqueueReturnSettlementNotifications(returnRequest, order, {
     },
     money: buyerMoney,
     session,
-  }) : [];
+  };
+  const buyer = [];
+  if (selectedBuyerChannels.length) {
+    // Older card settlements selected the financial order without its frozen
+    // shipping contacts, so only account receipts were created. Keep those
+    // immutable envelopes unchanged while repairing the missing email/WhatsApp
+    // channels. All payload and money hashes are still verified on replay.
+    const existingQuery = NotificationOutbox.find({ eventKey: buyerEvent.eventKey,
+      aggregateType: 'ReturnRequest', aggregateId: id, eventType: 'return.settled',
+      'recipient.kind': 'user', 'recipient.user': returnRequest.buyer,
+      'recipient.audienceRole': 'buyer', 'recipient.destinationPolicy': 'event_snapshot',
+      channel: { $in: ['inapp', 'push'] },
+    }).select('channel +recipient.email +recipient.phone').lean();
+    const accountReceipts = await (session ? existingQuery.session(session) : existingQuery);
+    for (const channel of selectedBuyerChannels) {
+      const legacyAccountReceipt = accountReceipts.find(record => record.channel === channel
+        && !record.recipient.email && !record.recipient.phone);
+      buyer.push(...await enqueueNotificationEvent({ ...buyerEvent, channels: [channel],
+        recipient: legacyAccountReceipt ? { ...buyerEvent.recipient, email: '', phone: '' } : buyerEvent.recipient,
+      }));
+    }
+  }
   const seller = sellerChannels.length ? await enqueueNotificationEvent({
     eventKey: `return:${id}:settled:seller:v2`,
     eventType: 'return.settled',
