@@ -118,10 +118,10 @@ const notifySellerReturnRequested = async (returnRequest, order, { session = nul
       push: { title, body: `${warranty ? 'Warranty claim' : 'Return'} #${returnRequest.returnNumber} for order #${returnRequest.orderId} is awaiting your review.` },
       email: {
         subject: `${title} for order #${returnRequest.orderId}`,
-        text: `${body}\n\nReview the ${noun} in Seller Dashboard and respond to the buyer.`,
-        html: `<p>${escapeHtml(body)}</p><p>Review the ${noun} in Seller Dashboard and respond to the buyer.</p>`,
+        text: `${body}\n\nReview the buyer’s photos and reason in Seller Dashboard. Approve or reject the request before arranging collection.`,
+        html: `<p>${escapeHtml(body)}</p><p>Review the buyer’s photos and reason in Seller Dashboard. Approve or reject the request before arranging collection.</p>`,
       },
-      whatsapp: { message: warranty ? `*${title}*\n\nClaim: #${returnRequest.returnNumber}\nOrder: #${returnRequest.orderId}\nReason: ${returnRequest.reasonDetails}\n\nReview the photos in Seller Dashboard → Orders → Warranty. Declare a refund or replacement when approving, or explain a rejection.` : sellerTemplates.return_requested(returnRequest) },
+      whatsapp: { message: warranty ? `*${title}*\n\nClaim: #${returnRequest.returnNumber}\nOrder: #${returnRequest.orderId}\nReason: ${returnRequest.reasonDetails}\n\nReview the photos in Seller Dashboard → Orders → Warranty. Declare a refund or replacement when approving, or explain a rejection.` : `${sellerTemplates.return_requested(returnRequest)}\n\nReview the buyer’s photos and reason in Orders → Returns. Approve or reject the request before arranging collection.` },
     },
     metadata: {
       category: 'order',
@@ -286,7 +286,7 @@ const RETURN_NOTIFICATION_COPY = Object.freeze({
   picked_up: { title: 'Return picked up', detail: 'Your return has been marked as picked up.' },
   in_transit_to_seller: { title: 'Your return is on its way', detail: 'Your returned items are on their way to the seller.' },
   received_by_seller: { title: 'Return received by seller', detail: 'Your returned items have been marked as received by the seller.' },
-  under_review: { title: 'Your return is being reviewed', detail: 'Your returned items are being reviewed. We will notify you when the return is resolved.' },
+  under_review: { title: 'Return inspection in progress', detail: 'The seller is inspecting the received items to complete your approved refund or replacement.' },
   accepted_pending_payment: { title: 'Return accepted — refund pending', detail: 'Your return was accepted. The refund has not been credited yet; we will notify you when it is completed.' },
   replacement_approved: { title: 'Replacement approved', detail: 'A replacement was approved for your return. View the return details for the next steps.' },
   replacement_shipped: { title: 'Your replacement has shipped', detail: 'Your replacement is on its way. View tracking details and confirm receipt when it arrives.' },
@@ -335,7 +335,7 @@ const notifyBuyerReturnStatus = async (
   const copy = warranty ? WARRANTY_NOTIFICATION_COPY[current.status] || RETURN_NOTIFICATION_COPY[current.status] : RETURN_NOTIFICATION_COPY[current.status];
   const noun = warranty ? 'Warranty claim' : 'Return';
   const label = copy?.title || RETURN_STATUS_LABELS[current.status] || 'Return update';
-  const noteLine = `${warranty && current.resolution ? ` Planned resolution: ${current.resolution === 'refund' ? 'refund to Rozare Wallet' : 'replacement'}.` : ''}${cleanNote ? ` Note: ${cleanNote}` : ''}`;
+  const noteLine = `${current.resolution ? ` Planned resolution: ${current.resolution === 'refund' ? 'refund to Rozare Wallet' : 'replacement'}.` : ''}${cleanNote ? ` Note: ${cleanNote}` : ''}`;
   const body = notificationBody(
     `${noun} #${current.returnNumber} for order #${current.orderId}: ${copy?.detail || 'Your claim status has been updated.'}${noteLine}`
   );

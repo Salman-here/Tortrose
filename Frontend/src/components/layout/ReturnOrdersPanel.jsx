@@ -14,6 +14,7 @@ import { isExactNonNegativeJsonMoney } from '../../utils/sellerMoneySafety';
 import { getReturnItemVariantLabels } from '../../utils/returnItemVariants';
 import { useReturnDialogAccessibility } from '../../utils/returnDialogAccessibility';
 import { useSearchParams } from 'react-router-dom';
+import AfterSalesPhotos from '../common/AfterSalesPhotos';
 
 const actionLabels = {
   approved: 'Approve return',
@@ -44,7 +45,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
   const labelForStatus = status => warranty ? warrantyStatusLabel(status) : RETURN_STATUS_LABELS[status];
   const { currentUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const linkedClaim = warranty ? searchParams.get('warrantyId') : null;
+  const linkedClaim = searchParams.get(warranty ? 'warrantyId' : 'returnId');
   const loadSequence = useRef(0);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +74,8 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
       const targeted = linkedClaim && !search.trim() && status === 'all';
       const response = await axios.get(targeted ? `${API}/${linkedClaim}` : `${API}/seller?${params}`, { headers: authHeaders() });
       if (requestId !== loadSequence.current) return;
-      const rows = targeted ? (response.data?.returnRequest?.kind === 'warranty' ? [response.data.returnRequest] : null) : response.data?.returns;
+      const returnedRequest = response.data?.returnRequest;
+      const rows = targeted ? (returnedRequest && (warranty ? returnedRequest.kind === 'warranty' : returnedRequest.kind !== 'warranty') ? [returnedRequest] : null) : response.data?.returns;
       if (!Array.isArray(rows)) {
         throw new Error('The returns service sent an invalid response. Please try again.');
       }
@@ -90,7 +92,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
     } finally {
       if (requestId === loadSequence.current) setLoading(false);
     }
-  }, [search, status, API, linkedClaim]);
+  }, [search, status, API, linkedClaim, warranty]);
 
   useEffect(() => {
     const timeout = setTimeout(load, search ? 250 : 0);
@@ -191,14 +193,14 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
   };
 
   const submitDecision = async () => {
-    if (note.trim().length < 10 || dialog.status === 'approved' && !['refund', 'replacement'].includes(resolution)) {
+    if (note.trim().length < 10 || warranty && dialog.status === 'approved' && !['refund', 'replacement'].includes(resolution)) {
       toast.error('Give a clear reason and declare the resolution before approving.'); return;
     }
     setSubmitting(true);
     try {
       await axios.post(`${API}/${dialog.request._id}/decision`, { outcome: dialog.status === 'approved' ? 'approve' : 'reject',
         resolution, reason: note.trim(), expectedUpdatedAt: dialog.request.updatedAt }, { headers: authHeaders() });
-      toast.success('Warranty decision sent to the buyer.'); await load();
+      toast.success(`${warranty ? 'Warranty' : 'Return'} decision sent to the buyer.`); await load();
     } catch (error) { toast.error(error.response?.data?.msg || 'Unable to save the decision.'); }
     finally { setSubmitting(false); }
   };
@@ -213,11 +215,16 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
     } catch (error) { toast.error(error.response?.data?.msg || error.message || 'Unable to dispatch replacement.'); }
     finally { setSubmitting(false); }
   };
+  const openDispatch = request => {
+    dispatchKey.current = globalThis.crypto?.randomUUID?.();
+    if (!dispatchKey.current) { toast.error('Secure dispatch is unavailable. Please refresh.'); return; }
+    setShipment({ shippingMethod: 'courier', carrier: '', trackingNumber: '' }); setDialog({ type: 'dispatch', request });
+  };
 
   return (
     <div className="space-y-5">
       <div className="glass-panel p-4 sm:p-5">
-        {linkedClaim && <div className="flex items-center justify-between gap-3 mb-3"><p className="text-xs text-muted-foreground">Warranty claim opened from your notification</p><button type="button" className="glass-button rounded-lg p-2 text-xs" onClick={() => { const next = new URLSearchParams(searchParams); next.delete('warrantyId'); setSearchParams(next, { replace: true }); }}>View all claims</button></div>}
+        {linkedClaim && <div className="flex items-center justify-between gap-3 mb-3"><p className="text-xs text-muted-foreground">{warranty ? 'Warranty claim' : 'Return'} opened from your notification</p><button type="button" className="glass-button rounded-lg p-2 text-xs" onClick={() => { const next = new URLSearchParams(searchParams); next.delete(warranty ? 'warrantyId' : 'returnId'); setSearchParams(next, { replace: true }); }}>View all claims</button></div>}
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           <div className="search-input-wrapper flex-1">
             <div className="search-input-icon"><Search size={16} /></div>
@@ -253,7 +260,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
       ) : requests.map((rawRequest, requestIndex) => {
         const request = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest) ? rawRequest : {};
         const snapshot = inspectReturnPresentationSnapshot(request);
-        const transitions = snapshot.valid ? (RETURN_STATUS_TRANSITIONS[request.status] || []) : [];
+        const transitions = snapshot.valid ? (RETURN_STATUS_TRANSITIONS[request.status] || []).filter(next => warranty || request.status === 'requested' || next !== 'rejected') : [];
         const requestItems = Array.isArray(request.items) ? request.items : [];
         const statusHistory = Array.isArray(request.statusHistory) ? request.statusHistory : [];
         const returnNumber = displayText(request.returnNumber, 'Unavailable');
@@ -312,9 +319,9 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
               <p className="text-xs font-semibold" style={{ color: 'hsl(0, 65%, 48%)' }}>Buyer reason</p>
               <p className="text-sm mt-1 whitespace-pre-wrap" style={{ color: 'hsl(var(--foreground))' }}>{displayText(request.reasonDetails, 'Reason unavailable')}</p>
             </div>
-            {warranty && snapshot.valid && <div className="mt-4 space-y-3">
-              <p className="text-xs text-muted-foreground">Purchased warranty: {request.warrantySnapshot.months} month(s) · Original deadline {formatDateTime(request.warrantySnapshot.deadline)}{request.appealVersion > 0 ? ` · Appeal ${request.appealVersion}` : ''}</p>
-              <div className="flex flex-wrap gap-2" aria-label="Buyer claim photos">{request.evidenceUrls.map((url, index) => <a href={url} key={`${url}-${index}`} target="_blank" rel="noopener noreferrer"><img src={url} alt={`Warranty evidence ${index + 1}`} className="w-24 h-24 rounded-xl border border-border object-cover" /></a>)}</div>
+            {snapshot.valid && <div className="mt-4 space-y-3">
+              {warranty && <p className="text-xs text-muted-foreground">Purchased warranty: {request.warrantySnapshot.months} month(s) · Original deadline {formatDateTime(request.warrantySnapshot.deadline)}{request.appealVersion > 0 ? ` · Appeal ${request.appealVersion}` : ''}</p>}
+              <AfterSalesPhotos photos={request.evidenceUrls || []} label={warranty ? 'Claim photo' : 'Return photo'} />
               {request.evidenceHistory?.length > 1 && <details><summary className="text-xs font-semibold cursor-pointer text-muted-foreground">Original claim and appeal evidence</summary><div className="mt-3 space-y-3">{request.evidenceHistory.map(entry => <div key={entry.version} className="glass-inner rounded-xl p-3"><p className="text-xs font-bold">{entry.version ? `Appeal ${entry.version}` : 'Original on-time claim'} · {formatDateTime(entry.submittedAt)}</p><p className="text-sm mt-2 whitespace-pre-wrap">{entry.reason}</p><div className="flex flex-wrap gap-2 mt-2">{entry.urls.map((url, index) => <a key={`${entry.version}-${index}`} href={url} target="_blank" rel="noopener noreferrer"><img className="w-20 h-20 object-cover rounded-lg" alt={`${entry.version ? 'Appeal' : 'Original claim'} photo ${index + 1}`} src={url} /></a>)}</div></div>)}</div></details>}
               {request.decisionReason && <p className="glass-inner rounded-xl p-3 text-sm">Your decision: {request.decisionReason}</p>}
             </div>}
@@ -322,15 +329,15 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
 
             <div className="mt-4 flex flex-wrap gap-2">
               {transitions.map((nextStatus) => (
-                <button key={nextStatus} type="button" onClick={() => { setDialog({ type: warranty && request.status === 'requested' ? 'decision' : 'status', request, status: nextStatus }); setNote(''); setResolution(''); }}
+                <button key={nextStatus} type="button" onClick={() => { setDialog({ type: request.status === 'requested' ? 'decision' : 'status', request, status: nextStatus }); setNote(''); setResolution(''); }}
                   className="glass-button px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-2"
                   style={nextStatus === 'rejected' ? { color: 'hsl(0, 72%, 52%)' } : undefined}>
                   {nextStatus === 'rejected' ? <XCircle size={13} /> : <ArrowRight size={13} />} {warranty && nextStatus === 'rejected' ? 'Decline claim' : warranty && request.status === 'requested' ? 'Approve claim' : actionLabels[nextStatus]}
                 </button>
               ))}
               {snapshot.valid && request.status === 'under_review' && (
-                <button type="button" onClick={() => setDialog({ type: 'accept', request })} className="px-3 py-2 rounded-lg text-xs font-semibold text-white inline-flex items-center gap-2" style={{ background: 'hsl(150, 60%, 40%)' }}>
-                  <CheckCircle size={13} /> {warranty ? 'Complete warranty resolution' : 'Accept return'}
+                <button type="button" onClick={() => !warranty && request.returnReviewVersion === 1 && request.policySnapshot?.refundType === 'replacement_only' ? openDispatch(request) : setDialog({ type: 'accept', request })} className="px-3 py-2 rounded-lg text-xs font-semibold text-white inline-flex items-center gap-2" style={{ background: 'hsl(150, 60%, 40%)' }}>
+                  <CheckCircle size={13} /> {warranty ? 'Complete warranty resolution' : request.policySnapshot?.refundType === 'replacement_only' ? request.returnReviewVersion === 1 ? 'Dispatch replacement' : 'Prepare approved replacement' : 'Issue approved refund'}
                 </button>
               )}
               {snapshot.valid && request.status === 'replacement_approved' && <button type="button" className="glass-button px-3 py-2 rounded-lg text-xs font-semibold" onClick={() => { dispatchKey.current = globalThis.crypto?.randomUUID?.(); if (!dispatchKey.current) { toast.error('Secure dispatch is unavailable. Please refresh.'); return; } setShipment({ shippingMethod: 'courier', carrier: '', trackingNumber: '' }); setDialog({ type: 'dispatch', request }); }}>Dispatch replacement</button>}
@@ -372,16 +379,17 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
             <motion.div ref={dialogPanel} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={submitting} aria-labelledby="seller-return-dialog-title" className="modal-surface glass-panel-strong w-full max-w-md max-h-[90dvh] overflow-y-auto p-5 sm:p-6" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 id="seller-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{dialog.type === 'dispatch' ? 'Dispatch replacement' : dialog.type === 'decision' ? (dialog.status === 'approved' ? 'Approve warranty claim' : 'Decline warranty claim') : dialog.type === 'accept' ? (warranty ? 'Complete warranty resolution' : 'Accept return') : actionLabels[dialog.status]}</h3>
+                  <h3 id="seller-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{dialog.type === 'dispatch' ? 'Dispatch replacement' : dialog.type === 'decision' ? (dialog.status === 'approved' ? (warranty ? 'Approve warranty claim' : 'Approve return request') : (warranty ? 'Decline warranty claim' : 'Reject return request')) : dialog.type === 'accept' ? (warranty ? 'Complete warranty resolution' : dialog?.request?.policySnapshot?.refundType === 'replacement_only' ? 'Prepare approved replacement' : 'Issue approved refund') : actionLabels[dialog.status]}</h3>
                   <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{warranty ? 'Claim' : 'Return'} #{displayText(dialog.request.returnNumber, 'Unavailable')}</p>
                 </div>
                 <button type="button" className="glass-button p-2 rounded-lg disabled:opacity-50" disabled={submitting} onClick={closeDialog} aria-label={warranty ? 'Close warranty update' : 'Close return update'}><X size={16} /></button>
               </div>
 
               {dialog.type === 'decision' ? <div className="space-y-4 mt-5">
-                {dialog.status === 'approved' && <label className="block text-sm font-semibold">Planned resolution<select aria-label="Planned resolution" className="glass-input mt-2" value={resolution} onChange={event => setResolution(event.target.value)}><option value="" disabled>Choose a resolution</option><option value="refund">Refund to Rozare Wallet</option><option value="replacement">Replacement product</option></select></label>}
+                {warranty && dialog.status === 'approved' && <label className="block text-sm font-semibold">Planned resolution<select aria-label="Planned resolution" className="glass-input mt-2" value={resolution} onChange={event => setResolution(event.target.value)}><option value="" disabled>Choose a resolution</option><option value="refund">Refund to Rozare Wallet</option><option value="replacement">Replacement product</option></select></label>}
+                {!warranty && <><p className="text-sm">{dialog.request.reasonDetails}</p><AfterSalesPhotos photos={dialog.request.evidenceUrls || []} /><p className="text-sm font-semibold">Resolution: {returnResolutionLabel(dialog.request.policySnapshot?.refundType)}</p></>}
                 <label className="block text-sm font-semibold">Decision reason<textarea className="glass-input mt-2" value={note} onChange={event => setNote(event.target.value)} minLength={10} maxLength={1000} rows={4} placeholder="Explain your decision and next steps to the buyer." /></label>
-                <p className="text-xs text-muted-foreground">The buyer sees this decision. Approval does not hold earnings or charge a card.</p>
+                <p className="text-xs text-muted-foreground">{warranty ? 'The buyer sees this decision. Approval does not hold earnings or charge a card.' : 'Review the photos before approving. Collection and fulfilment follow; the approved return cannot later be rejected.'}</p>
                 <button type="button" className="glass-button w-full p-3 rounded-xl font-semibold disabled:opacity-50" disabled={submitting} onClick={submitDecision}>{submitting ? 'Saving…' : 'Confirm decision'}</button>
               </div> : dialog.type === 'dispatch' ? <div className="space-y-4 mt-5">
                 <p className="text-sm text-muted-foreground">Dispatch the original product and purchased options. Stock is deducted once. The buyer does not pay again.</p>
@@ -400,7 +408,7 @@ export default function ReturnOrdersPanel({ formatPrice, kind = 'return' }) {
                 <>
                   <p className="text-sm mt-5" style={{ color: 'hsl(var(--muted-foreground))' }}>This policy provides a replacement instead of a wallet refund. Confirm only after reviewing the returned item.</p>
                   <button type="button" onClick={() => acceptReturn(dialog.request)} disabled={submitting} className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold text-white inline-flex items-center justify-center gap-2 disabled:opacity-50" style={{ background: 'hsl(150, 60%, 40%)' }}>
-                    {submitting && <Loader2 size={14} className="animate-spin" />} Approve replacement
+                    {submitting && <Loader2 size={14} className="animate-spin" />} Prepare replacement
                   </button>
                 </>
               ) : dialog.request.refundFundingPolicy === 'held_order' ? (

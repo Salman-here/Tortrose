@@ -37,6 +37,8 @@ import {
 } from '../utils/returnPresentationSafety';
 import { getReturnItemVariantLabels } from '../utils/returnItemVariants';
 import ReplacementReceipt from './ReplacementReceipt';
+import ReturnPhotoPicker from './ReturnPhotoPicker';
+import ReturnPhotos from './ReturnPhotos';
 import { publishAfterSalesChange, subscribeAfterSalesChange } from '../utils/afterSalesRefresh';
 
 const REASONS = [
@@ -88,6 +90,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
   const [quantities, setQuantities] = useState({});
   const [reasonCategory, setReasonCategory] = useState('damaged');
   const [reasonDetails, setReasonDetails] = useState('');
+  const [photos, setPhotos] = useState([]), [uploading, setUploading] = useState(false), [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const requestKeyRef = useRef(null);
   const [cancellingId, setCancellingId] = useState(null);
@@ -310,6 +313,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
     setQuantities(initial);
     setReasonCategory('damaged');
     setReasonDetails('');
+    setPhotos([]); setFormError('');
     requestKeyRef.current = requestKey;
     setSelectedGroup(current);
   };
@@ -326,6 +330,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
   };
 
   const submit = async () => {
+    if (uploading) return;
     if (loadError || mutationInProgressRef.current || !mountedRef.current || currentOrderIdRef.current !== orderContext.orderId) return;
     if (selectedActiveReturn) {
       Feedback.show({ type: 'error', text1: 'Return in progress', text2: activeReturnHint(selectedActiveReturn) });
@@ -337,9 +342,10 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
     }
     const cleanReason = reasonDetails.trim();
     if (!REASON_VALUES.has(reasonCategory) || cleanReason.length < 10 || cleanReason.length > 1500) {
-      Feedback.show({ type: 'error', text1: 'Add more detail', text2: 'Explain the return reason in at least 10 characters.' });
+      setFormError('Please explain the return reason in at least 10 characters.');
       return;
     }
+    if (!photos.length) { setFormError('Attach at least one photo of the returned items.'); return; }
     const requestKey = canonicalRequestKey(requestKeyRef.current);
     if (!requestKey) {
       Feedback.show({ type: 'error', text1: 'Return form expired', text2: 'Close it and start again.' });
@@ -364,6 +370,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         items: expectedItems,
         reasonCategory,
         reasonDetails: cleanReason,
+        evidenceIds: photos.map(photo => photo._id),
         requestKey,
       }, {
         headers: { 'Idempotency-Key': requestKey },
@@ -375,6 +382,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         expectedItems,
         expectedReasonCategory: reasonCategory,
         expectedReasonDetails: cleanReason,
+        expectedEvidenceIds: photos.map(photo => photo._id),
       });
       const refreshed = await load({ notify: false });
       if (refreshed.stale || !isCurrentMutation()) return;
@@ -565,6 +573,8 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
               )}
             </View>
             <ReplacementReceipt request={request} onChanged={load} />
+            {request.evidenceUrls?.length > 0 && <ReturnPhotos photos={request.evidenceUrls} />}
+            {!!request.decisionReason && <Text style={styles.mutedText}>Seller’s decision: {request.decisionReason}</Text>}
             {request.statusHistory.length > 0 && (
               <View style={styles.history}>
                 {request.statusHistory.map((entry, index) => (
@@ -605,10 +615,10 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
         );
       })}
 
-      <Modal visible={!!selectedGroup} animationType="slide" onRequestClose={() => !submitting && setSelectedGroup(null)}>
+      <Modal visible={!!selectedGroup} animationType="slide" onRequestClose={() => !submitting && !uploading && setSelectedGroup(null)}>
         <View style={[styles.modalRoot, { backgroundColor: palette.colors.background }]}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedGroup(null)} disabled={submitting} accessibilityLabel="Close return request">
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedGroup(null)} disabled={submitting || uploading} accessibilityLabel="Close return request">
               <Ionicons name="close" size={22} color={palette.colors.text} />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
@@ -668,6 +678,8 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
               placeholderTextColor={palette.colors.textSecondary}
               style={styles.reasonInput}
             />
+            <ReturnPhotoPicker orderId={orderContext.orderId} photos={photos} onChange={next => { setPhotos(next); setFormError(''); }} onBusyChange={setUploading} disabled={submitting || uploading} />
+            {!!formError && <Text accessibilityRole="alert" style={{ color: palette.colors.error, fontSize: 13, marginTop: 12 }}>{formError}</Text>}
             {loadError ? (
               <View style={styles.unavailableCard}>
                 <Text style={[styles.unavailableText, { flex: 1 }]}>Retry return information before submitting.</Text>
@@ -678,7 +690,7 @@ export default function BuyerReturnsSection({ order, formatMoney }) {
             ) : null}
             {!loadError && !submitting && selectedActiveReturn ? <Text style={styles.unavailableText}>{activeReturnHint(selectedActiveReturn)}</Text> : null}
             {!loadError && !submitting && !selectedActiveReturn && !selection.valid ? <Text style={styles.unavailableText}>Return eligibility changed. Review the available items before submitting.</Text> : null}
-            <TouchableOpacity style={[styles.submitButton, (submitting || !selection.valid || !!loadError) && styles.disabled]} onPress={submit} disabled={submitting || !selection.valid || !!loadError}>
+            <TouchableOpacity style={[styles.submitButton, (submitting || uploading || !selection.valid || !!loadError) && styles.disabled]} onPress={submit} disabled={submitting || uploading || !selection.valid || !!loadError}>
               {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send-outline" size={18} color="#fff" />}
               <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Submit Return Request'}</Text>
             </TouchableOpacity>

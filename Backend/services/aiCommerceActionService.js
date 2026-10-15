@@ -64,7 +64,10 @@ function presentReturn(request) {
       settledAt: doc.settlement?.settledAt, walletCredited: false,
       walletCreditRecorded: doc.status === 'returned' && doc.settlement?.status === 'completed'
         && Boolean(doc.settlement?.walletTransaction), paymentReviewRequired: Boolean(doc.settlement?.riskPending) },
-    nextStatuses: RETURN_STATUS_TRANSITIONS[doc.status] || [],
+    decisionReason: doc.decisionReason, resolution: doc.resolution,
+    photoCount: Array.isArray(doc.evidenceUrls) ? doc.evidenceUrls.length : 0,
+    requiresPhotoReview: doc.status === 'requested',
+    nextStatuses: (RETURN_STATUS_TRANSITIONS[doc.status] || []).filter(next => doc.status === 'requested' || next !== 'rejected'),
     canCancelRequest: returns().BUYER_CANCELLABLE_STATUSES.includes(doc.status),
     canAccept: ['under_review', 'accepted_pending_payment'].includes(doc.status), createdAt: doc.createdAt };
 }
@@ -271,13 +274,15 @@ async function prepare(action, args, user) {
     if (!group) throw fail('Choose which store portion to return. Requests are seller-specific.', 'AI_COMMERCE_STORE_AMBIGUOUS');
     if (!Array.isArray(args.items) || !args.items.length) throw fail('Choose the exact items and quantities to return.');
     const items = args.items.map(selection => require('./aiOwnedReturnSelectionService').resolveOwnedReturnSelection(selection, group.items));
-    const input = { orderId: id(order), sellerId: id(group.seller), items, reasonCategory: args.reasonCategory, reasonDetails: clean(args.reasonDetails) };
+    const input = { orderId: id(order), sellerId: id(group.seller), items, reasonCategory: args.reasonCategory, reasonDetails: clean(args.reasonDetails),
+      ...(Array.isArray(args.evidenceIds) ? { evidenceIds: [...args.evidenceIds].sort() } : {}) };
+    await require('./afterSalesEvidenceService').ownedEvidence({ evidenceIds: input.evidenceIds, buyerId: owner.id, orderId: id(order), kind: 'return' });
     const quote = await returns().previewReturnRequest({ ...input, buyerId: owner.id, requestKey: 'ai-preview-request' });
     return { title: 'Review return request', input,
-      contract: quote, data: { returnPreview: quote },
+      contract: { ...quote, evidenceIds: input.evidenceIds || [] }, data: { returnPreview: quote },
       notice: `Request a return from ${quote.storeName} for ${order.orderId}: ${quote.items.map(require('./aiOwnedReturnSelectionService').formatOwnedReturnItem).join(', ')}.\nReason: ${quote.reasonDetails}.\n`
         + (quote.policy.refundType === 'replacement_only' ? 'Resolution: replacement only; no money refund.'
-          : `Frozen potential Wallet refund: ${money(quote.refund.totalAmount, quote.currency)} after the return is reviewed and accepted. A request alone does not refund money.`) };
+          : `Frozen potential Wallet refund: ${money(quote.refund.totalAmount, quote.currency)} after seller approval and collection of the return. A request alone does not refund money.`) };
   }
   if (action === 'request_withdrawal') {
     if (!isSupportedCurrency(args.currency)) throw fail('Choose one earned balance currency: USD, PKR, EUR or GBP. No conversion is available.', 'WITHDRAWAL_CURRENCY_REQUIRED');
@@ -324,12 +329,13 @@ async function prepare(action, args, user) {
       notice: `Cancel return ${request.returnNumber}. This does not cancel the purchase or issue a money refund.` };
   }
   if (action === 'update_return_status') {
+    if (['approved', 'rejected'].includes(args.status)) throw fail('Review the buyer photos and record the initial decision on the secure Returns screen. A return cannot be rejected after approval.', 'RETURN_SECURE_PHOTO_REVIEW_REQUIRED', 409);
     if (!(RETURN_STATUS_TRANSITIONS[request.status] || []).includes(args.status)) throw fail(`The return cannot move from ${request.status} to ${args.status}. Complete the required steps in order.`, 'INVALID_RETURN_STATUS_TRANSITION', 409);
     if (args.status === 'rejected' && clean(args.note).length < 5) throw fail('Provide your actual rejection reason before rejecting this return.', 'RETURN_REJECTION_REASON_REQUIRED');
     return { title: 'Review return status', input: { ...input, status: args.status }, contract: { ...contract, to: args.status },
       notice: `Move your store return ${request.returnNumber} from ${RETURN_STATUS_LABELS[request.status]} to ${RETURN_STATUS_LABELS[args.status]}.${args.note ? `\nYour note: ${clean(args.note, 1000)}` : ''}\nThis status step does not credit a refund.` };
   }
-  if (!['under_review', 'accepted_pending_payment'].includes(request.status)) throw fail('Final acceptance is available only after the item is received and reviewed. Inspect the return for its next allowed step.', 'RETURN_ACCEPTANCE_UNAVAILABLE', 409);
+  if (!['under_review', 'accepted_pending_payment'].includes(request.status)) throw fail('Complete the approved resolution only after the item is received and inspected. Inspect the return for its next allowed step.', 'RETURN_ACCEPTANCE_UNAVAILABLE', 409);
   const order = await Order.findById(request.order);
   if (!order) throw fail('The original return order is unavailable.', 'RETURN_ORDER_MISSING', 409);
   const replacement = request.policySnapshot?.refundType === 'replacement_only';
@@ -455,6 +461,20 @@ async function executeCommerceTool(name, args = {}, user) {
         message: `Safepay is currently configured for ${config.environment === 'sandbox' ? 'Sandbox testing (simulated payments)' : 'live real-money payments'}. Method availability is decided by its secure form; configuration does not prove a payment succeeded.` };
     }
     actor(user);
+    if (name === 'request_return' && (!Array.isArray(args.evidenceIds) || !args.evidenceIds.length)) {
+      const order = await purchase(args.orderId, user);
+      const url = `https://rozare.com/user-dashboard/order/detail/${order._id}#returns`;
+      const message = `Return requests now require photos. Open ${url} to choose the items, explain the issue and attach photos. The seller reviews and approves or rejects before collection. No return or refund has been created.`;
+      return { success: true, requiresSecureAction: true, data: { url, orderId: id(order), requiresPhotos: true }, message, requiredDisclosure: message };
+    }
+    if (name === 'update_return_status' && ['approved', 'rejected'].includes(args.status)) {
+      const request = await ownedReturn(args.returnId, user, 'seller');
+      if (request.status === 'requested') {
+        const url = `https://rozare.com/seller-dashboard/order-management?tab=returns&returnId=${request._id}`;
+        const message = `Review the buyer's photos and record the initial decision at ${url}. No decision or collection has been performed.`;
+        return { success: true, requiresSecureAction: true, data: { url }, message, requiredDisclosure: message };
+      }
+    }
     if (!REVIEWED_COMMERCE_ACTIONS.has(name)) return await readCommerceTool(name, args, user);
     const result = await executeReviewedCommerceAction(name, args, user, { prepare, execute });
     // Financial messages are a receipt/disclosure, not discretionary model

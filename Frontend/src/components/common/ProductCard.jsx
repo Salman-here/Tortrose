@@ -12,7 +12,7 @@ import { optimizeImage, buildSrcSet } from "../../utils/optimizeImage";
 import { getStoreSubdomainUrl } from "../../utils/subdomainHelper";
 import ProductOptionsModal from "./ProductOptionsModal";
 import { hasProductOptions } from "../../utils/productOptions";
-import { optionsKeyOf } from "../../utils/guestCart";
+import { resolveProductCartLine, getCartProductQuantity, cartVariantLabel } from '../../utils/cartProductSelection';
 
 const ProductCard = memo(({
   _id, name, image, images, category, price, discountedPrice, currency, priceCurrency,
@@ -45,16 +45,9 @@ const ProductCard = memo(({
   const hasOptions = hasProductOptions(productForOptions);
 
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
-  const cartItem = cartItems?.cart?.find((item) => (
-    item?.product?._id === _id
-    && item?.selectedColor === (selectedColor || null)
-    && optionsKeyOf(item?.selectedOptions) === optionsKeyOf(selectedOptions)
-  ));
-  const anyCartItem = cartItems?.cart?.find((item) => item?.product?._id === _id);
-  // A card cannot guess which variant the buyer wants. Keep the cart badge
-  // useful when any variant is present, but only show quantity controls after
-  // the buyer has explicitly selected the matching version in the picker.
-  const isInCart = hasOptions ? Boolean(anyCartItem) : Boolean(cartItem);
+  const cartItem = resolveProductCartLine(productForOptions, cartItems?.cart, selectedOptions, selectedColor);
+  const productCartQuantity = getCartProductQuantity(productForOptions, cartItems?.cart);
+  const isInCart = Boolean(cartItem);
   const productMoney = { price, discountedPrice, currency, priceCurrency };
   const numericPrice = resolveProductPresentationMoney(productMoney, 'price');
   const numericDiscountedPrice = resolveProductPresentationMoney(productMoney, 'discountedPrice');
@@ -235,6 +228,9 @@ const ProductCard = memo(({
         </div>
 
         {/* Add to cart button */}
+        {hasOptions && productCartQuantity > 0 && <div className="mb-2 text-xs text-center text-muted-foreground" aria-live="polite">
+          <span>{productCartQuantity} in cart</span>{cartItem && <span className="block truncate" title={cartVariantLabel(productForOptions, cartItem)}>{cartVariantLabel(productForOptions, cartItem)}</span>}
+        </div>}
         {isInCart && cartItem ? (
           <div className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-xl glass-inner">
             <button
@@ -249,7 +245,7 @@ const ProductCard = memo(({
             </span>
             <button
               onClick={() => handleQtyInc(cartItem._id)}
-              disabled={qtyUpdateId === cartItem._id || cartItem.qty >= stock}
+              disabled={qtyUpdateId === cartItem._id || productCartQuantity >= stock}
               className="p-1.5 rounded-lg transition active:scale-90 disabled:opacity-50"
               style={{ background: 'var(--logo-gradient)', color: 'white' }}
               aria-label="Increase quantity">
@@ -279,6 +275,7 @@ const ProductCard = memo(({
           </button>
         )}
 
+        {hasOptions && isInCart && <button type="button" className="text-xs font-semibold mt-2 text-primary" onClick={() => setIsOptionsModalOpen(true)} disabled={loadingProductId === _id}>Change options</button>}
         <div className="mt-2 flex justify-center opacity-60 group-hover:opacity-100 transition-opacity">
           <Link to={`/single-product/${_id}`} onClick={handleProductClick} className="text-xs sm:text-sm font-medium flex items-center gap-0.5 transition-colors"
             style={{ color: 'hsl(var(--primary))' }}>
@@ -291,8 +288,8 @@ const ProductCard = memo(({
       <ProductOptionsModal
         open={isOptionsModalOpen}
         product={productForOptions}
-        selectedOptions={selectedOptions}
-        selectedColor={selectedColor}
+        selectedOptions={cartItem?.selectedOptions || selectedOptions}
+        selectedColor={cartItem?.selectedColor || selectedColor}
         onClose={() => setIsOptionsModalOpen(false)}
         onConfirm={handleOptionsConfirm}
         submitting={isCartLoading && loadingProductId === _id}

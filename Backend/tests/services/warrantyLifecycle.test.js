@@ -174,15 +174,38 @@ test('insufficient seller balance cannot refund warranty using an online held-or
 
 test('ordinary replacement return holds funds until receipt, then warranty may cover the replaced item', async () => {
   const fx = await fixture({ delivered: new Date(Date.now() - 86400000).toISOString(), resolution: 'replacement_only' });
-  let returned = await createReturnRequest({ ...fx.input, reasonCategory: 'defective', requestKey: 'normal-replacement-return-0001' });
-  await updateReturnStatus({ returnRequestId: returned._id, actor: { id: fx.input.sellerId, role: 'seller' }, nextStatus: 'approved' });
+  const photo = await Evidence.create({ user: fx.buyer._id, order: fx.order._id, kind: 'return', url: 'https://example.com/return.png', publicId: 'qa/return', mime: 'image/png', size: 100 });
+  let returned = await createReturnRequest({ ...fx.input, evidenceIds: [String(photo._id)], reasonCategory: 'defective', requestKey: 'normal-replacement-return-0001' });
+  await updateReturnStatus({ returnRequestId: returned._id, actor: { id: fx.input.sellerId, role: 'seller' }, nextStatus: 'approved', note: 'We will replace this defective product after collection.' });
   await inspect(returned, fx.seller);
-  returned = await approveReplacement({ returnRequestId: returned._id, sellerId: fx.seller._id });
+  await expect(updateReturnStatus({ returnRequestId: returned._id, actor: { id: fx.input.sellerId, role: 'seller' }, nextStatus: 'rejected', note: 'Cannot reject the already approved request.' })).rejects.toMatchObject({ statusCode: 409 });
   expect((await buildSellerPaymentSummary(fx.seller._id, { displayCurrency: 'PKR' })).balanceByCurrency.PKR.returnWindowHeldAmount).toBeGreaterThan(0);
   await dispatchReplacement({ requestId: String(returned._id), sellerId: fx.input.sellerId, shippingMethod: 'hand_delivery', operationKey: 'replacement-hand-delivery-0001' });
   await confirmReplacementReceived({ requestId: String(returned._id), buyerId: fx.input.buyerId });
   expect((await buildWarrantyEligibility(fx.order)).groups[0].items[0].eligible).toBe(true);
   expect((await buildSellerPaymentSummary(fx.seller._id, { displayCurrency: 'PKR' })).balanceByCurrency.PKR.returnWindowHeldAmount).toBe(0);
+});
+
+test('ordinary returns require owned, order-scoped return photos and a reasoned decision before collection', async () => {
+  const fx = await fixture({ delivered: new Date(Date.now() - 86400000).toISOString() });
+  const base = { ...fx.input, reasonCategory: 'defective', requestKey: 'return-evidence-boundary-0001' };
+  await expect(createReturnRequest({ ...base, evidenceIds: undefined })).rejects.toMatchObject({ code: 'RETURN_EVIDENCE_REQUIRED' });
+  await expect(createReturnRequest(base)).rejects.toMatchObject({ code: 'RETURN_EVIDENCE_UNOWNED' });
+  const other = await fixture({ delivered: new Date(Date.now() - 86400000).toISOString() });
+  const foreign = await Evidence.create({ user: other.buyer._id, order: other.order._id, kind: 'return', url: 'https://example.com/foreign.png', publicId: 'qa/foreign', mime: 'image/png', size: 100 });
+  await expect(createReturnRequest({ ...base, evidenceIds: [String(foreign._id)] })).rejects.toMatchObject({ code: 'RETURN_EVIDENCE_UNOWNED' });
+  const photo = await Evidence.create({ user: fx.buyer._id, order: fx.order._id, kind: 'return', url: 'https://example.com/return.png', publicId: 'qa/return', mime: 'image/png', size: 100 });
+  const request = await createReturnRequest({ ...base, evidenceIds: [String(photo._id)] });
+  expect(request.returnReviewVersion).toBe(1);
+  expect(request.evidenceUrls).toEqual([photo.url]);
+  expect((await Evidence.findById(photo._id)).claim).toEqual(request._id);
+  const transition = { returnRequestId: request._id, actor: { id: fx.input.sellerId, role: 'seller' } };
+  await expect(updateReturnStatus({ ...transition, nextStatus: 'picked_up' })).rejects.toMatchObject({ statusCode: 409 });
+  await expect(updateReturnStatus({ ...transition, nextStatus: 'approved', note: 'yes' })).rejects.toMatchObject({ code: 'RETURN_DECISION_REASON_REQUIRED' });
+  const decision = await updateReturnStatus({ ...transition, nextStatus: 'rejected', note: 'The supplied photos do not match the reported defect.' });
+  expect(decision.decisionReason).toContain('supplied photos');
+  expect(decision.status).toBe('rejected');
+  expect(await WalletTransaction.countDocuments()).toBe(0);
 });
 
 test('card-funded warranty refunds credit only after verified Sandbox capture (provider response simulated in this test)', async () => {

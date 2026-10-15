@@ -19,6 +19,7 @@ const Payment = require('../../models/SafepayPayment');
 const Wallet = require('../../models/Wallet');
 const Transaction = require('../../models/WalletTransaction');
 const Return = require('../../models/ReturnRequest');
+const Evidence = require('../../models/AfterSalesEvidence');
 const Store = require('../../models/Store');
 const Bank = require('../../models/SellerPaymentAccount');
 const Withdrawal = require('../../models/SellerWithdrawalRequest');
@@ -68,7 +69,8 @@ async function fixture({ method = 'wallet', currency = 'USD', statuses = ['confi
     reference: 'order:' + order._id, requestKey: 'fixture-' + order._id, amountMinor: 3400, currency, providerMode: 'payment',
     fingerprint: 'a'.repeat(64), terms: {}, tracker: 'track_' + order._id, status: 'paid', capturedMinor: 3400, refundedMinor: 0, walletRefundMinor: 0,
     paymentRail, providerIntent: paymentRail === 'raast' ? 'RAAST' : 'CYBERSOURCE', paidAt: new Date(), appliedAt: new Date() });
-  return { buyer: actor(buyerId), sellers: sellers.map(id => actor(id, 'seller')), products, order };
+  const photo = await Evidence.create({ user: buyerId, order: order._id, kind: 'return', url: 'https://example.com/owned-return.png', publicId: `qa/${order._id}`, mime: 'image/png', size: 100 });
+  return { buyer: actor(buyerId), sellers: sellers.map(id => actor(id, 'seller')), products, order, evidenceIds: [String(photo._id)] };
 }
 beforeAll(async () => { replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } }); await mongoose.connect(replica.getUri());
   await Promise.all(Object.values(mongoose.models).map(model => model.init())); }, 60000);
@@ -141,7 +143,7 @@ test('returns expose frozen eligibility and require a real reason and exact owne
   const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
   const eligibility = await run('get_return_eligibility', { orderId: f.order.orderId }, f.buyer);
   expect(eligibility.data.groups[0].eligible).toBe(true);
-  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }],
+  const input = { evidenceIds: f.evidenceIds, orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }],
     reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
   expect((await run('request_return', { ...input, reasonDetails: 'bad', ...ctx('bad') }, f.buyer)).code).toBe('RETURN_REASON_TOO_SHORT');
   const preview = await run('request_return', { ...input, ...ctx('preview') }, f.buyer);
@@ -153,7 +155,7 @@ test('returns expose frozen eligibility and require a real reason and exact owne
 });
 test('return scope cannot include another seller\'s line and undelivered goods are ineligible', async () => {
   const f = await fixture({ statuses: ['delivered', 'shipped'], returnsEnabled: true });
-  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[1]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const input = { evidenceIds: f.evidenceIds, orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[1]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
   expect((await run('request_return', { ...input, ...ctx('bad') }, f.buyer)).success).toBe(false);
   const groups = (await run('get_return_eligibility', { orderId: f.order.orderId }, f.buyer)).data.groups;
   expect(groups.find(group => String(group.seller._id) === String(f.sellers[1]._id)).eligible).toBe(false);
@@ -184,13 +186,17 @@ test('seller balance withdrawal reserves net money exactly once, without another
   expect(await Withdrawal.countDocuments()).toBe(1);
 });
 async function reviewedReturn(f) {
-  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }],
+  const input = { evidenceIds: f.evidenceIds, orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }],
     reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
   const preview = await run('request_return', { ...input, ...ctx('return-preview') }, f.buyer);
   const created = await confirm(f.buyer, 'request_return', input, preview);
   expect(created.success).toBe(true);
   const request = await Return.findOne({ order: f.order._id });
-  for (const status of ['approved', 'picked_up', 'in_transit_to_seller', 'received_by_seller', 'under_review']) {
+  const decision = await run('update_return_status', { returnId: String(request._id), status: 'approved' }, f.sellers[0]);
+  expect(decision).toMatchObject({ success: true, requiresSecureAction: true });
+  expect((await Return.findById(request._id)).status).toBe('requested');
+  await require('../../services/returnService').updateReturnStatus({ returnRequestId: request._id, actor: { id: String(f.sellers[0]._id), role: 'seller' }, nextStatus: 'approved', note: 'The attached photos show damage. We will refund after collection.' });
+  for (const status of ['picked_up', 'in_transit_to_seller', 'received_by_seller', 'under_review']) {
     const action = { returnId: String(request._id), status };
     const next = await run('update_return_status', { ...action, ...ctx('status-' + status) }, f.sellers[0]);
     expect(next.previewOnly).toBe(true);
@@ -216,7 +222,7 @@ test('AI follows real return transitions, then uses held Wallet order funds with
 });
 test('seller cannot skip return logistics or mark a money refund through a status update', async () => {
   const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
-  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const input = { evidenceIds: f.evidenceIds, orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
   const preview = await run('request_return', { ...input, ...ctx('preview') }, f.buyer);
   await confirm(f.buyer, 'request_return', input, preview);
   const request = await Return.findOne({});
@@ -226,7 +232,7 @@ test('seller cannot skip return logistics or mark a money refund through a statu
 });
 test('a timely open return keeps funds held after the frozen return deadline', async () => {
   const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
-  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const input = { evidenceIds: f.evidenceIds, orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
   const preview = await run('request_return', { ...input, ...ctx('preview') }, f.buyer);
   await confirm(f.buyer, 'request_return', input, preview);
   const request = await Return.findOne({}).lean();
@@ -322,7 +328,7 @@ test.each([{ minPrice: -1 }, { maxPrice: -1 }, { minPrice: 5, maxPrice: 1 }, { c
 
 test('a historical returned flag without its actual refund ledger cannot claim a verified Wallet refund', async () => {
   const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
-  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const input = { evidenceIds: f.evidenceIds, orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
   const preview = await run('request_return', { ...input, ...ctx('return-proof-preview') }, f.buyer);
   await confirm(f.buyer, 'request_return', input, preview);
   const request = await Return.findOne({});
@@ -345,12 +351,13 @@ test('friendly cancellation selectors resolve store and seller references only i
 });
 
 async function reviewedReturnFixture(f) {
-  const input = { orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const input = { evidenceIds: f.evidenceIds, orderId: f.order.orderId, sellerId: String(f.sellers[0]._id), items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
   const preview = await run('request_return', { ...input, ...ctx('return-request-' + f.order._id) }, f.buyer);
   expect(preview.previewOnly).toBe(true);
   await confirm(f.buyer, 'request_return', input, preview);
   let request = await Return.findOne({ order: f.order._id });
-  for (const status of ['approved', 'pickup_scheduled', 'picked_up', 'in_transit_to_seller', 'received_by_seller', 'under_review']) {
+  await require('../../services/returnService').updateReturnStatus({ returnRequestId: request._id, actor: { id: String(f.sellers[0]._id), role: 'seller' }, nextStatus: 'approved', note: 'The attached photos show damage. We will refund after collection.' });
+  for (const status of ['pickup_scheduled', 'picked_up', 'in_transit_to_seller', 'received_by_seller', 'under_review']) {
     const review = await run('update_return_status', { returnId: String(request._id), status, ...ctx(status) }, f.sellers[0]);
     expect(review.previewOnly).toBe(true);
     const result = await confirm(f.sellers[0], 'update_return_status', { returnId: String(request._id), status }, review);
@@ -405,4 +412,17 @@ test('a retained chat confirmation executes the actual owned shipment action wit
   const saved = await Order.findById(f.order._id);
   expect(saved.sellerFulfillment.map(row => row.status)).toEqual(['shipped', 'confirmed']);
   expect((await finish(f.sellers[0], 'Yes, confirm this shipment update.', ctx('retry-confirm', conversationId))).result.replayed).toBe(true);
+});
+
+
+
+test('chat without return photos hands off to the owned secure form and creates nothing', async () => {
+  const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
+  const input = { orderId: f.order.orderId, items: [{ orderItemId: String(f.order.orderItems[0]._id), quantity: 1 }], reasonCategory: 'damaged', reasonDetails: 'Cup arrived with a cracked rim.' };
+  const result = await run('request_return', input, f.buyer);
+  expect(result).toMatchObject({ success: true, requiresSecureAction: true });
+  expect(result.data.url).toBe('https://rozare.com/user-dashboard/order/detail/' + f.order._id + '#returns');
+  expect(await Return.countDocuments()).toBe(0);
+  const outsider = actor(new mongoose.Types.ObjectId());
+  expect((await run('request_return', input, outsider)).success).toBe(false);
 });

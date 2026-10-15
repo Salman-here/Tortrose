@@ -19,6 +19,7 @@ const mongoose = require('mongoose');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Order = require('../../models/Order');
 const ReturnRequest = require('../../models/ReturnRequest');
+const Evidence = require('../../models/AfterSalesEvidence');
 const SellerBalanceTransaction = require('../../models/SellerBalanceTransaction');
 const SellerSettlementLock = require('../../models/SellerSettlementLock');
 const Wallet = require('../../models/Wallet');
@@ -176,6 +177,7 @@ beforeEach(async () => {
   await Promise.all([
     Order.deleteMany({}),
     ReturnRequest.deleteMany({}),
+    Evidence.deleteMany({}),
     SellerBalanceTransaction.deleteMany({}),
     SellerSettlementLock.deleteMany({}),
     Wallet.deleteMany({}),
@@ -190,8 +192,10 @@ test('a second active partial return for the same order and seller is rejected w
   fixture.order.orderItems[0].returnPolicySnapshotVersion = 1;
   fixture.order.orderItems[0].returnPolicy = { returnsEnabled: true, returnDuration: 30, refundType: 'full_refund' };
   await fixture.order.save();
+  const photo = await Evidence.create({ user: fixture.buyer, order: fixture.order._id, kind: 'return', url: 'https://example.com/return.png', publicId: 'qa/return', mime: 'image/png', size: 100 });
   const input = {
     orderId: fixture.order._id, buyerId: fixture.buyer, sellerId: fixture.seller,
+    evidenceIds: [String(photo._id)],
     items: [{ orderItemId: fixture.order.orderItems[0]._id, quantity: 1 }],
     reasonCategory: 'defective', reasonDetails: 'The first unit arrived defective.',
     requestKey: 'active-return-first-000001',

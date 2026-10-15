@@ -89,6 +89,7 @@ const returnRequestSchema = new mongoose.Schema(
     {
         returnNumber: { type: String, required: true, unique: true, index: true },
         kind: { type: String, enum: ['return', 'warranty'], default: 'return', immutable: true, index: true },
+        returnReviewVersion: { type: Number, enum: [1], default: undefined, immutable: true },
         evidence: [{ type: mongoose.Schema.Types.ObjectId, ref: 'AfterSalesEvidence' }],
         evidenceUrls: [{ type: String, maxlength: 2000 }],
         evidenceHistory: [{ version: { type: Number, min: 0, validate: Number.isSafeInteger },

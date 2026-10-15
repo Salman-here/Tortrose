@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import SellerAfterSalesActionModal from './SellerAfterSalesActionModal';
+import ReturnPhotos from './ReturnPhotos';
 import Modal from './common/AppModal';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -197,7 +198,7 @@ function MetaPill({ icon, children, styles, palette }) {
 export default function SellerReturnsPanel({ header, route, navigation, kind = 'return' }) {
   const warranty = kind === 'warranty';
   const base = `/api/${warranty ? 'warranties' : 'returns'}`;
-  const linkedClaim = warranty ? route?.params?.warrantyId : null;
+  const linkedClaim = route?.params?.[warranty ? 'warrantyId' : 'returnId'];
   const statusText = value => warranty ? warrantyStatusLabel(value) : RETURN_STATUS_LABELS[value];
   const { palette } = useTheme();
   const styles = useMemo(() => buildStyles(palette), [palette]);
@@ -232,7 +233,8 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
         },
       });
       if (requestId !== requestSequence.current) return;
-      const rows = targeted ? (response.data?.returnRequest?.kind === 'warranty' ? [response.data.returnRequest] : null) : response.data?.returns;
+      const returnedRequest = response.data?.returnRequest;
+      const rows = targeted ? (returnedRequest && (warranty ? returnedRequest.kind === 'warranty' : returnedRequest.kind !== 'warranty') ? [returnedRequest] : null) : response.data?.returns;
       if (!Array.isArray(rows)) {
         throw new Error(warranty ? 'The warranty service sent an invalid response. Please try again.' : 'The returns service sent an invalid response. Please try again.');
       }
@@ -398,9 +400,9 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
       return;
     }
     if (request.policySnapshot?.refundType === 'replacement_only') {
-      Alert.alert('Approve replacement', 'Confirm that you reviewed the returned item and approve a replacement.', [
+      Alert.alert('Prepare replacement', 'Prepare the approved replacement after receiving and inspecting the returned item.', [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Approve', onPress: () => accept(request) },
+        { text: 'Continue', onPress: () => accept(request) },
       ]);
       return;
     }
@@ -425,7 +427,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
     const request = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest) ? rawRequest : {};
     const snapshot = inspectReturnPresentationSnapshot(request);
     const color = returnStatusColor(request.status, palette);
-    const transitions = snapshot.valid ? (RETURN_STATUS_TRANSITIONS[request.status] || []) : [];
+    const transitions = snapshot.valid ? (RETURN_STATUS_TRANSITIONS[request.status] || []).filter(next => warranty || request.status === 'requested' || next !== 'rejected') : [];
     const buyerName = displayText(request.buyer?.username, displayText(request.buyer?.email, 'Buyer'));
     const requestedAt = formatDateTime(request.requestedAt || request.createdAt);
     const deadline = formatDateTime(request.eligibilityDeadline);
@@ -529,18 +531,18 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
           {snapshot.valid && request.status === 'under_review' && (
             <TouchableOpacity
               style={[styles.acceptButton, submitting && styles.disabled]}
-              onPress={() => chooseFunding(request)}
+              onPress={() => !warranty && request.returnReviewVersion === 1 && request.policySnapshot?.refundType === 'replacement_only' ? setSpecialAction({ type: 'dispatch', request }) : chooseFunding(request)}
               disabled={submitting}
               activeOpacity={0.78}
               accessibilityRole="button"
-              accessibilityLabel={request.policySnapshot?.refundType === 'replacement_only' ? 'Approve replacement' : warranty ? 'Fund warranty refund' : 'Accept return'}
-              accessibilityHint="Opens the refund funding confirmation"
+              accessibilityLabel={request.policySnapshot?.refundType === 'replacement_only' ? !warranty && request.returnReviewVersion === 1 ? 'Dispatch replacement' : 'Prepare approved replacement' : warranty ? 'Fund warranty refund' : 'Issue approved refund'}
+              accessibilityHint={request.policySnapshot?.refundType === 'replacement_only' ? 'Opens replacement shipment details' : 'Opens the refund funding confirmation'}
               accessibilityState={{ disabled: submitting, busy: requestBusy }}
             >
               {requestBusy
                 ? <ActivityIndicator size="small" color="#fff" />
                 : <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />}
-              <Text style={styles.acceptText}>{request.policySnapshot?.refundType === 'replacement_only' ? 'Approve replacement' : warranty ? 'Fund warranty refund' : 'Accept return'}</Text>
+              <Text style={styles.acceptText}>{request.policySnapshot?.refundType === 'replacement_only' ? !warranty && request.returnReviewVersion === 1 ? 'Dispatch replacement' : 'Prepare approved replacement' : warranty ? 'Fund warranty refund' : 'Issue approved refund'}</Text>
             </TouchableOpacity>
           )}
           {snapshot.valid && request.status === 'accepted_pending_payment' && (
@@ -562,9 +564,9 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
           )}
         </View>
 
-        {warranty && snapshot.valid && <View style={{ gap: 10, marginTop: 14 }}>
-          <Text style={styles.meta}>Original {request.warrantySnapshot.months}-month warranty · {formatDateTime(request.warrantySnapshot.deadline)}{request.appealVersion ? ` · Appeal ${request.appealVersion}` : ''}</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{request.evidenceUrls.map((url, index) => <TouchableOpacity key={`${url}-${index}`} onPress={() => Linking.openURL(url).catch(() => Feedback.show({ type: 'error', text1: 'Unable to open photo' }))} accessibilityLabel={`View claim photo ${index + 1}`}><Image source={{ uri: url }} style={{ width: 80, height: 80, borderRadius: 12 }} contentFit="cover" /></TouchableOpacity>)}</View>
+        {snapshot.valid && <View style={{ gap: 10, marginTop: 14 }}>
+          {warranty && <Text style={styles.meta}>Original {request.warrantySnapshot.months}-month warranty · {formatDateTime(request.warrantySnapshot.deadline)}{request.appealVersion ? ` · Appeal ${request.appealVersion}` : ''}</Text>}
+          <ReturnPhotos photos={request.evidenceUrls || []} />
           {!!request.decisionReason && <Text style={styles.reasonBody}>Your decision: {request.decisionReason}</Text>}
           {request.evidenceHistory?.length > 1 && request.evidenceHistory.map(entry => <View key={entry.version} style={styles.reasonBox}><Text style={styles.reasonLabel}>{entry.version ? `Appeal ${entry.version}` : 'Original on-time claim'}</Text><Text style={styles.meta}>{formatDateTime(entry.submittedAt)}</Text><Text style={styles.reasonBody}>{entry.reason}</Text><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>{entry.urls.map((url, index) => <TouchableOpacity key={`${entry.version}-${index}`} accessibilityLabel={`View submission ${entry.version} photo ${index + 1}`} onPress={() => Linking.openURL(url).catch(() => Feedback.show({ type: 'error', text1: 'Unable to open photo' }))}><Image source={{ uri: url }} style={{ width: 72, height: 72, borderRadius: 12 }} contentFit="cover" /></TouchableOpacity>)}</View></View>)}
         </View>}
@@ -587,7 +589,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
                   <TouchableOpacity
                     key={nextStatus}
                     style={[styles.actionButton, isReject && styles.rejectButton, submitting && styles.disabled]}
-                    onPress={() => { setNote(''); if (warranty && request.status === 'requested') setSpecialAction({ type: 'decision', request, status: nextStatus }); else setDialog({ request, status: nextStatus }); }}
+                    onPress={() => { setNote(''); if (request.status === 'requested') setSpecialAction({ type: 'decision', request, status: nextStatus }); else setDialog({ request, status: nextStatus }); }}
                     disabled={submitting}
                     activeOpacity={0.76}
                     accessibilityRole="button"
@@ -650,7 +652,7 @@ export default function SellerReturnsPanel({ header, route, navigation, kind = '
   const filterHeader = (
     <View>
       {header}
-      {linkedClaim && <TouchableOpacity onPress={() => navigation?.setParams?.({ warrantyId: undefined })} style={{ padding: 14 }}><Text style={styles.filterText}>View all warranty claims</Text></TouchableOpacity>}
+      {linkedClaim && <TouchableOpacity onPress={() => navigation?.setParams?.({ [warranty ? 'warrantyId' : 'returnId']: undefined })} style={{ padding: 14 }}><Text style={styles.filterText}>{warranty ? 'View all warranty claims' : 'View all returns'}</Text></TouchableOpacity>}
       {initialLoading ? (
         <ReturnFiltersSkeleton styles={styles} />
       ) : (

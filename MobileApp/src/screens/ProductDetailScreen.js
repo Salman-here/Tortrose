@@ -27,7 +27,6 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumTopBar, { PremiumTopBarAction } from '../components/common/PremiumTopBar';
-import ProductOptionsModal from '../components/common/ProductOptionsModal';
 import SafetyActionsSheet from '../components/common/SafetyActionsSheet';
 import { trackProductView } from '../utils/recentlyViewed';
 import {
@@ -41,10 +40,10 @@ import { useTheme } from '../contexts/ThemeContext';
 import { getCartPresentationItemCount } from '../utils/cartPresentation';
 import {
   getInitialProductSelections,
-  hasProductOptions,
+  getProductOptionGroups,
   validateProductSelections,
 } from '../utils/productOptions';
-import { optionsKeyOf } from '../utils/guestCart';
+import { findProductCartLine, resolveProductCartLine, getCartProductQuantity } from '../utils/cartProductSelection';
 import { getModalTokens } from '../styles/modalTheme';
 
 const PRODUCT_TOPBAR_SHEEN = [
@@ -79,7 +78,9 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedColor, setSelectedColor] = useState(null);
   const [selectedOptions, setSelectedOptions] = useState({});
-  const [optionsModalVisible, setOptionsModalVisible] = useState(false);
+  const [optionError, setOptionError] = useState('');
+  const selectionTouched = useRef(false);
+  const scrollRef = useRef(null), optionLayout = useRef({ column: 0, card: 0, options: 0 });
   const [storeData, setStoreData] = useState(null);
   const [storeProductCount, setStoreProductCount] = useState(null);
   const [storePolicy, setStorePolicy] = useState(null);
@@ -99,19 +100,22 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [safetyAction, setSafetyAction] = useState(null);
 
-  const productHasOptions = hasProductOptions(product);
+  const optionGroups = getProductOptionGroups(product);
   const selectionValidation = validateProductSelections(product, {
     selectedColor,
     selectedOptions,
   });
-  const myOptKey = optionsKeyOf(selectionValidation.selectedOptions);
   const isInWishlist = product && wishlistItems?.some((item) => item._id === product._id);
-  const cartLineItem = product && cartItems?.cart?.find((item) =>
-    item.product?._id === product._id &&
-    (item.selectedColor || null) === selectionValidation.selectedColor &&
-    optionsKeyOf(item.selectedOptions) === myOptKey
-  );
+  const cartLineItem = findProductCartLine(product, cartItems?.cart, selectedOptions, selectedColor);
+  const productCartQuantity = getCartProductQuantity(product, cartItems?.cart);
   const isInCart = !!cartLineItem;
+  useEffect(() => { selectionTouched.current = false; setOptionError(''); }, [productId]);
+  useEffect(() => {
+    if (!product?._id || selectionTouched.current) return;
+    const line = resolveProductCartLine(product, cartItems?.cart);
+    if (!line) return;
+    setSelectedOptions(line.selectedOptions || {}); setSelectedColor(line.selectedColor || null);
+  }, [product, cartItems?.cart]);
   const cartCount = Array.isArray(cartItems?.cart)
     ? getCartPresentationItemCount(cartItems.cart)
     : 0;
@@ -159,7 +163,7 @@ export default function ProductDetailScreen({ route, navigation }) {
       const initialSelection = getInitialProductSelections(prod);
       setSelectedColor(initialSelection.selectedColor);
       setSelectedOptions(initialSelection.selectedOptions || {});
-      setOptionsModalVisible(false);
+      setOptionError('');
       setStorePolicy(res.data.storePolicy || null);
       const sellerId = typeof prod.seller === 'string' ? prod.seller : prod.seller?._id;
       if (sellerId) {
@@ -259,20 +263,23 @@ export default function ProductDetailScreen({ route, navigation }) {
 
   const handleWishlistToggle = () => { if (!currentUser) { navigation.navigate('Login'); return; } isInWishlist ? handleDeleteFromWishlist(product._id) : handleAddToWishlist(product._id); };
   const handleAddToCartClick = () => {
-    if (productHasOptions) {
-      // Required choices are collected in one focused sheet. This also covers
-      // partially selected inline choices and keeps card/detail behavior equal.
-      setOptionsModalVisible(true);
+    if (!selectionValidation.ok) {
+      const message = 'Choose every required option above before adding to cart.';
+      setOptionError(message); Feedback.show({ type: 'info', text1: 'Select your options', text2: message });
+      scrollRef.current?.scrollTo({ y: Math.max(0, optionLayout.current.column + optionLayout.current.card + optionLayout.current.options - 20), animated: true });
       return;
     }
-    handleAddToCart(product._id, null, null, product);
+    selectionTouched.current = true; setOptionError('');
+    handleAddToCart(product._id, selectionValidation.selectedColor, selectionValidation.selectedOptions, product, 'add');
   };
-
-  const handleOptionsConfirm = async ({ selectedColor: nextColor, selectedOptions: nextOptions }) => {
-    setSelectedColor(nextColor || null);
-    setSelectedOptions(nextOptions || {});
-    const added = await handleAddToCart(product._id, nextColor || null, nextOptions || null, product, 'add');
-    if (added) setOptionsModalVisible(false);
+  const chooseOption = (group, value) => {
+    selectionTouched.current = true; setOptionError('');
+    if (group.legacy) setSelectedColor(current => current === value ? null : value);
+    else {
+      const next = selectedOptions[group.name] === value ? undefined : value;
+      setSelectedOptions(current => ({ ...current, [group.name]: next }));
+      if (group.name.toLowerCase() === 'color') setSelectedColor(next || null);
+    }
   };
 
   const handleAskAI = () => {
@@ -450,6 +457,7 @@ export default function ProductDetailScreen({ route, navigation }) {
       <View style={[styles.screen, { paddingTop: topInset }]}>
         {topBar}
         <ScrollView
+          ref={scrollRef}
           style={styles.scroll}
           nestedScrollEnabled
           showsVerticalScrollIndicator={false}
@@ -542,8 +550,8 @@ export default function ProductDetailScreen({ route, navigation }) {
         </GlassPanel>
 
         {/* Product Info */}
-        <View style={[styles.contentColumn, { width: contentWidth }]}>
-          <GlassPanel variant="card" style={styles.infoCard}>
+        <View style={[styles.contentColumn, { width: contentWidth }]} onLayout={event => { optionLayout.current.column = event.nativeEvent.layout.y; }}>
+          <GlassPanel variant="card" style={styles.infoCard} onLayout={event => { optionLayout.current.card = event.nativeEvent.layout.y; }}>
             <View style={styles.eyebrowRow}>
               <View style={styles.categoryPill}>
                 <Ionicons name="pricetag-outline" size={12} color={palette.colors.primary} />
@@ -660,69 +668,24 @@ export default function ProductDetailScreen({ route, navigation }) {
               </Text>
             </View>
 
-            {/* Dynamic Product Options (Size, Color, Material...) */}
-            {product.optionGroups?.length > 0 ? (
-              <View style={styles.optionsBlock}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={styles.sectionIcon}>
-                    <Ionicons name="options-outline" size={16} color={palette.colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.sectionTitle}>Choose your options</Text>
-                    <Text style={styles.sectionSubtitle}>Select each option before adding to cart</Text>
-                  </View>
-                </View>
-                {product.optionGroups.map((group) => (
-                  <View key={group.name} style={styles.colorSection}>
-                    <Text style={styles.colorLabel}>{group.name}: <Text style={{ color: palette.colors.text, fontWeight: fontWeight.semibold }}>{selectedOptions[group.name] || `Select ${group.name.toLowerCase()}`}</Text></Text>
-                    <View style={styles.colorRow}>
-                      {group.values.map((val) => {
-                        const active = selectedOptions[group.name] === val;
-                        return (
-                          <TouchableOpacity key={val} onPress={() => setSelectedOptions(prev => ({ ...prev, [group.name]: active ? undefined : val }))}
-                            style={[styles.colorChip, active && styles.colorChipActive]}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected: active }}
-                            accessibilityLabel={`${group.name}: ${val}`}>
-                            {active && <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />}
-                            {active && <Ionicons name="checkmark-circle" size={14} color="#fff" />}
-                            <Text style={[styles.colorChipText, active && styles.colorChipTextActive]}>{val}</Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-                ))}
+            {optionGroups.length > 0 && <View style={styles.optionsBlock} onLayout={event => { optionLayout.current.options = event.nativeEvent.layout.y; }}>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.sectionIcon}><Ionicons name="options-outline" size={16} color={palette.colors.primary} /></View>
+                <View style={{ flex: 1 }}><Text style={styles.sectionTitle}>Choose your options</Text><Text style={styles.sectionSubtitle}>Select each option before adding to cart</Text></View>
               </View>
-            ) : product.colors?.length > 0 && (
-              <View style={styles.optionsBlock}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={styles.sectionIcon}>
-                    <Ionicons name="color-palette-outline" size={16} color={palette.colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.sectionTitle}>Choose a color</Text>
-                    <Text style={styles.sectionSubtitle}>Select one before adding to cart</Text>
-                  </View>
-                </View>
-                <View style={styles.colorSection}>
-                <Text style={styles.colorLabel}>Color: <Text style={{ color: palette.colors.text, fontWeight: fontWeight.semibold }}>{selectedColor || 'Select a color'}</Text></Text>
-                <View style={styles.colorRow}>
-                  {product.colors.map((color, i) => (
-                    <TouchableOpacity key={i} onPress={() => setSelectedColor(color)}
-                      style={[styles.colorChip, selectedColor === color && styles.colorChipActive]}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: selectedColor === color }}
-                      accessibilityLabel={`Color: ${color}`}>
-                      {selectedColor === color && <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />}
-                      {selectedColor === color && <Ionicons name="checkmark-circle" size={14} color="#fff" />}
-                      <Text style={[styles.colorChipText, selectedColor === color && styles.colorChipTextActive]}>{color}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                </View>
-              </View>
-            )}
+              {optionGroups.map(group => <View key={group.name} style={styles.colorSection}>
+                <Text style={styles.colorLabel}>{group.name}: <Text style={{ color: palette.colors.text, fontWeight: fontWeight.semibold }}>{(group.legacy ? selectedColor : selectedOptions[group.name]) || `Select ${group.name.toLowerCase()}`}</Text></Text>
+                <View style={styles.colorRow}>{group.values.map(value => {
+                  const active = (group.legacy ? selectedColor : selectedOptions[group.name]) === value;
+                  return <TouchableOpacity key={value} onPress={() => chooseOption(group, value)} style={[styles.colorChip, active && styles.colorChipActive]} accessibilityRole="button" accessibilityState={{ selected: active }} accessibilityLabel={`${group.name}: ${value}`}>
+                    {active && <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />}
+                    {active && <Ionicons name="checkmark-circle" size={14} color="#fff" />}
+                    <Text style={[styles.colorChipText, active && styles.colorChipTextActive]}>{value}</Text>
+                  </TouchableOpacity>;
+                })}</View>
+              </View>)}
+              {!!optionError && <Text accessibilityRole="alert" style={{ color: palette.colors.error, fontSize: 13 }}>{optionError}</Text>}
+            </View>}
 
             {product.tags?.length > 0 && (
               <View style={styles.tagsContainer}>
@@ -943,15 +906,6 @@ export default function ProductDetailScreen({ route, navigation }) {
         </View>
         </ScrollView>
 
-      <ProductOptionsModal
-        visible={optionsModalVisible}
-        product={product}
-        selectedColor={selectedColor}
-        selectedOptions={selectedOptions}
-        onClose={() => setOptionsModalVisible(false)}
-        onConfirm={handleOptionsConfirm}
-        submitting={isCartLoading && loadingProductId === productId}
-      />
 
       {/* Review Modal */}
       <Modal visible={reviewModalVisible} animationType="slide" transparent onRequestClose={() => setReviewModalVisible(false)}>
@@ -1071,10 +1025,10 @@ export default function ProductDetailScreen({ route, navigation }) {
               </View>
               <TouchableOpacity
                 onPress={() => handleQtyInc(cartLineItem._id)}
-                disabled={qtyUpdateId === cartLineItem._id || cartLineItem.qty >= product.stock}
+                disabled={qtyUpdateId === cartLineItem._id || productCartQuantity >= product.stock}
                 accessibilityRole="button"
                 accessibilityLabel="Increase quantity"
-                accessibilityState={{ disabled: qtyUpdateId === cartLineItem._id || cartLineItem.qty >= product.stock }}
+                accessibilityState={{ disabled: qtyUpdateId === cartLineItem._id || productCartQuantity >= product.stock }}
                 hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
               >
                 <LinearGradient colors={palette.gradients.cta} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.stepperBtnGradient}>
@@ -1092,9 +1046,7 @@ export default function ProductDetailScreen({ route, navigation }) {
               accessibilityLabel={
                 product.stock === 0
                   ? 'Out of stock'
-                  : productHasOptions
-                    ? `Choose options for ${product.name}`
-                    : `Add ${product.name} to cart`
+                  : `Add ${product.name} to cart`
               }
               accessibilityState={{
                 disabled: product.stock === 0 || (isCartLoading && loadingProductId === productId),
@@ -1115,8 +1067,8 @@ export default function ProductDetailScreen({ route, navigation }) {
                   )
                   : (
                     <>
-                      <Ionicons name={productHasOptions ? 'options-outline' : 'bag-add-outline'} size={18} color="#fff" />
-                      <Text style={styles.addToCartText}>{productHasOptions ? 'Choose options' : 'Add to cart'}</Text>
+                      <Ionicons name="bag-add-outline" size={18} color="#fff" />
+                      <Text style={styles.addToCartText}>Add to cart</Text>
                       <Ionicons name="arrow-forward" size={16} color="rgba(255,255,255,0.9)" />
                     </>
                   )}

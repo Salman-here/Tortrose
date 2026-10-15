@@ -7,7 +7,6 @@ import Loader from '../components/common/Loader';
 import StoreInfo from '../components/common/StoreInfo';
 import SEOHead from '../components/common/SEOHead';
 import ProductCard from '../components/common/ProductCard';
-import ProductOptionsModal from '../components/common/ProductOptionsModal';
 import { toast } from 'react-toastify';
 import { useGlobal } from '../contexts/GlobalContext';
 import {
@@ -19,7 +18,8 @@ import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import { getAuthToken } from "../utils/cookieHelper";
 import { trackProductView } from '../utils/tiktokPixel';
 import { addRecentlyViewedProduct } from '../utils/recentlyViewedProducts';
-import { createProductSelection, hasProductOptions } from '../utils/productOptions';
+import { createProductSelection, normalizeProductOptionGroups, validateProductSelection } from '../utils/productOptions';
+import { findProductCartLine, resolveProductCartLine, getCartProductQuantity } from '../utils/cartProductSelection';
 import { buildProductAIChatPrompt, openAIChat } from '../utils/aiChatLauncher';
 import SafetyActionsDialog from '../components/common/SafetyActionsDialog';
 import { useAuth } from '../contexts/AuthContext';
@@ -51,7 +51,10 @@ function ProductDetailPage() {
     const [rating, setRating] = useState(5);
     const [selectedColor, setSelectedColor] = useState(null);
     const [selectedOptions, setSelectedOptions] = useState({}); // { Size: 'L', Color: 'Red' }
-    const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
+    const [optionError, setOptionError] = useState('');
+    const optionsSectionRef = useRef(null);
+    const optionButtonRefs = useRef(new Map());
+    const selectionTouched = useRef(false);
     const [imageLoading, setImageLoading] = useState(true);
     const [storeData, setStoreData] = useState(null);
     const [storePolicy, setStorePolicy] = useState(null);
@@ -62,16 +65,18 @@ function ProductDetailPage() {
     const commentRef = useRef();
 
     const isInWishlist = product && wishlistItems?.some((item) => item._id === product._id);
-    // Stable key for variant combo (e.g. "Color:Red|Size:L"); used for cart line dedupe
-    const optionsKeyOf = (opts) => opts ? Object.keys(opts).filter(k => opts[k]).sort().map(k => `${k}:${opts[k]}`).join('|') : '';
-    const myOptKey = optionsKeyOf(selectedOptions);
-    const cartLineItem = product && cartItems?.cart?.find((item) =>
-        item.product?._id === product._id &&
-        item.selectedColor === selectedColor &&
-        optionsKeyOf(item.selectedOptions) === myOptKey
-    );
+    const optionGroups = normalizeProductOptionGroups(product);
+    const cartLineItem = findProductCartLine(product, cartItems?.cart, selectedOptions, selectedColor);
+    const productCartQuantity = getCartProductQuantity(product, cartItems?.cart);
     const isInCart = !!cartLineItem;
-    const productHasOptions = hasProductOptions(product);
+    useEffect(() => { selectionTouched.current = false; setOptionError(''); }, [id]);
+    useEffect(() => {
+        if (!product?._id || selectionTouched.current) return;
+        const line = resolveProductCartLine(product, cartItems?.cart);
+        if (!line) return;
+        setSelectedOptions(line.selectedOptions || {});
+        setSelectedColor(line.selectedColor || null);
+    }, [product, cartItems?.cart]);
     const productSellerId = product?.seller?._id || product?.seller || storeData?.seller?._id || storeData?.seller;
     const isOwnSellerContent = Boolean(
         productSellerId && String(productSellerId) === String(currentUser?._id || currentUser?.id || ''),
@@ -113,20 +118,26 @@ function ProductDetailPage() {
     const handleRating = (star) => setRating(star);
 
     const handleAddToCartClick = () => {
-        if (productHasOptions) {
-            setIsOptionsModalOpen(true);
+        const selection = validateProductSelection(product, selectedOptions, selectedColor);
+        if (!selection.ok) {
+            const missing = [...selection.missingOptions, ...selection.invalidOptions].map(group => group.name);
+            setOptionError(`Choose ${missing.join(' and ')} above before adding to cart.`);
+            optionsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            optionButtonRefs.current.get(missing[0])?.focus({ preventScroll: true });
             return;
         }
-        handleAddToCart(id, selectedColor, selectedOptions, product);
+        selectionTouched.current = true;
+        setOptionError('');
+        handleAddToCart(id, selection.selectedColor, selection.selectedOptions, product, 'add');
     };
-
-    const handleOptionsConfirm = async ({ selectedOptions: nextOptions, selectedColor: nextColor }) => {
-        const normalizedOptions = nextOptions || {};
-        const normalizedColor = nextColor || null;
-        setSelectedOptions(normalizedOptions);
-        setSelectedColor(normalizedColor);
-        const added = await handleAddToCart(id, normalizedColor, normalizedOptions, product, 'add');
-        if (added) setIsOptionsModalOpen(false);
+    const chooseOption = (group, value) => {
+        selectionTouched.current = true; setOptionError('');
+        if (group.legacy) setSelectedColor(current => current === value ? null : value);
+        else {
+            const next = selectedOptions[group.name] === value ? undefined : value;
+            setSelectedOptions(current => ({ ...current, [group.name]: next }));
+            if (group.name.toLowerCase() === 'color') setSelectedColor(next || null);
+        }
     };
 
     const handleAskAI = () => {
@@ -176,12 +187,10 @@ function ProductDetailPage() {
             setStorePolicy(res.data.storePolicy || null);
             setMainImg(res.data.product.image);
             setImageLoading(true);
-            // Pre-select only valid seller defaults; the add action still
-            // opens the picker so buyers can review or change every option.
+            // Inline selectors use explicit buyer choices, never seller defaults.
             const initialSelection = createProductSelection(res.data.product, {}, null);
             setSelectedOptions(initialSelection.selectedOptions || {});
             setSelectedColor(initialSelection.selectedColor || null);
-            setIsOptionsModalOpen(false);
             if (res.data.product.seller) {
                 try {
                     const storeParams = new URLSearchParams();
@@ -736,19 +745,21 @@ function ProductDetailPage() {
                             </motion.button>
 
                             {/* Dynamic Option Selectors (Size, Color, Material, etc.) */}
-                            {product.optionGroups && product.optionGroups.length > 0 && (
-                                <motion.div className="mb-6 space-y-5" variants={fadeIn}>
-                                    {product.optionGroups.map((group) => (
+                            {optionGroups.length > 0 && (
+                                <motion.div ref={optionsSectionRef} className="mb-6 space-y-5" variants={fadeIn}>
+                                    {optionGroups.map((group) => (
                                         <div key={group.name}>
                                             <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                                {group.name}: <span className="normal-case font-medium" style={{ color: 'hsl(var(--foreground))' }}>{selectedOptions[group.name] || `Select ${group.name.toLowerCase()}`}</span>
+                                                {group.name}: <span className="normal-case font-medium" style={{ color: 'hsl(var(--foreground))' }}>{(group.legacy ? selectedColor : selectedOptions[group.name]) || `Select ${group.name.toLowerCase()}`}</span>
                                             </p>
                                             <div className="flex flex-wrap gap-2">
                                                 {group.values.map((val) => {
-                                                    const isActive = selectedOptions[group.name] === val;
+                                                    const isActive = (group.legacy ? selectedColor : selectedOptions[group.name]) === val;
                                                     return (
                                                         <motion.button key={val} type="button"
-                                                            onClick={() => setSelectedOptions(prev => ({ ...prev, [group.name]: isActive ? undefined : val }))}
+                                                            ref={node => { if (val === group.values[0]) { if (node) optionButtonRefs.current.set(group.name, node); else optionButtonRefs.current.delete(group.name); } }}
+                                                            aria-label={`${group.name}: ${val}`} aria-pressed={isActive}
+                                                            onClick={() => chooseOption(group, val)}
                                                             whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                                                             className="px-4 py-2 rounded-xl text-sm font-medium transition-all"
                                                             style={isActive
@@ -761,35 +772,10 @@ function ProductDetailPage() {
                                             </div>
                                         </div>
                                     ))}
+                                    {optionError && <p className="text-sm text-destructive" role="alert">{optionError}</p>}
                                 </motion.div>
                             )}
 
-                            {/* Legacy Color Selector (only show if no new optionGroups configured) */}
-                            {(!product.optionGroups || product.optionGroups.length === 0) && product.colors && product.colors.length > 0 && (
-                                <motion.div className="mb-6" variants={fadeIn}>
-                                    <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                        Color: <span className="normal-case font-medium" style={{ color: 'hsl(var(--foreground))' }}>{selectedColor || 'Select a color'}</span>
-                                    </p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {product.colors.map((color) => (
-                                            <motion.button
-                                                key={color}
-                                                type="button"
-                                                onClick={() => setSelectedColor(color === selectedColor ? null : color)}
-                                                whileHover={{ scale: 1.05 }}
-                                                whileTap={{ scale: 0.95 }}
-                                                className="px-4 py-2 rounded-xl text-sm font-medium transition-all"
-                                                style={selectedColor === color
-                                                    ? { background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))', color: 'white', boxShadow: '0 0 15px -3px hsl(220, 70%, 55%, 0.4)' }
-                                                    : { background: 'rgba(255,255,255,0.06)', color: 'hsl(var(--foreground))', border: '1px solid var(--glass-border)' }
-                                                }
-                                            >
-                                                {color}
-                                            </motion.button>
-                                        ))}
-                                    </div>
-                                </motion.div>
-                            )}
 
                             {/* Available Coupons */}
                             {availableCoupons.length > 0 && (
@@ -866,7 +852,7 @@ function ProductDetailPage() {
                                         </div>
                                         <button
                                             onClick={() => handleQtyInc(cartLineItem._id)}
-                                            disabled={qtyUpdateId === cartLineItem._id || cartLineItem.qty >= product.stock}
+                                            disabled={qtyUpdateId === cartLineItem._id || productCartQuantity >= product.stock}
                                             className="p-2 rounded-lg transition active:scale-90 disabled:opacity-50"
                                             style={{ background: 'var(--logo-gradient)', color: 'white' }}
                                             aria-label="Increase quantity">
@@ -893,7 +879,7 @@ function ProductDetailPage() {
                                                 </span>
                                             ) : (
                                                 <span className="flex items-center gap-2">
-                                                    <ShoppingCart size={16} /> {productHasOptions ? 'Choose options' : 'Add to Cart'}
+                                                    <ShoppingCart size={16} /> Add to Cart
                                                 </span>
                                             )
                                         }
@@ -1136,15 +1122,6 @@ function ProductDetailPage() {
                     </motion.section>
                 )}
 
-                <ProductOptionsModal
-                    open={isOptionsModalOpen}
-                    product={product}
-                    selectedOptions={selectedOptions}
-                    selectedColor={selectedColor}
-                    onClose={() => setIsOptionsModalOpen(false)}
-                    onConfirm={handleOptionsConfirm}
-                    submitting={isCartLoading && loadingProductId === id}
-                />
                 <SafetyActionsDialog
                     open={Boolean(safetyAction)}
                     onClose={() => setSafetyAction(null)}

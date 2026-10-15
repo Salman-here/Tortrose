@@ -23,6 +23,8 @@ import {
 import { getReturnItemVariantLabels } from '../../utils/returnItemVariants';
 import { useReturnDialogAccessibility } from '../../utils/returnDialogAccessibility';
 import ReplacementReceipt from './ReplacementReceipt';
+import AfterSalesPhotos from '../common/AfterSalesPhotos';
+import ReturnPhotoPicker from '../common/ReturnPhotoPicker';
 import { publishAfterSalesChange, subscribeAfterSalesChange } from '../../utils/afterSalesRefresh';
 
 const API = `${import.meta.env.VITE_API_URL}api/returns`;
@@ -76,9 +78,12 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
   const [quantities, setQuantities] = useState({});
   const [reasonCategory, setReasonCategory] = useState('damaged');
   const [reasonDetails, setReasonDetails] = useState('');
+  const [photos, setPhotos] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const closeDialog = useCallback(() => { if (!submitting) setSelectedGroup(null); }, [submitting]);
-  const dialogPanel = useReturnDialogAccessibility({ open: Boolean(selectedGroup), busy: submitting, onClose: closeDialog });
+  const closeDialog = useCallback(() => { if (!submitting && !uploading) setSelectedGroup(null); }, [submitting, uploading]);
+  const dialogPanel = useReturnDialogAccessibility({ open: Boolean(selectedGroup), busy: submitting || uploading, onClose: closeDialog });
   const requestKeyRef = useRef(null);
   const [cancellingId, setCancellingId] = useState(null);
   const loadGenerationRef = useRef(0);
@@ -257,6 +262,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
     setQuantities(defaults);
     setReasonCategory('damaged');
     setReasonDetails('');
+    setPhotos([]); setFormError('');
     requestKeyRef.current = requestKey;
     setSelectedGroup(current);
   };
@@ -299,7 +305,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
   const selectedItems = selection.items;
 
   const submitReturn = async () => {
-    if (mutationInProgressRef.current || !mountedRef.current || loadError || currentOrderIdRef.current !== orderContext.orderId) return;
+    if (uploading || mutationInProgressRef.current || !mountedRef.current || loadError || currentOrderIdRef.current !== orderContext.orderId) return;
     if (selectedActiveReturn) {
       toast.error(activeReturnHint(selectedActiveReturn));
       return;
@@ -310,9 +316,10 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
     }
     const cleanReason = reasonDetails.trim();
     if (!reasonValues.has(reasonCategory) || cleanReason.length < 10 || cleanReason.length > 1500) {
-      toast.error('Please explain the return reason in at least 10 characters.');
+      setFormError('Please explain the return reason in at least 10 characters.');
       return;
     }
+    if (!photos.length) { setFormError('Attach at least one photo of the items you are returning.'); return; }
     const requestKey = canonicalRequestKey(requestKeyRef.current);
     if (!requestKey) {
       toast.error('This return form is no longer valid. Please close it and start again.');
@@ -337,6 +344,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         items: expectedItems,
         reasonCategory,
         reasonDetails: cleanReason,
+        evidenceIds: photos.map(photo => photo._id),
         requestKey,
       }, {
         headers: {
@@ -351,6 +359,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
         expectedItems,
         expectedReasonCategory: reasonCategory,
         expectedReasonDetails: cleanReason,
+        expectedEvidenceIds: photos.map(photo => photo._id),
       });
       const refreshed = await load({ notify: false });
       if (refreshed.stale || !isMutationCurrent()) return;
@@ -460,7 +469,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
   }
 
   return (
-    <section className="mt-4 space-y-4">
+    <section id="returns" className="mt-4 space-y-4 scroll-mt-6">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2" style={{ color: 'hsl(var(--foreground))' }}>
@@ -516,6 +525,8 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
             )}
           </div>
           <ReplacementReceipt request={request} onChanged={load} />
+          {request.evidenceUrls?.length > 0 && <AfterSalesPhotos photos={request.evidenceUrls} />}
+          {request.decisionReason && <p className="glass-inner rounded-xl p-3 text-sm mt-3">Seller’s decision: {request.decisionReason}</p>}
           {request.statusHistory.length > 0 && (
             <div className="mt-4 space-y-2">
               {request.statusHistory.map((entry, index) => (
@@ -573,7 +584,7 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
                   <h3 id="buyer-return-dialog-title" className="text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Request a return</h3>
                   <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{selectedGroup.store?.storeName || selectedGroup.seller?.username}</p>
                 </div>
-                <button type="button" className="glass-button p-2 rounded-lg disabled:opacity-50" disabled={submitting} onClick={closeDialog} aria-label="Close return request"><X size={16} /></button>
+                <button type="button" className="glass-button p-2 rounded-lg disabled:opacity-50" disabled={submitting || uploading} onClick={closeDialog} aria-label="Close return request"><X size={16} /></button>
               </div>
 
               <div className="space-y-3">
@@ -620,18 +631,20 @@ export default function BuyerReturnsPanel({ order, formatMoney }) {
               </select>
               <label className="block text-sm font-medium mt-4 mb-2" style={{ color: 'hsl(var(--foreground))' }}>What happened?</label>
               <textarea value={reasonDetails} onChange={(event) => setReasonDetails(event.target.value)} maxLength={1500} rows={4} className="glass-input w-full resize-none" placeholder="Describe the issue clearly for the seller." />
+              <ReturnPhotoPicker orderId={orderContext.orderId} photos={photos} onChange={next => { setPhotos(next); setFormError(''); }} onBusyChange={setUploading} disabled={submitting || uploading} />
+              {formError && <p role="alert" className="text-sm text-destructive mt-3">{formError}</p>}
               {loadError && (
                 <div className="mt-4 text-xs" role="alert" style={{ color: 'hsl(var(--muted-foreground))' }}>
                   <p>Return information must be verified again before submitting. Your draft is saved here.</p>
-                  <button type="button" className="glass-button px-3 py-2 rounded-lg mt-2" onClick={() => load({ notify: false, silent: true })} disabled={submitting}>
+                  <button type="button" className="glass-button px-3 py-2 rounded-lg mt-2" onClick={() => load({ notify: false, silent: true })} disabled={submitting || uploading}>
                     Retry return information
                   </button>
                 </div>
               )}
               {!loadError && !submitting && selectedActiveReturn && <p className="mt-4 text-xs" role="alert" style={{ color: 'hsl(var(--muted-foreground))' }}>{activeReturnHint(selectedActiveReturn)}</p>}
               <div className="flex justify-end gap-3 mt-5">
-                <button type="button" className="glass-button px-4 py-2 rounded-xl text-sm font-semibold" onClick={closeDialog} disabled={submitting}>Cancel</button>
-                <button type="button" onClick={submitReturn} disabled={submitting || !selection.valid || Boolean(loadError)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
+                <button type="button" className="glass-button px-4 py-2 rounded-xl text-sm font-semibold" onClick={closeDialog} disabled={submitting || uploading}>Cancel</button>
+                <button type="button" onClick={submitReturn} disabled={submitting || uploading || !selection.valid || Boolean(loadError)} className="px-4 py-2 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-2 disabled:opacity-50" style={{ background: 'hsl(var(--primary))' }}>
                   {submitting && <Loader2 size={14} className="animate-spin" />} Submit request
                 </button>
               </div>

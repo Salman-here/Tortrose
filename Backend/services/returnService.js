@@ -134,6 +134,7 @@ const normalizeReturnCreationInput = ({
   reasonCategory,
   reasonDetails,
   requestKey,
+  evidenceIds,
 }) => {
   const normalizedRequestKey = normalizeReturnRequestKey(requestKey);
   if (!REASON_CATEGORIES.includes(reasonCategory)) {
@@ -173,6 +174,7 @@ const normalizeReturnCreationInput = ({
     items: normalizedItems,
     reasonCategory,
     reasonDetails: cleanReason,
+    ...(evidenceIds !== undefined ? { evidenceIds: Array.isArray(evidenceIds) ? [...evidenceIds].sort() : evidenceIds } : {}),
   };
   return {
     ...fingerprintPayload,
@@ -979,8 +981,15 @@ const createReturnRequest = async (input) => {
     throw error;
       }
 
+      const evidence = await require('./afterSalesEvidenceService').ownedEvidence({
+        evidenceIds: prepared.evidenceIds, buyerId, orderId: String(order._id), kind: 'return', session,
+      });
+
       const [returnRequest] = await ReturnRequest.create([{
     returnNumber: makeReturnNumber(),
+    returnReviewVersion: 1,
+    evidence: evidence.map(photo => photo._id), evidenceUrls: evidence.map(photo => photo.url),
+    evidenceHistory: [{ version: 0, evidence: evidence.map(photo => photo._id), urls: evidence.map(photo => photo.url), reason: cleanReason, submittedAt: new Date() }],
         requestKey: cleanRequestKey,
         requestFingerprint,
     order: order._id,
@@ -1024,6 +1033,8 @@ const createReturnRequest = async (input) => {
       }], { session });
 
       returnRequest.$locals = returnRequest.$locals || {};
+      const boundPhotos = await require('../models/AfterSalesEvidence').updateMany({ _id: { $in: evidence.map(photo => photo._id) }, user: buyerId, order: order._id, kind: 'return', claim: null }, { $set: { claim: returnRequest._id } }, { session });
+      if (boundPhotos.modifiedCount !== evidence.length) throw Object.assign(new Error('A photo was already used by another return. Upload a new photo and retry.'), { statusCode: 409, code: 'RETURN_EVIDENCE_ALREADY_USED' });
       returnRequest.$locals.idempotencyReplay = false;
       await notifySellerReturnRequested(returnRequest, order, { session });
       return returnRequest;
@@ -1130,6 +1141,12 @@ const updateReturnStatus = async ({ returnRequestId, actor, nextStatus, note, ex
       throw error;
     }
     const clean = cleanNote(note);
+    if (request.kind !== 'warranty' && ['approved', 'rejected'].includes(nextStatus)) {
+      if (request.status !== 'requested') throw Object.assign(new Error('This return was already approved. Complete the approved resolution; it cannot be rejected after collection approval.'), { statusCode: 409, code: 'RETURN_DECISION_CLOSED' });
+      if (clean.length < 10) throw Object.assign(new Error('Add a clear decision reason of at least 10 characters.'), { statusCode: 400, code: 'RETURN_DECISION_REASON_REQUIRED' });
+      request.decisionReason = clean;
+      if (nextStatus === 'approved') request.resolution = request.policySnapshot?.refundType === 'replacement_only' ? 'replacement' : 'refund';
+    }
     if (nextStatus === 'rejected' && clean.length < (request.kind === 'warranty' ? 10 : 5)) {
       const error = new Error('Add a clear rejection reason.');
       error.statusCode = 400;

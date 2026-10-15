@@ -183,6 +183,17 @@ export const inspectReturnPresentationSnapshot = (request) => {
       && ['accepted_pending_payment', 'returned'].includes(value.status))
     || (policy?.refundType !== 'replacement_only' && ['replacement_approved', 'replacement_shipped', 'replacement_delivered'].includes(value.status))
   ) errors.push('statusResolution');
+  if (value.returnReviewVersion !== undefined) {
+    const photoIds = value.evidence;
+    if (value.returnReviewVersion !== 1 || value.kind === 'warranty'
+      || !Array.isArray(photoIds) || photoIds.length < 1 || photoIds.length > 6
+      || photoIds.some(id => !objectIdString(id)) || new Set(photoIds).size !== photoIds.length
+      || !Array.isArray(value.evidenceUrls) || value.evidenceUrls.length !== photoIds.length
+      || value.evidenceUrls.some(url => typeof url !== 'string' || !/^https:\/\//u.test(url) || url.length > 2000)) errors.push('return.evidence');
+    if (!['requested', 'cancelled_by_buyer'].includes(value.status) && !canonicalText(value.decisionReason, { min: 10, max: 1000 })) errors.push('return.decisionReason');
+    if (!['requested', 'rejected', 'cancelled_by_buyer'].includes(value.status)
+      && value.resolution !== (policy?.refundType === 'replacement_only' ? 'replacement' : 'refund')) errors.push('return.resolution');
+  }
   if (value.kind === 'warranty') {
     const warranty = value.warrantySnapshot;
     if (value.evidenceHistory !== undefined && (!Array.isArray(value.evidenceHistory) || value.evidenceHistory.some((entry, index) =>
@@ -619,6 +630,8 @@ export const inspectBuyerReturnRequest = (request, orderContext) => {
       items,
       reasonCategory,
       reasonDetails,
+      ...(value.returnReviewVersion === 1 ? { returnReviewVersion: 1, evidence: [...value.evidence], evidenceUrls: [...value.evidenceUrls], evidenceHistory: value.evidenceHistory || [] } : {}),
+      ...(value.resolution ? { resolution: value.resolution, decisionReason: value.decisionReason || '' } : value.decisionReason ? { decisionReason: value.decisionReason } : {}),
       status: value.status,
       statusHistory,
       requestedAt,
@@ -789,6 +802,7 @@ export const inspectBuyerReturnMutationResponse = (
     expectedItems = null,
     expectedReasonCategory = null,
     expectedReasonDetails = null,
+    expectedEvidenceIds = null,
     expectedStatus = null,
   } = {},
 ) => {
@@ -809,6 +823,7 @@ export const inspectBuyerReturnMutationResponse = (
   if (expectedReasonDetails && request?.reasonDetails !== expectedReasonDetails) {
     errors.push('reasonDetails');
   }
+  if (expectedEvidenceIds && JSON.stringify([...(request?.evidence || [])].sort()) !== JSON.stringify([...expectedEvidenceIds].sort())) errors.push('evidence');
   if (expectedItems) {
     const actual = request?.items
       ?.map(item => `${item.orderItemId}:${item.quantity}`)

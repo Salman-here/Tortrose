@@ -21,9 +21,8 @@ import ProductOptionsModal from './common/ProductOptionsModal';
 import {
   getInitialProductSelections,
   hasProductOptions,
-  validateProductSelections,
 } from '../utils/productOptions';
-import { optionsKeyOf } from '../utils/guestCart';
+import { resolveProductCartLine, getCartProductQuantity, cartVariantLabel } from '../utils/cartProductSelection';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - spacing.lg * 2 - spacing.sm) / 2;
@@ -92,20 +91,9 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
 
   const { _id, name, image, images, category, stock, rating, isFeatured } = product;
   const productHasOptions = hasProductOptions(product);
-  const currentSelection = validateProductSelections(product, {
-    selectedColor,
-    selectedOptions,
-  });
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
-  const cartItem = cartItems?.cart?.find((item) => {
-    if (item?.product?._id !== _id) return false;
-    // A card cannot infer which variant a buyer wants until the sheet is
-    // confirmed. For optionless products preserve the historic one-line UX.
-    if (!productHasOptions) return true;
-    if (!currentSelection.ok) return false;
-    return (item.selectedColor || null) === (currentSelection.selectedColor || null)
-      && optionsKeyOf(item.selectedOptions) === optionsKeyOf(currentSelection.selectedOptions);
-  });
+  const cartItem = resolveProductCartLine(product, cartItems?.cart, selectedOptions, selectedColor);
+  const productCartQuantity = getCartProductQuantity(product, cartItems?.cart);
   const isInCart = !!cartItem;
   const isOutOfStock = stock === 0;
   const storedPrice = resolveProductPresentationMoney(product, 'price');
@@ -214,6 +202,10 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
             <Text style={[styles.price, { color: c.text }]}>{formatProductPrice(product, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
             {originalDisplayPrice && <Text style={[styles.originalPrice, { color: c.textSecondary }]}>{formatProductPrice(product, { field: 'price' })}</Text>}
           </View>
+          {productHasOptions && productCartQuantity > 0 && <View style={{ gap: 3, marginBottom: 8 }}>
+            <Text style={{ color: c.textSecondary, fontSize: 11, textAlign: 'center' }}>{productCartQuantity} in cart</Text>
+            {!!cartItem && <Text numberOfLines={1} style={{ color: c.text, fontSize: 11, textAlign: 'center' }}>{cartVariantLabel(product, cartItem)}</Text>}
+          </View>}
           {isInCart && cartItem ? (
             /* In-cart quantity stepper — matches website card */
             <View style={[styles.qtyRow, { backgroundColor: g.bgSubtle, borderColor: g.borderSubtle }]}>
@@ -230,7 +222,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
                 : <Text style={[styles.qtyValue, { color: c.text }]}>{cartItem.qty}</Text>}
               <TouchableOpacity
                 onPress={() => handleQtyInc(cartItem._id)}
-                disabled={qtyUpdateId === cartItem._id || cartItem.qty >= stock}
+                disabled={qtyUpdateId === cartItem._id || productCartQuantity >= stock}
                 accessibilityLabel="Increase quantity"
               >
                 <LinearGradient colors={LOGO_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.qtyBtnGradient}>
@@ -256,6 +248,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
             </TouchableOpacity>
           )}
 
+          {productHasOptions && isInCart && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Change options for ${name}`} onPress={() => setOptionsModalVisible(true)} disabled={isLoading} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: c.primary, fontSize: 12, fontWeight: '700' }}>Change options</Text></TouchableOpacity>}
           {/* View details link — matches website */}
           <TouchableOpacity style={styles.viewDetailsRow} onPress={onPress} accessibilityLabel={`View details of ${name}`}>
             <Text style={[styles.viewDetailsText, { color: c.primary }]}>View details</Text>
@@ -267,8 +260,8 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
         <ProductOptionsModal
           visible={optionsModalVisible}
           product={product}
-          selectedColor={selectedColor}
-          selectedOptions={selectedOptions}
+          selectedColor={cartItem?.selectedColor || selectedColor}
+          selectedOptions={cartItem?.selectedOptions || selectedOptions}
           submitting={isLoading}
           onClose={() => {
             if (!isLoading) setOptionsModalVisible(false);

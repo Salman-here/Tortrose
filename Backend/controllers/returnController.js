@@ -69,6 +69,7 @@ exports.createReturn = async (req, res) => {
             items: req.body?.items,
             reasonCategory: req.body?.reasonCategory,
             reasonDetails: req.body?.reasonDetails,
+            evidenceIds: req.body?.evidenceIds,
             requestKey: headerRequestKey || bodyRequestKey,
         });
         const replayed = returnRequest.$locals?.idempotencyReplay === true;
@@ -190,6 +191,17 @@ exports.updateStatus = async (req, res) => {
         console.error('[returns] status update error:', error);
         return res.status(error.statusCode || 500).json({ msg: error.message || 'Failed to update return status', code: error.code });
     }
+};
+
+exports.decideReturn = async (req, res) => {
+    if (req.user.role !== 'seller') return res.status(403).json({ msg: 'Seller access required.' });
+    if (!['approve', 'reject'].includes(req.body?.outcome)) return res.status(400).json({ msg: 'Choose approve or reject.' });
+    try {
+        const returnRequest = await updateReturnStatus({ returnRequestId: req.params.id, actor: req.user,
+            nextStatus: req.body.outcome === 'approve' ? 'approved' : 'rejected', note: req.body.reason,
+            expectedUpdatedAt: req.body.expectedUpdatedAt });
+        return res.json({ success: true, returnRequest, msg: 'Return decision sent to the buyer.' });
+    } catch (error) { return res.status(error.statusCode || 500).json({ msg: error.statusCode ? error.message : 'Unable to save the return decision.', code: error.code }); }
 };
 
 exports.cancelReturn = async (req, res) => {

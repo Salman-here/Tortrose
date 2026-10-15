@@ -29,7 +29,14 @@ async function dispatchReplacement({ requestId, sellerId, expectedUpdatedAt, ...
       if (request.replacement.dispatchFingerprint !== fingerprint) throw fail('This dispatch key belongs to different shipment details.', 'IDEMPOTENCY_CONFLICT');
       return request;
     }
-    if (request.status !== 'replacement_approved' || request.policySnapshot.refundType !== 'replacement_only'
+    // An ordinary return's resolution was approved from its photos before
+    // collection. After receipt/inspection it can be shipped directly; there
+    // is no second accept/reject decision. Legacy and warranty preparation
+    // states remain supported without bypassing their original approval.
+    const approvedReturnReady = request.kind !== 'warranty' && request.returnReviewVersion === 1
+      && request.status === 'under_review' && request.resolution === 'replacement'
+      && request.decisionReason?.trim().length >= 10 && request.evidence?.length > 0;
+    if ((!approvedReturnReady && request.status !== 'replacement_approved') || request.policySnapshot.refundType !== 'replacement_only'
         || request.kind === 'warranty' && request.resolution !== 'replacement'
         || request.replacement?.inventoryCommitted) throw fail('This replacement is not ready for dispatch.', 'REPLACEMENT_STATE_INVALID');
     if (expectedUpdatedAt && new Date(request.updatedAt).toISOString() !== expectedUpdatedAt) throw fail('The replacement changed. Review the latest details.', 'REPLACEMENT_STALE');

@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const schema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, immutable: true },
   order: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', required: true, immutable: true },
+  kind: { type: String, enum: ['return', 'warranty'], default: 'warranty', immutable: true },
   url: { type: String, required: true, immutable: true, maxlength: 2000 },
   publicId: { type: String, required: true, immutable: true, maxlength: 200, select: false },
   mime: { type: String, enum: ['image/jpeg', 'image/png', 'image/webp'], required: true, immutable: true },

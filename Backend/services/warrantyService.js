@@ -69,6 +69,7 @@ async function verifiedEvidence({ evidenceIds, buyerId, orderId, claimId = null,
   if (!Array.isArray(evidenceIds) || evidenceIds.length < 1 || evidenceIds.length > 6
       || evidenceIds.some(value => !oid(value)) || new Set(evidenceIds).size !== evidenceIds.length) throw failure('Attach between 1 and 6 uploaded photos.', 'WARRANTY_EVIDENCE_REQUIRED', 400);
   const rows = await Evidence.find({ _id: { $in: evidenceIds }, user: buyerId, order: orderId,
+    kind: { $ne: 'return' },
     $or: [{ claim: null }, ...(claimId ? [{ claim: claimId }] : [])] }).session(session).lean();
   if (rows.length !== evidenceIds.length) throw failure('A photo does not belong to this buyer and order.', 'WARRANTY_EVIDENCE_UNOWNED', 403);
   return rows;
