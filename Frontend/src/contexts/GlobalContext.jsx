@@ -44,8 +44,10 @@ const getGuestCart = () => {
             const shared = parseGuestCartCookie(cookieData);
             const local = localStorage.getItem(GUEST_CART_KEY);
             if (local) {
-                const rich = parseStoredGuestCart(local);
-                if (serializeGuestCartCookie(rich) === cookieData) return rich;
+                try {
+                    const rich = parseStoredGuestCart(local);
+                    if (serializeGuestCartCookie(rich) === cookieData) return rich;
+                } catch { /* A valid shared snapshot takes priority over stale local metadata. */ }
             }
             return shared;
         } catch (error) {
