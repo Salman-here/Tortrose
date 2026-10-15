@@ -11,6 +11,7 @@ const { safepayPaymentFacts, assertSafepayOrderBinding } = require('./safepayPay
 const { normalizeSafepayPaymentRail, normalizeRaastAttemptStatus, safepayPaymentRailObservation } = require('./safepayPaymentRailService');
 const { buildReturnUrl } = require('./safepayReturnNavigation');
 const { POLICY: CARD_SETUP_POLICY, snapshotCardSetup, verifySavedSetupCard, applyCardSetupDefault } = require('./safepayCardSetupService');
+const { POLICY: CHECKOUT_CARD_POLICY, isCheckoutCard, synchronizeCheckoutCard } = require('./safepayCheckoutCardService');
 
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const stable = value => Array.isArray(value) ? value.map(stable)
@@ -64,19 +65,20 @@ function createSafepayPaymentService({
     let existing = await Payment.findOne(identity).session(session);
     let customerId = input.customerId || null;
     if (providerMode === 'payment') {
-      // Attach a merchant-owned profile only for an explicitly selected saved
-      // card. A normal new-card purchase must use the hosted guest flow, even
-      // when this account already has saved cards. Passing user_id without a
-      // selected card makes hosted checkout request card-on-file enrollment
-      // with a shopper JWT, which the provider rejects as merchant-only.
+      // Legacy hosted checkout remains guest-bound. A selected saved card or
+      // the explicit merchant-card SDK policy uses this buyer's owned profile.
+      // Never pass that profile into the legacy hosted shopper-JWT flow.
       // Reopening retains the original binding, including a guest/null binding:
       // creating a profile later must never change an existing payment attempt.
-      const link = !existing && input.user && input.cardId ? await Customer.findOne({ user: input.user,
-        environment: config.environment, status: 'ready', createdForCardConsentAt: { $ne: null } })
+      const checkoutCard = input.purpose === 'order' && input.terms?.checkoutCardPolicy === CHECKOUT_CARD_POLICY;
+      if (checkoutCard && input.cardId) throw fail('Choose either a saved card or new-card checkout.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
+      const link = !existing && input.user && (input.cardId || checkoutCard) ? await Customer.findOne({ user: input.user,
+        environment: config.environment, status: 'ready', ...(!checkoutCard ? { createdForCardConsentAt: { $ne: null } } : {}) })
         .select('customerId').session(session) : null;
       const ownedId = existing ? existing.customerId : link?.customerId || null;
       if (customerId && customerId !== ownedId) throw fail('This checkout payment profile does not belong to this account.', 'SAFEPAY_CUSTOMER_MISMATCH');
       customerId = ownedId;
+      if (checkoutCard && (!input.user || !customerId)) throw fail('Complete your card billing profile before checkout.', 'SAFEPAY_CUSTOMER_REQUIRED', 400);
       if (input.cardId) {
         if (!input.user || !customerId || !/^pm_[a-zA-Z0-9-]{8,100}$/.test(input.cardId)) throw fail('Choose a saved card belonging to your account.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
         const cardLink = await Customer.findOne({ user: input.user, environment: config.environment,
@@ -91,8 +93,8 @@ function createSafepayPaymentService({
       ...(customerId ? { customerId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
     const expectedFingerprint = fingerprint(terms);
     if (!existing) {
-      const cardSetup = input.purpose === 'card_setup'
-        ? await snapshotCardSetup(input, config, clientFor(config), session) : null;
+      const cardSetup = input.purpose === 'card_setup' || input.terms?.checkoutCardPolicy === CHECKOUT_CARD_POLICY
+        ? await snapshotCardSetup({ ...input, customerId }, config, clientFor(config), session) : null;
       try {
         const [created] = await Payment.create([{ ...identity, reference: input.reference, amountMinor: input.amountMinor,
           currency: input.currency, order: input.order || null, store: input.store || null, returnRequest: input.returnRequest || null,
@@ -182,10 +184,11 @@ function createSafepayPaymentService({
       await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
     }
 
-    if (payment.providerEntryMode === 'tms') {
+    if (payment.providerEntryMode === 'tms' || isCheckoutCard(payment)) {
       const saved = savedCheckoutFor(payment, clientSurface);
       const checkoutUrl = typeof saved === 'string' ? saved : saved.checkoutUrl;
-      return { ...paymentResponse(payment), ...(typeof saved === 'object' ? saved : {}), checkoutPresentation: 'saved-card', checkoutUrl, url: checkoutUrl };
+      return { ...paymentResponse(payment), ...(typeof saved === 'object' ? saved : {}), checkoutPresentation: 'saved-card',
+        cardEntryRequired: isCheckoutCard(payment), checkoutUrl, url: checkoutUrl };
     }
     const authToken = await client.createAuthToken();
     const returnContext = { backendOrigin: process.env.PUBLIC_BACKEND_URL || 'https://rozare.up.railway.app',
@@ -347,7 +350,8 @@ function createSafepayPaymentService({
           await require('./safepaySafetyRefundService').submit(pendingRefund, client);
         }
       }
-      return await Payment.findById(payment._id);
+      const finalized = await Payment.findById(payment._id);
+      return facts.outcome === 'paid' ? await synchronizeCheckoutCard(finalized, tracker, config, client, at) : finalized;
     } catch (error) {
       if (tracker?.state === 'TRACKER_ENDED' && payment.purpose === 'order'
           && require('./safepaySafetyRefundService').isFulfillmentFailure(error)) {
@@ -379,6 +383,8 @@ function paymentResponse(payment) {
     raastAttemptStatus: normalizeSafepayPaymentRail(payment.paymentRail) === 'raast' ? normalizeRaastAttemptStatus(payment.raastAttemptStatus) : null,
     status: cardSaved ? 'authorized' : paid ? 'paid' : ['cancelled', 'failed', 'refunded', 'reversed', 'refund_pending', 'manual_review'].includes(payment.status) ? payment.status : 'pending',
     isPaid: paid, completed: paid || cardSaved, cardSaved,
+    ...(isCheckoutCard(payment) ? { checkoutCardSaved: payment.checkoutCard?.syncStatus === 'saved',
+      checkoutCardSaveStatus: payment.checkoutCard?.syncStatus || 'not_requested' } : {}),
     ...(cardSaved && payment.cardSetup?.savedCardId ? { savedPaymentMethodId: payment.cardSetup.savedCardId } : {}),
     webhookProcessed: paid || cardSaved, providerState: payment.providerState, failureCode: payment.lastErrorCode || '' };
 }

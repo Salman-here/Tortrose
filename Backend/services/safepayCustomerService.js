@@ -77,18 +77,25 @@ function customerFailureForUser(error) {
   return fail('Card setup is temporarily unavailable. Please try again later.', 'SAFEPAY_CUSTOMER_UNAVAILABLE', 503);
 }
 
-async function ensureCustomer(userId, contact = {}) {
+async function ensureCustomer(userId, contact = {}, { recordCardConsent = true } = {}) {
   const config = readSafepayConfig(process.env, { requireWebhook: true });
   await Customer.init();
   const identity = { user: userId, environment: config.environment };
   let link = await Customer.findOne(identity).select('+defaultCardId');
   if (link?.status === 'deleted') throw fail('This payment profile has been closed.', 'SAFEPAY_CUSTOMER_CLOSED', 423);
-  if (link?.customerId) return link;
+  if (link?.customerId) {
+    if (recordCardConsent && !link.createdForCardConsentAt) {
+      const consentAt = new Date();
+      await Customer.updateOne({ _id: link._id, status: 'ready', createdForCardConsentAt: null }, { $set: { createdForCardConsentAt: consentAt } });
+      link.createdForCardConsentAt = consentAt;
+    }
+    return link;
+  }
   const user = await User.findById(userId).select('username email status savedShippingInfo sellerInfo').lean();
   if (!user || user.status !== 'active') throw fail('This account cannot create a payment profile.', 'SAFEPAY_ACCOUNT_UNAVAILABLE', 403);
   const details = billingContact(user, contact);
   if (!link) {
-    try { link = await Customer.create({ ...identity, createdForCardConsentAt: new Date() }); }
+    try { link = await Customer.create({ ...identity, createdForCardConsentAt: recordCardConsent ? new Date() : null }); }
     catch (error) { if (error.code !== 11000) throw error; link = await Customer.findOne(identity); }
   }
   const lease = crypto.randomUUID();

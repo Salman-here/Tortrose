@@ -60,3 +60,18 @@ test('missing selected-environment webhook credentials stop financial work witho
   expect(payments.reconcilePayment).not.toHaveBeenCalled();
   expect(refunds.runCancellationRefundWorker).not.toHaveBeenCalled();
 });
+
+test('paid orders with pending consented card sync are retried without selecting unrelated paid orders', async () => {
+  const base = { environment: 'sandbox', user: new mongoose.Types.ObjectId(), purpose: 'order',
+    fingerprint: 'c'.repeat(64), currency: 'PKR', amountMinor: 100, status: 'paid', appliedAt: new Date(),
+    nextReconcileAt: new Date(0), terms: { checkoutCardPolicy: require('../../services/safepayCheckoutCardService').POLICY } };
+  const needed = await Payment.create({ ...base, reference: 'order:sync-needed', requestKey: 'sync-needed-fixture',
+    checkoutCard: { consentToSave: true, syncStatus: 'pending' } });
+  await Payment.create({ ...base, reference: 'order:sync-complete', requestKey: 'sync-complete-fixture',
+    checkoutCard: { consentToSave: true, syncStatus: 'saved' } });
+  await Payment.create({ ...base, reference: 'order:sync-unchecked', requestKey: 'sync-unchecked-fixture',
+    checkoutCard: { consentToSave: false, syncStatus: 'not_requested' } });
+  await worker.runSafepayWebhookWorker();
+  expect(payments.reconcilePayment).toHaveBeenCalledTimes(1);
+  expect(String(payments.reconcilePayment.mock.calls[0][0])).toBe(String(needed._id));
+});

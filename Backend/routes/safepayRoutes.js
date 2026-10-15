@@ -10,6 +10,7 @@ router.get('/saved-checkout/:paymentId', savedCheckout.page);
 // The short-lived ticket authorizes only this owned payment, not an account session.
 router.post('/saved-checkout/:paymentId/context', paymentStatusPollingLimiter, savedCheckout.context);
 router.post('/saved-checkout/:paymentId/authenticate', orderPaymentCreationLimiter, savedCheckout.authenticate);
+router.post('/saved-checkout/:paymentId/card-entry', orderPaymentCreationLimiter, savedCheckout.cardEntry);
 router.get('/return', controller.returnToApp);
 router.get('/return/:surface/:purpose/:attempt/:outcome', controller.returnToApp);
 router.get('/config', auth, controller.getConfig);

@@ -67,6 +67,8 @@ export const createCheckoutFingerprint = (
     },
     sellerShipping,
     paymentMethod: order?.paymentMethod || '',
+    ...(order?.paymentMethod === 'safepay' && order?.savedCardId ? { savedCardId: order.savedCardId } : {}),
+    ...(order?.paymentMethod === 'safepay' && order?.safepayCheckout !== undefined ? { safepayCheckout: order.safepayCheckout } : {}),
     instructions: order?.instructions || '',
     paymentFlow,
     clientSurface,

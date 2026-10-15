@@ -38,6 +38,14 @@ import {
 } from '../src/utils/persistedMutationAttempt.js';
 import { shouldRetainWalletTopUpAttempt } from '../src/utils/walletPaymentRisk.js';
 
+test('card, saved-card and Raast payment choices cannot alias one checkout fingerprint',()=>{
+  const base={paymentMethod:'safepay',currency:'PKR',orderItems:[{id:'product-1',quantity:1}]};
+  const card=createCheckoutFingerprint({...base,safepayCheckout:'card'});
+  assert.notEqual(card,createCheckoutFingerprint({...base,safepayCheckout:'hosted'}));
+  assert.notEqual(card,createCheckoutFingerprint({...base,savedCardId:'pm_owned-fixture'}));
+  assert.notEqual(createCheckoutFingerprint({...base,savedCardId:'pm_first-fixture'}),createCheckoutFingerprint({...base,savedCardId:'pm_second-fixture'}));
+});
+
 const checkoutIntent = () => ({
   orderItems: [
     { id: 'product-b', quantity: 2, price: 0.02, selectedOptions: { size: 'L', finish: 'matte' } },

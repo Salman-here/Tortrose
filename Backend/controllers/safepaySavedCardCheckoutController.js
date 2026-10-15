@@ -34,3 +34,14 @@ exports.authenticate = async (req, res) => {
   try { return res.json(await service.authenticate(req.params.paymentId, req.get('Authorization'), req.body?.billing, req.get('X-Rozare-Checkout-Grant'), { restartAuthentication: req.body?.restartAuthentication === true })); }
   catch (error) { return errorResponse(res, error); }
 };
+exports.cardEntry = async (req, res) => {
+  res.set('Cache-Control', 'no-store, private');
+  // Raw card fields are never accepted by this endpoint; they stay inside Safepay's iframe.
+  if (!req.body || Object.keys(req.body).some(key => !['billing', 'saveCard', 'restartAuthentication'].includes(key))) {
+    return res.status(400).json({ code: 'SAFEPAY_CARD_ENTRY_INPUT_INVALID', msg: 'Use Safepay’s secure fields for card details.' });
+  }
+  try { return res.json(await service.authenticate(req.params.paymentId, req.get('Authorization'), req.body.billing,
+    req.get('X-Rozare-Checkout-Grant'), { newCardEntry: true, saveCard: req.body.saveCard,
+      restartAuthentication: req.body.restartAuthentication === true })); }
+  catch (error) { return errorResponse(res, error); }
+};

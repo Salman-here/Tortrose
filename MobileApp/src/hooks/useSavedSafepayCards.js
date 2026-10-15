@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../config/api';
 
@@ -6,6 +6,8 @@ export default function useSavedSafepayCards() {
   const { currentUser } = useAuth();
   const owner = String(currentUser?._id || currentUser?.id || '');
   const [state, setState] = useState({ owner: '', cards: [], selectedCardId: '', loading: false });
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const refreshCards = useCallback(() => setRefreshRevision(value => value + 1), []);
   const touched = useRef(false);
   useEffect(() => {
     let active = true;
@@ -19,7 +21,7 @@ export default function useSavedSafepayCards() {
         ? previous.selectedCardId : cards.some(card => card.id === data.defaultPaymentMethodId) ? data.defaultPaymentMethodId : '' }));
     }).catch(() => { if (active) setState({ owner, cards: [], selectedCardId: '', loading: false }); });
     return () => { active = false; };
-  }, [owner]);
+  }, [owner, refreshRevision]);
   const current = state.owner === owner ? state : { cards: [], selectedCardId: '', loading: !!owner };
-  return { ...current, setSelectedCardId: id => { touched.current = true; setState(previous => ({ ...previous, owner, selectedCardId: id })); } };
+  return { ...current, refreshCards, setSelectedCardId: id => { touched.current = true; setState(previous => ({ ...previous, owner, selectedCardId: id })); } };
 }

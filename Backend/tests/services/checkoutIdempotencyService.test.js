@@ -1,5 +1,12 @@
 const { checkoutRequestFingerprint } = require('../../services/checkoutIdempotencyService');
 
+test('merchant card and hosted Raast are separate checkout intents without changing legacy fingerprints',()=>{
+  const base={paymentMethod:'safepay',currency:'PKR',orderItems:[{id:'product-1',quantity:1}]};
+  const fingerprint=o=>checkoutRequestFingerprint(o,'safepay_hosted','web');
+  expect(fingerprint({...base,safepayCheckout:'card'})).not.toBe(fingerprint({...base,safepayCheckout:'hosted'}));
+  expect(fingerprint(base)).toBe(fingerprint({...base,safepayCheckout:undefined}));
+});
+
 const order = {
   currency: 'PKR',
   paymentMethod: 'stripe',

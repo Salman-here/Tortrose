@@ -7,6 +7,7 @@ const User = require('../models/User');
 const { readSafepayConfig } = require('../config/safepay');
 const { createSafepayClient, canResetSavedCardAuthentication } = require('./safepayClient');
 const { buildReturnUrl } = require('./safepayReturnNavigation');
+const { isCheckoutCard, prepareCardEntry } = require('./safepayCheckoutCardService');
 
 const AUDIENCE = 'rozare-safepay-saved-card-v1';
 // The provider client times out each request after 20 seconds. Recovery uses
@@ -39,7 +40,7 @@ const scopedKey = (config, scope) => crypto.createHmac('sha256', config.secretKe
 
 function buildCheckoutContext(payment, surface) {
   const config = readSafepayConfig(process.env, { requireWebhook: true });
-  if (!payment.user || payment.environment !== config.environment || payment.providerEntryMode !== 'tms'
+  if (!payment.user || payment.environment !== config.environment || (payment.providerEntryMode !== 'tms' && !isCheckoutCard(payment))
     || !['web', 'mobile'].includes(surface)) throw fail('Saved-card checkout is unavailable.');
   const binding = crypto.randomBytes(24).toString('base64url');
   const data = { paymentId: String(payment._id), environment: payment.environment, surface, binding };
@@ -70,8 +71,9 @@ async function ownedContext(paymentId, authorization, grant) {
   if (!mongoose.isValidObjectId(paymentId) || claims.paymentId !== String(paymentId) || claims.environment !== config.environment
     || !mongoose.isValidObjectId(claims.sub) || !['web', 'mobile'].includes(claims.surface)) throw fail('Payment not found.', 'PAYMENT_NOT_FOUND', 404);
   const payment = await Payment.findOne({ _id: paymentId, user: claims.sub, environment: config.environment,
-    providerMode: 'payment', providerEntryMode: 'tms' }).select('+cardId +savedCardAuthentication.encryptedContext');
-  if (!payment?.cardId) throw fail('Payment not found.', 'PAYMENT_NOT_FOUND', 404);
+    providerMode: 'payment', $or: [{ providerEntryMode: 'tms' }, { 'terms.checkoutCardPolicy': require('./safepayCheckoutCardService').POLICY }] })
+    .select('+cardId +savedCardAuthentication.encryptedContext');
+  if (!payment || (!payment.cardId && !isCheckoutCard(payment))) throw fail('Payment not found.', 'PAYMENT_NOT_FOUND', 404);
   if (!await User.exists({ _id: payment.user, status: 'active' })) throw fail('This account cannot start a saved-card payment.', 'SAFEPAY_ACCOUNT_UNAVAILABLE', 403);
   return { config, claims, payment, client: createSafepayClient({ config }) };
 }
@@ -92,6 +94,10 @@ function unsealContext(value, config, paymentId) {
   } catch (_) { throw fail('Bank verification is being reconciled. Close this screen and check the same payment.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS'); }
 }
 function validateBilling(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some(key => !['street_1', 'street_2', 'city', 'state', 'country', 'postal_code'].includes(key))) {
+    throw fail('Use the secure fields for card details and enter a valid billing address.', 'SAFEPAY_BILLING_ADDRESS_REQUIRED', 400);
+  }
   const clean = (raw, max) => typeof raw === 'string' && raw.trim().length <= max ? raw.trim() : '';
   const billing = { street_1: clean(value?.street_1, 200), city: clean(value?.city, 100),
     country: clean(value?.country, 2).toUpperCase(), state: clean(value?.state, 100), postal_code: clean(value?.postal_code, 20) };
@@ -103,14 +109,21 @@ function validateBilling(value) {
 }
 async function viewContext(paymentId, authorization, grant) {
   const { payment, config, client, claims } = await ownedContext(paymentId, authorization, grant);
-  const { card } = await require('./safepayCustomerService').requireOwnedReusableCard(payment.user, payment.cardId);
+  const newCard = isCheckoutCard(payment);
+  if (newCard && !await require('../models/SafepayCustomer').exists({ user: payment.user,
+    customerId: payment.customerId, environment: payment.environment, status: 'ready' })) {
+    throw fail('This card profile is no longer available.', 'SAFEPAY_CUSTOMER_MISMATCH');
+  }
+  const { card } = newCard ? {} : await require('./safepayCustomerService').requireOwnedReusableCard(payment.user, payment.cardId);
   const tracker = await client.getTracker(payment.tracker, payment);
   const user = await User.findById(payment.user).select('savedShippingInfo sellerInfo').lean();
   const order = payment.purpose === 'order' ? await require('../models/Order').findById(payment.order).select('shippingInfo').lean() : null;
   const address = order?.shippingInfo || user?.savedShippingInfo || user?.sellerInfo || {};
   const authentication = payment.savedCardAuthentication;
   const operationBusy = authentication?.operationLeaseUntil > new Date();
-  const freshSetup = isFreshAuthenticationSetup(tracker);
+  const freshSetup = isFreshAuthenticationSetup(tracker) || newCard && tracker.state === 'TRACKER_STARTED'
+    && !tracker.charge && tracker.next_actions?.CYBERSOURCE?.kind === 'GENERATE_CAPTURE_CONTEXT';
+  const resettable = canResetSavedCardAuthentication(tracker);
   const resetRecoverable = !authentication?.resetStartedAt || freshSetup || canExplicitlyRetryReset(authentication, tracker);
   const canAuthenticate = isOpenPayment(payment) && !operationBusy
     && resetRecoverable && (freshSetup || canResetSavedCardAuthentication(tracker));
@@ -120,17 +133,21 @@ async function viewContext(paymentId, authorization, grant) {
     // Lost setup responses have an intent but no encrypted context. A fresh,
     // strictly bound provider read is enough to offer an explicit recovery;
     // the authentication endpoint rechecks that state while holding its lease.
-    canRestartAuthentication: canAuthenticate && hasAuthenticationIntent(authentication)
+    canRestartAuthentication: canAuthenticate && (hasAuthenticationIntent(authentication) || newCard && !!payment.checkoutCard?.approvalStartedAt)
       && (freshSetup || canResetSavedCardAuthentication(tracker)),
     authenticationInProgress: operationBusy || !resetRecoverable,
     returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }),
-    card: { brand: card.cybersource?.scheme === 1 ? 'Visa' : card.cybersource?.scheme === 2 ? 'Mastercard' : 'Card', last4: card.cybersource.last_four },
+    cardEntryRequired: newCard,
+    cardEntryResetRequired: newCard && !freshSetup && resettable && canAuthenticate,
+    ...(newCard && canAuthenticate ? { tracker: payment.tracker, cardCaptureAuthToken: await client.createAuthToken() } : {}),
+    card: newCard ? null : { brand: card.cybersource?.scheme === 1 ? 'Visa' : card.cybersource?.scheme === 2 ? 'Mastercard' : 'Card', last4: card.cybersource.last_four },
     billing: { street_1: address.address || '', city: address.city || '', country: address.countryCode || '', state: address.state || '', postal_code: address.postalCode || '' } };
 }
-async function authenticate(paymentId, authorization, suppliedBilling, grant, { restartAuthentication = false } = {}) {
+async function authenticate(paymentId, authorization, suppliedBilling, grant, { restartAuthentication = false, newCardEntry = false, saveCard } = {}) {
   let { payment, config, client, claims } = await ownedContext(paymentId, authorization, grant);
   const billing = validateBilling(suppliedBilling);
-  await require('./safepayCustomerService').requireOwnedReusableCard(payment.user, payment.cardId);
+  if (newCardEntry !== isCheckoutCard(payment)) throw fail('Choose the correct secure card flow.', 'SAFEPAY_CARD_SELECTION_INVALID');
+  if (!newCardEntry) await require('./safepayCustomerService').requireOwnedReusableCard(payment.user, payment.cardId);
   payment = await require('./safepayPaymentService').reconcilePayment(payment._id);
   if (!isOpenPayment(payment)) throw fail('This payment has advanced. Close this screen to verify its current status.', 'SAFEPAY_CHECKOUT_CLOSED');
   const operationToken = crypto.randomUUID();
@@ -150,6 +167,11 @@ async function authenticate(paymentId, authorization, suppliedBilling, grant, { 
   try {
     if (payment.purpose === 'order' && payment.terms?.settlementPolicy === 'revalidate-on-payment-v1') {
       await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
+    }
+    if (newCardEntry) {
+      const context = await prepareCardEntry({ payment, client, billing, saveCard, restartAuthentication, operationToken });
+      await assertClaim();
+      return { ...context, returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }) };
     }
     const tracker = await client.getTracker(payment.tracker, payment);
     await assertClaim();

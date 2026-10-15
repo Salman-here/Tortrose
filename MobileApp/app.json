@@ -28,7 +28,7 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 17,
+      "versionCode": 18,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECORD_AUDIO",

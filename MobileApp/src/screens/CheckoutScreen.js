@@ -80,6 +80,11 @@ export default function CheckoutScreen({ navigation }) {
 
   const { currentUser } = useAuth();
   const savedCards = useSavedSafepayCards();
+  const savedCardFirstFocus = useRef(true);
+  useFocusEffect(useCallback(() => {
+    if (savedCardFirstFocus.current) savedCardFirstFocus.current = false;
+    else savedCards.refreshCards?.();
+  }, [savedCards.refreshCards]));
   const checkoutAttemptStorageKey = createScopedMutationStorageKey(
     CHECKOUT_ATTEMPT_STORAGE_KEY,
     currentUser?._id || currentUser?.id || 'guest'
@@ -829,7 +834,11 @@ export default function CheckoutScreen({ navigation }) {
     let paymentAttempt = null;
     try {
       const draftOrder = buildOrder('');
-      if (paymentMethod === 'card' && savedCards.selectedCardId) draftOrder.savedCardId = savedCards.selectedCardId;
+      if (paymentMethod === 'card') {
+        if (savedCards.selectedCardId === 'raast') draftOrder.safepayCheckout = 'hosted';
+        else if (savedCards.selectedCardId) draftOrder.savedCardId = savedCards.selectedCardId;
+        else draftOrder.safepayCheckout = 'card';
+      }
       const actorId = String(currentUser?._id || currentUser?.id || 'guest');
       const fingerprint = `${actorId}:${createCheckoutFingerprint(draftOrder)}`;
       const checkoutAttempt = await getOrCreateCheckoutAttempt({
@@ -1411,7 +1420,7 @@ export default function CheckoutScreen({ navigation }) {
               </View>
               <Ionicons name="shield-checkmark-outline" size={16} color={palette.colors.success} />
             </TouchableOpacity>
-            {paymentMethod === 'card' && <SavedSafepayCardPicker {...savedCards} currency={currency} disabled={isProcessing} />}
+            {paymentMethod === 'card' && <SavedSafepayCardPicker {...savedCards} currency={currency} disabled={isProcessing} merchantCheckout />}
             <View style={{ height: 10 }} />
             <TouchableOpacity
               style={[
@@ -1498,7 +1507,7 @@ export default function CheckoutScreen({ navigation }) {
             {isProcessing ? <InlineLoader size="small" color="#fff" /> : (
               <>
                 <Ionicons name={paymentMethod === 'card' ? 'card-outline' : paymentMethod === 'wallet' ? 'wallet-outline' : 'bag-check-outline'} size={20} color="#fff" />
-                <Text style={styles.placeOrderText}>{paymentMethod === 'card' ? 'Pay with Card' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order'}</Text>
+                <Text style={styles.placeOrderText}>{paymentMethod === 'card' ? savedCards.selectedCardId === 'raast' ? 'Pay with Raast' : 'Pay with Card' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order'}</Text>
               </>
             )}
           </TouchableOpacity>

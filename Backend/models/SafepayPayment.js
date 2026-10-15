@@ -37,6 +37,13 @@ const schema = new mongoose.Schema({
     savedCardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/ },
     defaultAppliedAt: { type: Date, default: null },
   },
+  checkoutCard: {
+    consentToSave: { type: Boolean, default: false },
+    consentRecordedAt: { type: Date, default: null },
+    approvalStartedAt: { type: Date, default: null },
+    syncStatus: { type: String, enum: ['not_requested', 'pending', 'saved', 'unavailable'], default: 'not_requested' },
+    lastSyncErrorCode: { type: String, default: '', maxlength: 100 },
+  },
   chargeStartedAt: { type: Date, default: null },
   chargeCompletedAt: { type: Date, default: null },
   chargeOutcome: { type: String, enum: ['not_started', 'pending', 'declined', 'unknown', 'paid'], default: 'not_started' },

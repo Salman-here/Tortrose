@@ -248,6 +248,17 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
         return reset;
       } catch (error) { error.outcomeUnknown = true; throw error; }
     },
+    async resetCheckoutCardAuthentication(trackerId, expected) {
+      if (!require('./safepayCheckoutCardService').isCheckoutCard(expected)) throw providerError('Invalid card-entry recovery binding.', 'SAFEPAY_CARD_ENTRY_UNAVAILABLE', 409);
+      const tracker = await this.getTracker(trackerId, expected);
+      if (!canResetSavedCardAuthentication(tracker)) throw providerError('Check this payment before retrying.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS', 409);
+      const data = await request('PUT', `/order/payments/v3/${trackerId}`, {});
+      try {
+        const reset = requireTracker(data, trackerExpectation(expected, trackerId), config);
+        if (reset.state !== 'TRACKER_STARTED' || !['PAYER_AUTH_SETUP', 'GENERATE_CAPTURE_CONTEXT'].includes(reset.next_actions?.CYBERSOURCE?.kind)) throw providerError('Card entry reset is being checked.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS', 409);
+        return reset;
+      } catch (error) { error.outcomeUnknown = true; throw error; }
+    },
     async getSubscription(subscriptionId) {
       requireId(subscriptionId, 'sub');
       return request('GET', `/client/subscriptions/v1/${encodeURIComponent(subscriptionId)}`);

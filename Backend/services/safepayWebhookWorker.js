@@ -63,7 +63,11 @@ async function runSafepayWebhookWorker() {
           lastErrorCode: error.code || 'SAFEPAY_EVENT_FAILED', nextAttemptAt: new Date(Date.now() + Math.min(600000, 10000 * 2 ** Math.min(event.attempts, 6))) } });
       }
     }
-    const pending = await Payment.find({ environment: config.environment, status: { $in: ['creating', 'ready', 'cancel_requested', 'refund_pending'] },
+    const pending = await Payment.find({ environment: config.environment, $or: [
+      { status: { $in: ['creating', 'ready', 'cancel_requested', 'refund_pending'] } },
+      { status: 'paid', 'terms.checkoutCardPolicy': require('./safepayCheckoutCardService').POLICY,
+        'checkoutCard.consentToSave': true, 'checkoutCard.syncStatus': 'pending' },
+    ],
       nextReconcileAt: { $lte: new Date() } }).sort({ nextReconcileAt: 1 }).limit(10).select('_id');
     for (const payment of pending) {
       try { await reconcilePayment(payment._id); } catch (_) { /* Durable retry state is recorded by the reconciler. */ }

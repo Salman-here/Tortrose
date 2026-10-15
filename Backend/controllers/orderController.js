@@ -1291,6 +1291,13 @@ exports.placeOrder = async (req, res) => {
         if (normalizedPaymentMethod === 'safepay' && !userId && !quoteOnly) {
             return res.status(401).json({ msg: 'Log in to pay securely with Safepay.', code: 'SAFEPAY_LOGIN_REQUIRED' });
         }
+        if (normalizedPaymentMethod === 'safepay' && order.safepayCheckout !== undefined
+            && !['card', 'hosted'].includes(order.safepayCheckout)) {
+            return res.status(400).json({ msg: 'Choose card or Raast checkout.', code: 'SAFEPAY_CHECKOUT_SELECTION_INVALID' });
+        }
+        if (normalizedPaymentMethod === 'safepay' && order.safepayCheckout === 'hosted' && orderCurrency !== 'PKR') {
+            return res.status(400).json({ msg: 'Raast checkout is available in PKR only.', code: 'SAFEPAY_RAAST_PKR_ONLY' });
+        }
 
         // console.log(order.orderItems);
 
@@ -1734,6 +1741,16 @@ exports.placeOrder = async (req, res) => {
         }
 
         const noPaymentRequired = !isCOD && isNoChargeOnlineOrder(newOrder);
+        const merchantCardCheckout = newOrder.paymentMethod === 'safepay' && !order.savedCardId
+            && order.safepayCheckout === 'card' && !noPaymentRequired;
+        if (merchantCardCheckout && !quoteOnly) {
+            // Identity comes from this authenticated buyer, never the shipping email or a caller-supplied customer token.
+            // Profile creation is outside the financial transaction and does not save a card or create a charge.
+            await require('../services/safepayCustomerService').ensureCustomer(userId, {
+                fullName: newOrder.shippingInfo.fullName, phone: newOrder.shippingInfo.phone,
+                country: newOrder.shippingInfo.country, countryCode: newOrder.shippingInfo.countryCode,
+            }, { recordCardConsent: false });
+        }
         let paidOrder = null;
         let noChargeOrder = null;
         try {
@@ -1763,7 +1780,8 @@ exports.placeOrder = async (req, res) => {
                         requestKey: checkoutIdempotencyKey, reference: `order:${newOrder._id}`, order: newOrder._id,
                         amountMinor: getExpectedStripeTotalMinor(newOrder), currency: newOrder.currency,
                         cardId: order.savedCardId || null,
-                        terms: { settlementPolicy: 'revalidate-on-payment-v1' },
+                        terms: { settlementPolicy: 'revalidate-on-payment-v1', ...(merchantCardCheckout
+                            ? { checkoutCardPolicy: require('../services/safepayCheckoutCardService').POLICY } : {}) },
                     }, { session });
                     await Order.updateOne({ _id: newOrder._id }, { $set: { safepayPaymentId: payment._id } }, { session });
                     newOrder.safepayPaymentId = payment._id;

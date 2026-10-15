@@ -14,11 +14,12 @@ async function snapshotCardSetup(input, config, client, session) {
     manualRevision: link.defaultCardManualRevision || 0 };
 }
 
-function successfulCardDetails(payment, tracker) {
+function successfulCardDetails(payment, tracker, mode = 'instrument') {
   // Reporter attempts are fetched server-side, not taken from a return URL.
   // Each successful attempt must belong to this exact instrument/customer.
   const details = (Array.isArray(tracker.attempts) ? tracker.attempts : []).filter(attempt => attempt.is_success === true
-    && attempt.tracker === payment.tracker && attempt.mode === 'instrument'
+    && attempt.tracker === payment.tracker && attempt.mode === mode
+    && (mode !== 'payment' || attempt.payment_method?.do_card_on_file === true)
     && attempt.customer?.token === payment.customerId
     && attempt.payment_method?.tracker === payment.tracker
     && attempt.payment_method?.attempt === attempt.token).map(attempt => attempt.payment_method);
@@ -34,8 +35,8 @@ function successfulCardDetails(payment, tracker) {
   return details[0];
 }
 
-async function verifySavedSetupCard(payment, tracker, config, client, at) {
-  const details = successfulCardDetails(payment, tracker);
+async function verifySavedSetupCard(payment, tracker, config, client, at, mode = 'instrument') {
+  const details = successfulCardDetails(payment, tracker, mode);
   const cards = await client.listCards(payment.customerId);
   const matches = cards.filter(card => {
     requireOwnedCard(card, payment.customerId, config);
@@ -71,4 +72,5 @@ async function applyCardSetupDefault(payment, card, session, at) {
   if (result.matchedCount === 1) payment.cardSetup.defaultAppliedAt = at;
 }
 
-module.exports = { POLICY, snapshotCardSetup, verifySavedSetupCard, applyCardSetupDefault };
+const verifySavedCheckoutCard = (payment, tracker, config, client, at) => verifySavedSetupCard(payment, tracker, config, client, at, 'payment');
+module.exports = { POLICY, snapshotCardSetup, verifySavedSetupCard, verifySavedCheckoutCard, applyCardSetupDefault };
