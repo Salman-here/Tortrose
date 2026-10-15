@@ -75,6 +75,12 @@ function isExplicitAdditionalCartVariantRequest(text = '', selection = {}) {
   return false;
 }
 
+function requestsSavedShippingAddress(text = '') {
+  const value = String(text || '');
+  if (/\b(?:do not|don't|dont|never)\s+(?:use|select|choose|ship to|deliver to)\b[^.!?\n]{0,40}\b(?:saved|default|profile)\b|\bnot\s+(?:my|the)\s+(?:saved|default)\b/i.test(value)) return false;
+  return /\b(?:saved|default|profile)\s+(?!(?:card|payment)\b)[^.!?\n]{0,35}\b(?:address|shipping|delivery)\b/i.test(value);
+}
+
 function catalogLookupBeforeClarification(draft, lastUserText, role, results = []) {
   if (!['user', 'seller', 'guest'].includes(role)) return null;
   const calls = results.map(entry => entry.tool || entry.action);
@@ -111,4 +117,4 @@ function isOrderPreviewOnlyRequest(text = '') {
   return /\b(?:show|tell|check|calculate|quote|preview|review)\b[^.!?\n]{0,65}\b(?:total|delivery|shipping|cost|price|charges)\b|\b(?:do not|don't|dont|not yet|without)\b[^.!?\n]{0,35}\b(?:place|placing|order|ordering|buy|buying)\b|\b(?:pehle|pehlay)\b[^.!?\n]{0,35}\b(?:total|price|qeemat|keemat)\b/i.test(text);
 }
 
-module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, isExplicitAdditionalCartVariantRequest, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise, hasRomanUrduMutationClaim, isOrderPreviewOnlyRequest };
+module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, isExplicitAdditionalCartVariantRequest, requestsSavedShippingAddress, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise, hasRomanUrduMutationClaim, isOrderPreviewOnlyRequest };

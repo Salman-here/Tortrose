@@ -796,4 +796,38 @@ describe('read-only AI order previews and confirmed checkout', () => {
     expect(preview.data.missingShippingFields).toContain('fullName');
     expect(await Order.countDocuments()).toBe(0);
   });
+
+  test('binds a saved-address request to stored details even when the model supplies a different example', async () => {
+    const { buyer, product } = await createCatalog();
+    await User.updateOne({ _id: buyer._id }, { $set: { savedShippingInfo: shippingInfo } });
+    const preview = await executeToolCall('preview_order', placeArgs(product, {
+      shippingInfo: { ...shippingInfo, fullName: 'Example Person', email: 'wrong@example.com', phone: '+12025550100', address: '123 Example Road' },
+      _lastUserText: 'Preview the COD order using my saved Lahore shipping address.',
+    }), buyer);
+    expect(preview.success).toBe(true);
+    expect(preview.data.shippingInfo).toMatchObject(shippingInfo);
+    expect(preview.data.orderRequest.shippingInfo).toMatchObject(shippingInfo);
+    expect(await Order.countDocuments()).toBe(0);
+    expect((await Product.findById(product._id).lean()).stock).toBe(5);
+  });
+
+  test('does not use model-generated contacts when the requested saved address is missing', async () => {
+    const { buyer, product } = await createCatalog();
+    const preview = await executeToolCall('preview_order', placeArgs(product, {
+      _lastUserText: 'Use my default shipping address and preview the order.',
+    }), buyer);
+    expect(preview).toMatchObject({ success: false, needsShippingInfo: true });
+    expect(await Order.countDocuments()).toBe(0);
+  });
+
+  test('keeps an explicitly supplied new address when the buyer says not to use the saved address', async () => {
+    const { buyer, product } = await createCatalog();
+    await User.updateOne({ _id: buyer._id }, { $set: { savedShippingInfo: { ...shippingInfo, address: 'Old Saved Street' } } });
+    const preview = await executeToolCall('preview_order', placeArgs(product, {
+      _lastUserText: 'Do not use my saved address. Deliver to 1 Test Street in Lahore using the new details I supplied.',
+    }), buyer);
+    expect(preview.success).toBe(true);
+    expect(preview.data.shippingInfo.address).toBe(shippingInfo.address);
+    expect(await Order.countDocuments()).toBe(0);
+  });
 });

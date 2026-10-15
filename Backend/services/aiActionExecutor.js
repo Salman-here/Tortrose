@@ -40,7 +40,7 @@ const { createOrderPreview, verifyOrderPreview } = require('./aiOrderPreviewServ
 const { assessSellerCreationInputs } = require('./aiSellerInputEvidenceService');
 const { previewStoreCurrencyChange, changeStoreCurrency } = require('./aiStoreCurrencyService');
 const { storeCurrencyChangeLimit } = require('./storeCurrencyChangePolicy');
-const { isCartReplacementRequest, isExplicitAdditionalCartVariantRequest, explicitlyClearsWholeCart, isOrderPreviewOnlyRequest } = require('./aiConversationPolicy');
+const { isCartReplacementRequest, isExplicitAdditionalCartVariantRequest, requestsSavedShippingAddress, explicitlyClearsWholeCart, isOrderPreviewOnlyRequest } = require('./aiConversationPolicy');
 const StoreReview = require('../models/StoreReview');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
 const { generateConfirmationToken } = require('../controllers/orderConfirmationController');
@@ -2916,7 +2916,10 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
         };
 
         // Get user's saved address if shipping info not provided
-        let shipping = shippingInfo;
+        // The person's saved/default-address request is authoritative over
+        // model-generated fields. Resolve the actual stored destination on
+        // the server; a plausible example address is not buyer permission.
+        let shipping = requestsSavedShippingAddress(args._lastUserText) ? null : shippingInfo;
         if (!shipping) {
           const user = await User.findById(userId).select('savedShippingInfo savedAddresses username email sellerInfo').lean();
           // Try default address first, then first saved address

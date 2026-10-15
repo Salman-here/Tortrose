@@ -728,7 +728,7 @@ const userTools = [
           },
           shippingInfo: {
             type: 'object',
-            description: 'Shipping address. When the user supplies shipping details, pass every supplied field here and do not fall back to a saved address. If omitted, the saved address is used.',
+            description: 'Shipping address explicitly supplied by the buyer. When they ask to use their saved/default/profile address, OMIT shippingInfo: the server reads their actual stored address and contacts. Never invent or copy an example address/email/phone. When the user supplies a new address, pass every supplied field here; incomplete supplied details must not fall back to saved fields.',
             properties: {
               fullName: { type: 'string' },
               email: { type: 'string' },
