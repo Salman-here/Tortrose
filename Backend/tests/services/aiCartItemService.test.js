@@ -240,6 +240,19 @@ test('a mistaken add call for "silver instead" fails without adding an extra mug
   expect(await read()).toEqual(initial);
 });
 
+test('a compound request may add its explicitly separate variant without editing another existing line', async () => {
+  const result = await executeToolCall('add_to_cart', {
+    productId: String(mug._id), quantity: 1, selectedOptions: { Color: 'Silver', Capacity: '500ml' },
+    _lastUserText: 'Set the existing Black 500ml mug quantity to 2, and add Silver 500ml quantity 1 as a separate variant.',
+  }, buyer.toObject());
+  expect(result.success).toBe(true);
+  const saved = await read();
+  expect(saved.cartItems).toHaveLength(3);
+  expect(saved.cartItems[0]).toEqual(initial.cartItems[0]);
+  expect(saved.cartItems[1]).toEqual(initial.cartItems[1]);
+  expect(saved.cartItems[2]).toMatchObject({ qty: 1, selectedColor: 'Silver', selectedOptions: { Color: 'Silver', Capacity: '500ml' } });
+});
+
 test('removing a selected color leaves other variants and other products untouched', async () => {
   await Cart.updateOne({ user: buyer._id }, { $push: { cartItems: { product: mug._id, qty: 1, selectedColor: 'Silver', selectedOptions: { Color: 'Silver', Capacity: '350ml' } } } });
   const result = await changeAICartItem(buyer._id, { productName: 'mug', currentColor: 'Black' }, 'remove');

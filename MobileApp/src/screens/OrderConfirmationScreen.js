@@ -22,15 +22,11 @@ import { getOrderPaymentLabel } from '../utils/paymentPresentation';
 import {
   getOrderCurrency,
   getOrderItemQuantity,
+  getOrderItemOptionPairs,
   getOrderItemLineSubtotal,
   getOrderSummaryAmount,
   getOrderTotal,
 } from '../utils/orderPresentation';
-
-const getSelectedOptions = (item = {}) => {
-  if (!item.selectedOptions || typeof item.selectedOptions !== 'object') return [];
-  return Object.entries(item.selectedOptions).filter(([, value]) => value);
-};
 
 const statusMeta = (order) => {
   if (!order) return { icon: 'time-outline', title: 'Loading order', tone: 'primary' };
@@ -175,7 +171,7 @@ export default function OrderConfirmationScreen({ navigation, route }) {
             <GlassPanel variant="card" style={styles.card}>
               <Text style={styles.sectionTitle}>Items</Text>
               {(order.orderItems || []).map((item, index) => {
-                const selectedOptions = getSelectedOptions(item);
+                const selectedOptions = getOrderItemOptionPairs(item);
                 const quantity = getOrderItemQuantity(item);
                 return (
                   <View key={`${item.name}-${index}`} style={styles.itemRow}>
@@ -183,8 +179,7 @@ export default function OrderConfirmationScreen({ navigation, route }) {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
                       <Text style={styles.itemMeta}>Qty {quantity} • Line total {money(getOrderItemLineSubtotal(item))}</Text>
-                      {!!item.selectedColor && <Text style={styles.itemOption}>Color: {item.selectedColor}</Text>}
-                      {selectedOptions.map(([name, value]) => (
+                      {selectedOptions.map(({ name, value }) => (
                         <Text key={name} style={styles.itemOption}>{name}: {String(value)}</Text>
                       ))}
                     </View>

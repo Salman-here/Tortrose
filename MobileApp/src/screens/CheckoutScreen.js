@@ -70,6 +70,7 @@ import useSavedSafepayCards from '../hooks/useSavedSafepayCards';
 import useCheckoutQuote from '../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../utils/checkoutQuote';
 import { getOriginalPaymentRefundCopy, getSafepayCheckoutLabel } from '../utils/paymentPresentation';
+import { getOrderItemOptionPairs } from '../utils/orderPresentation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -1066,21 +1067,13 @@ export default function CheckoutScreen({ navigation }) {
               <View style={styles.badge}><Text style={styles.badgeText}>{cartItems.cart.length}</Text></View>
             </View>
             {cartItems.cart.map((item, index) => {
-              const selectedOptions = item.selectedOptions && typeof item.selectedOptions === 'object'
-                ? Object.entries(item.selectedOptions).filter(([, value]) => value)
-                : [];
+              const selectedOptions = getOrderItemOptionPairs(item);
               return (
                 <View key={index} style={styles.cartItem}>
                   <Image source={{ uri: item.product?.image || item.product?.images?.[0]?.url }} style={styles.cartItemImage} contentFit="cover" cachePolicy="memory-disk" transition={150} />
                   <View style={styles.cartItemInfo}>
                     <Text style={styles.cartItemName} numberOfLines={2}>{item.product?.name}</Text>
-                    {item.selectedColor && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                        <Ionicons name="color-palette-outline" size={11} color={palette.colors.primary} />
-                        <Text style={{ fontSize: 11, color: palette.colors.primary }}>{item.selectedColor}</Text>
-                      </View>
-                    )}
-                    {selectedOptions.map(([name, value]) => (
+                    {selectedOptions.map(({ name, value }) => (
                       <View key={name} style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                         <Ionicons name="options-outline" size={11} color={palette.colors.primary} />
                         <Text style={{ fontSize: 11, color: palette.colors.primary }}>{name}: {value}</Text>

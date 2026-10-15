@@ -40,7 +40,7 @@ const { createOrderPreview, verifyOrderPreview } = require('./aiOrderPreviewServ
 const { assessSellerCreationInputs } = require('./aiSellerInputEvidenceService');
 const { previewStoreCurrencyChange, changeStoreCurrency } = require('./aiStoreCurrencyService');
 const { storeCurrencyChangeLimit } = require('./storeCurrencyChangePolicy');
-const { isCartReplacementRequest, explicitlyClearsWholeCart, isOrderPreviewOnlyRequest } = require('./aiConversationPolicy');
+const { isCartReplacementRequest, isExplicitAdditionalCartVariantRequest, explicitlyClearsWholeCart, isOrderPreviewOnlyRequest } = require('./aiConversationPolicy');
 const StoreReview = require('../models/StoreReview');
 const { buildSellerPaymentSummary } = require('../controllers/PaymentController');
 const { generateConfirmationToken } = require('../controllers/orderConfirmationController');
@@ -2638,7 +2638,9 @@ async function executeToolCallUnprotected(toolName, args = {}, user, { propagate
           cart = new Cart({ user: userId, cartItems: [] });
         }
 
-        if (isCartReplacementRequest(args._lastUserText) && cart.cartItems.some(item => normalizeObjectIdString(item.product) === String(productId))) {
+        if (isCartReplacementRequest(args._lastUserText)
+          && !isExplicitAdditionalCartVariantRequest(args._lastUserText, selection)
+          && cart.cartItems.some(item => normalizeObjectIdString(item.product) === String(productId))) {
           return { success: false, code: 'CART_ITEM_UPDATE_REQUIRED', error: 'This is a change to an item already in your cart. Its options need updating while keeping the existing quantity.', data: { nextTool: 'update_cart_item', productId: product._id } };
         }
         const quantityAlreadyInCart = cart.cartItems

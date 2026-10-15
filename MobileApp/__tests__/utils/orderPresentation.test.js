@@ -20,6 +20,15 @@ import {
 } from '../../src/utils/orderPresentation';
 
 describe('order presentation helpers', () => {
+  test.each([
+    [{ selectedColor: 'Red', selectedOptions: { Color: 'Red' } }, [{ name: 'Color', value: 'Red' }]],
+    [{ selectedColor: 'Blue', selectedOptions: { Size: 'Small', Color: 'Blue' } }, [{ name: 'Size', value: 'Small' }, { name: 'Color', value: 'Blue' }]],
+    [{ selectedColor: 'White', selectedOptions: { ' color ': 'White' } }, [{ name: 'color', value: 'White' }]],
+    [{ selectedColor: 'Yellow', selectedOptions: {} }, [{ name: 'Color', value: 'Yellow' }]],
+  ])('checkout and confirmation option pairs show legacy/declared color once: %p', (item, expected) => {
+    expect(getOrderItemOptionPairs(item)).toEqual(expected);
+    expect(formatOrderItemOptions(item).match(/color:/gi)).toHaveLength(1);
+  });
   const order = {
     _id: 'mongo-id',
     orderId: 'ORD-12345',

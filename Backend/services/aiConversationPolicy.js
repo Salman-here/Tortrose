@@ -56,6 +56,24 @@ function isCartReplacementRequest(text = '') {
     || /\b(?:iski jagah|is ki jagah|rang badal|size badal|badal do)\b/.test(value);
 }
 
+// A compound request can edit one line AND explicitly add a separate variant.
+// Scope this exception to the selected option values in the positive add
+// clause; another color or "do not add" must not bypass the edit-only guard.
+function isExplicitAdditionalCartVariantRequest(text = '', selection = {}) {
+  const values = [...new Set([
+    selection.selectedColor, ...Object.values(selection.selectedOptions || {}),
+  ].map(value => String(value || '').trim().toLowerCase()).filter(Boolean))];
+  if (!values.length) return false;
+  const value = String(text || '').toLowerCase();
+  const additions = value.matchAll(/(?:^|[,;\n]\s*|\b(?:and|then|also|plus)\s+)add\s+([^.!?;\n]{1,240})/g);
+  for (const [, clause] of additions) {
+    if (/\b(?:not|no|never|without)\b/.test(clause)) continue;
+    if (!/\b(?:separate|additional|new|another)\s+(?:variant|colou?r|size|line)\b/.test(clause)) continue;
+    if (values.every(option => clause.includes(option))) return true;
+  }
+  return false;
+}
+
 function catalogLookupBeforeClarification(draft, lastUserText, role, results = []) {
   if (!['user', 'seller', 'guest'].includes(role)) return null;
   const calls = results.map(entry => entry.tool || entry.action);
@@ -92,4 +110,4 @@ function isOrderPreviewOnlyRequest(text = '') {
   return /\b(?:show|tell|check|calculate|quote|preview|review)\b[^.!?\n]{0,65}\b(?:total|delivery|shipping|cost|price|charges)\b|\b(?:do not|don't|dont|not yet|without)\b[^.!?\n]{0,35}\b(?:place|placing|order|ordering|buy|buying)\b|\b(?:pehle|pehlay)\b[^.!?\n]{0,35}\b(?:total|price|qeemat|keemat)\b/i.test(text);
 }
 
-module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise, hasRomanUrduMutationClaim, isOrderPreviewOnlyRequest };
+module.exports = { NATURAL_COMMERCE_ADDENDUM, sanitizeCommerceReply, isCartReplacementRequest, isExplicitAdditionalCartVariantRequest, catalogLookupBeforeClarification, explicitlyClearsWholeCart, hasUnfinishedActionPromise, hasRomanUrduMutationClaim, isOrderPreviewOnlyRequest };

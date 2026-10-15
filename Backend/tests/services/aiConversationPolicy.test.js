@@ -1,5 +1,15 @@
 'use strict';
-const { sanitizeCommerceReply, isCartReplacementRequest, catalogLookupBeforeClarification, hasUnfinishedActionPromise } = require('../../services/aiConversationPolicy');
+const { sanitizeCommerceReply, isCartReplacementRequest, isExplicitAdditionalCartVariantRequest, catalogLookupBeforeClarification, hasUnfinishedActionPromise } = require('../../services/aiConversationPolicy');
+
+test('a compound change/add exception is limited to explicitly requested additional variant options', () => {
+  const text = 'Set the existing White mug quantity to 1, and add Red quantity 2 as a separate variant.';
+  expect(isCartReplacementRequest(text)).toBe(true);
+  expect(isExplicitAdditionalCartVariantRequest(text, { selectedColor: 'Red', selectedOptions: { Color: 'Red' } })).toBe(true);
+  expect(isExplicitAdditionalCartVariantRequest(text, { selectedColor: 'White', selectedOptions: { Color: 'White' } })).toBe(false);
+  expect(isExplicitAdditionalCartVariantRequest(text, { selectedOptions: { Color: 'Red', Size: 'Large' } })).toBe(false);
+  expect(isExplicitAdditionalCartVariantRequest('Change Red to White; do not add Red as a separate variant.', { selectedColor: 'Red' })).toBe(false);
+  expect(isExplicitAdditionalCartVariantRequest('Change Red to White and add no Red as a separate variant.', { selectedColor: 'Red' })).toBe(false);
+});
 
 test('hides database identifiers from prose while retaining working product links and public order numbers', () => {
   const internal = '6a9b63fe12c509a47fe03649';
