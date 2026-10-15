@@ -773,6 +773,7 @@ function ProductDetailPage() {
                                         </div>
                                     ))}
                                     {optionError && <p className="text-sm text-destructive" role="alert">{optionError}</p>}
+                                    {productCartQuantity > 0 && <button type="button" className="glass-button rounded-xl px-4 py-2 text-sm font-semibold" onClick={() => { selectionTouched.current = true; setSelectedOptions({}); setSelectedColor(null); setOptionError('Choose another color or size above, then add it to your cart.'); optionsSectionRef.current?.scrollIntoView({ behavior:'smooth',block:'center' }); }}>+ Add another variant</button>}
                                 </motion.div>
                             )}
 

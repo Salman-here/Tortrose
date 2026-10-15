@@ -5,6 +5,7 @@ const router = express.Router()
 
 
 router.post('/add/:id', verifyToken, addToCart)
+router.patch('/variant/:id', verifyToken, require('../controllers/cartController').editCartVariant)
 router.post('/merge', verifyToken, mergeGuestCart)
 router.get('/get', verifyToken, getCart)
 router.patch('/qty-inc/:id', verifyToken, qtyIncrement)

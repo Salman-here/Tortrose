@@ -10,9 +10,9 @@ import {
 import React, { useMemo, useState, memo } from "react";
 import { optimizeImage, buildSrcSet } from "../../utils/optimizeImage";
 import { getStoreSubdomainUrl } from "../../utils/subdomainHelper";
-import ProductOptionsModal from "./ProductOptionsModal";
+import CartVariantsDialog from "./CartVariantsDialog";
 import { hasProductOptions } from "../../utils/productOptions";
-import { resolveProductCartLine, getCartProductQuantity, cartVariantLabel } from '../../utils/cartProductSelection';
+import { resolveProductCartLine, getCartProductQuantity } from '../../utils/cartProductSelection';
 
 const ProductCard = memo(({
   _id, name, image, images, category, price, discountedPrice, currency, priceCurrency,
@@ -26,8 +26,6 @@ const ProductCard = memo(({
   const [imageLoaded, setImageLoaded] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
-  const [selectedOptions, setSelectedOptions] = useState({});
-  const [selectedColor, setSelectedColor] = useState(null);
 
   const productForOptions = useMemo(() => ({
     _id,
@@ -45,7 +43,7 @@ const ProductCard = memo(({
   const hasOptions = hasProductOptions(productForOptions);
 
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
-  const cartItem = resolveProductCartLine(productForOptions, cartItems?.cart, selectedOptions, selectedColor);
+  const cartItem = resolveProductCartLine(productForOptions, cartItems?.cart);
   const productCartQuantity = getCartProductQuantity(productForOptions, cartItems?.cart);
   const isInCart = Boolean(cartItem);
   const productMoney = { price, discountedPrice, currency, priceCurrency };
@@ -71,14 +69,6 @@ const ProductCard = memo(({
     handleAddToCart(_id, null, null, productForOptions);
   };
 
-  const handleOptionsConfirm = async ({ selectedOptions: nextOptions, selectedColor: nextColor }) => {
-    const normalizedOptions = nextOptions || {};
-    const normalizedColor = nextColor || null;
-    setSelectedOptions(normalizedOptions);
-    setSelectedColor(normalizedColor);
-    const added = await handleAddToCart(_id, normalizedColor, normalizedOptions, productForOptions, 'add');
-    if (added) setIsOptionsModalOpen(false);
-  };
 
   // Handle product navigation - redirect to product's store subdomain if different
   const handleProductClick = (e) => {
@@ -101,7 +91,7 @@ const ProductCard = memo(({
 
   return (
     <div
-      className="relative glass-card water-shimmer p-1.5 sm:p-2 md:p-3 flex flex-col overflow-hidden group product-card-hover"
+      className="relative h-full glass-card water-shimmer p-1.5 sm:p-2 md:p-3 flex flex-col overflow-hidden group product-card-hover"
     >
       {/* Badges */}
       <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 md:top-3 md:left-3 z-[2] flex flex-col items-start gap-1 sm:gap-1.5">
@@ -228,11 +218,12 @@ const ProductCard = memo(({
         </div>
 
         {/* Add to cart button */}
-        {hasOptions && productCartQuantity > 0 && <div className="mb-2 text-xs text-center text-muted-foreground" aria-live="polite">
-          <span>{productCartQuantity} in cart</span>{cartItem && <span className="block truncate" title={cartVariantLabel(productForOptions, cartItem)}>{cartVariantLabel(productForOptions, cartItem)}</span>}
-        </div>}
-        {isInCart && cartItem ? (
-          <div className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-xl glass-inner">
+        {hasOptions && isInCart ? (
+          <button type="button" aria-label={`Manage variants for ${name}`} onClick={() => setIsOptionsModalOpen(true)} className="glass-button h-10 w-full rounded-xl text-xs sm:text-sm font-semibold inline-flex justify-center items-center gap-1.5" style={{color:'hsl(var(--primary))'}}>
+            <ShoppingCart size={14}/> In cart · {productCartQuantity}<ChevronRight size={14}/>
+          </button>
+        ) : isInCart && cartItem ? (
+          <div className="flex items-center justify-between gap-2 h-10 py-1.5 px-2 rounded-xl glass-inner">
             <button
               onClick={() => handleQtyDec(cartItem._id)}
               disabled={qtyUpdateId === cartItem._id}
@@ -275,7 +266,6 @@ const ProductCard = memo(({
           </button>
         )}
 
-        {hasOptions && isInCart && <button type="button" className="text-xs font-semibold mt-2 text-primary" onClick={() => setIsOptionsModalOpen(true)} disabled={loadingProductId === _id}>Change options</button>}
         <div className="mt-2 flex justify-center opacity-60 group-hover:opacity-100 transition-opacity">
           <Link to={`/single-product/${_id}`} onClick={handleProductClick} className="text-xs sm:text-sm font-medium flex items-center gap-0.5 transition-colors"
             style={{ color: 'hsl(var(--primary))' }}>
@@ -285,15 +275,7 @@ const ProductCard = memo(({
         </div>
       </div>
 
-      <ProductOptionsModal
-        open={isOptionsModalOpen}
-        product={productForOptions}
-        selectedOptions={cartItem?.selectedOptions || selectedOptions}
-        selectedColor={cartItem?.selectedColor || selectedColor}
-        onClose={() => setIsOptionsModalOpen(false)}
-        onConfirm={handleOptionsConfirm}
-        submitting={isCartLoading && loadingProductId === _id}
-      />
+      <CartVariantsDialog open={isOptionsModalOpen} product={productForOptions} onClose={() => setIsOptionsModalOpen(false)} />
     </div>
   );
 });

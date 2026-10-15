@@ -22,6 +22,10 @@ const ProductOptionsModal = ({
   onClose,
   onConfirm,
   submitting = false,
+  title = 'Choose your options',
+  confirmLabel = 'Add selected version to cart',
+  description = 'Select every required option so we can add the exact version you want.',
+  error = '',
 }) => {
   const { formatPrice } = useCurrency();
   const closeButtonRef = useRef(null);
@@ -154,10 +158,10 @@ const ProductOptionsModal = ({
                   <Sparkles size={11} /> Personalize your item
                 </p>
                 <h2 id="product-options-title" className="truncate text-lg font-extrabold sm:text-xl" style={{ color: 'hsl(var(--foreground))' }}>
-                  Choose your options
+                  {title}
                 </h2>
                 <p id="product-options-description" className="mt-1 text-xs leading-relaxed sm:text-sm" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                  Select every required option so we can add the exact version you want.
+                  {description}
                 </p>
               </div>
               <button
@@ -268,6 +272,7 @@ const ProductOptionsModal = ({
               )}
             </div>
 
+            {error && <p role="alert" className="px-5 pb-3 text-sm text-destructive">{error}</p>}
             <div className="relative border-t px-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-4 sm:px-6 sm:pb-5" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg-subtle)' }}>
               <div className="flex items-center gap-2 text-[11px]" style={{ color: 'hsl(var(--muted-foreground))' }}>
                 <Check size={13} style={{ color: isComplete ? 'hsl(150,60%,42%)' : 'hsl(var(--muted-foreground))' }} />
@@ -287,7 +292,7 @@ const ProductOptionsModal = ({
                   </>
                 ) : (
                   <>
-                    {isComplete ? 'Add selected version to cart' : 'Complete your selections'} <ChevronRight size={17} />
+                    {isComplete ? confirmLabel : 'Complete your selections'} <ChevronRight size={17} />
                   </>
                 )}
               </button>

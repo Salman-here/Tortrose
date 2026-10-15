@@ -17,12 +17,11 @@ import { colors, spacing, fontSize, borderRadius, shadows, fontWeight, glass } f
 import { useTheme } from '../contexts/ThemeContext';
 import { tap as hapticTap } from '../utils/haptics';
 import GlassBlurFill from './common/GlassBlurFill';
-import ProductOptionsModal from './common/ProductOptionsModal';
+import CartVariantsDialog from './CartVariantsDialog';
 import {
-  getInitialProductSelections,
   hasProductOptions,
 } from '../utils/productOptions';
-import { resolveProductCartLine, getCartProductQuantity, cartVariantLabel } from '../utils/cartProductSelection';
+import { resolveProductCartLine, getCartProductQuantity } from '../utils/cartProductSelection';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - spacing.lg * 2 - spacing.sm) / 2;
@@ -61,8 +60,6 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
   const [optionsModalVisible, setOptionsModalVisible] = useState(false);
-  const [selectedColor, setSelectedColor] = useState(null);
-  const [selectedOptions, setSelectedOptions] = useState({});
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
   const heartScale = useRef(new Animated.Value(1)).current;
@@ -81,9 +78,6 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   // applied only when the catalog explicitly provides a valid default value.
   useEffect(() => {
     if (!product?._id) return;
-    const initial = getInitialProductSelections(product);
-    setSelectedColor(initial.selectedColor);
-    setSelectedOptions(initial.selectedOptions || {});
     setOptionsModalVisible(false);
   }, [product?._id]);
 
@@ -92,7 +86,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   const { _id, name, image, images, category, stock, rating, isFeatured } = product;
   const productHasOptions = hasProductOptions(product);
   const isInWishlist = wishlistItems?.some((item) => item?._id === _id);
-  const cartItem = resolveProductCartLine(product, cartItems?.cart, selectedOptions, selectedColor);
+  const cartItem = resolveProductCartLine(product, cartItems?.cart);
   const productCartQuantity = getCartProductQuantity(product, cartItems?.cart);
   const isInCart = !!cartItem;
   const isOutOfStock = stock === 0;
@@ -118,12 +112,6 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
     handleAddToCart(_id, null, null, product);
   };
 
-  const handleOptionsConfirm = async ({ selectedColor: nextColor, selectedOptions: nextOptions }) => {
-    setSelectedColor(nextColor || null);
-    setSelectedOptions(nextOptions || {});
-    const added = await handleAddToCart(_id, nextColor || null, nextOptions || null, product, 'add');
-    if (added) setOptionsModalVisible(false);
-  };
   // Some legacy products store a text label instead of a URL — treat those as missing
   const rawImageSource = (typeof images?.[0] === 'string' ? images[0] : images?.[0]?.url) || image;
   const imageSource = typeof rawImageSource === 'string' && /^(https?:|data:|file:)/.test(rawImageSource) ? rawImageSource : null;
@@ -202,11 +190,9 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
             <Text style={[styles.price, { color: c.text }]}>{formatProductPrice(product, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
             {originalDisplayPrice && <Text style={[styles.originalPrice, { color: c.textSecondary }]}>{formatProductPrice(product, { field: 'price' })}</Text>}
           </View>
-          {productHasOptions && productCartQuantity > 0 && <View style={{ gap: 3, marginBottom: 8 }}>
-            <Text style={{ color: c.textSecondary, fontSize: 11, textAlign: 'center' }}>{productCartQuantity} in cart</Text>
-            {!!cartItem && <Text numberOfLines={1} style={{ color: c.text, fontSize: 11, textAlign: 'center' }}>{cartVariantLabel(product, cartItem)}</Text>}
-          </View>}
-          {isInCart && cartItem ? (
+          {productHasOptions && isInCart ? (
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Manage variants for ${name}`} onPress={() => setOptionsModalVisible(true)} style={[styles.qtyRow,{borderColor:g.border,justifyContent:'center',gap:5}]}><Ionicons name="bag-check-outline" size={14} color={c.primary}/><Text style={[styles.addToCartText,{color:c.primary}]}>In cart · {productCartQuantity}</Text><Ionicons name="chevron-forward" size={14} color={c.primary}/></TouchableOpacity>
+          ) : isInCart && cartItem ? (
             /* In-cart quantity stepper — matches website card */
             <View style={[styles.qtyRow, { backgroundColor: g.bgSubtle, borderColor: g.borderSubtle }]}>
               <TouchableOpacity
@@ -248,7 +234,6 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
             </TouchableOpacity>
           )}
 
-          {productHasOptions && isInCart && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Change options for ${name}`} onPress={() => setOptionsModalVisible(true)} disabled={isLoading} style={{ paddingVertical: 8, alignItems: 'center' }}><Text style={{ color: c.primary, fontSize: 12, fontWeight: '700' }}>Change options</Text></TouchableOpacity>}
           {/* View details link — matches website */}
           <TouchableOpacity style={styles.viewDetailsRow} onPress={onPress} accessibilityLabel={`View details of ${name}`}>
             <Text style={[styles.viewDetailsText, { color: c.primary }]}>View details</Text>
@@ -256,19 +241,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
-      {productHasOptions && (
-        <ProductOptionsModal
-          visible={optionsModalVisible}
-          product={product}
-          selectedColor={cartItem?.selectedColor || selectedColor}
-          selectedOptions={cartItem?.selectedOptions || selectedOptions}
-          submitting={isLoading}
-          onClose={() => {
-            if (!isLoading) setOptionsModalVisible(false);
-          }}
-          onConfirm={handleOptionsConfirm}
-        />
-      )}
+      {productHasOptions && <CartVariantsDialog open={optionsModalVisible} product={product} onClose={() => setOptionsModalVisible(false)} />}
     </Animated.View>
   );
 }

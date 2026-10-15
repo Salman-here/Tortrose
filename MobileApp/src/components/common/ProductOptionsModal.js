@@ -49,6 +49,10 @@ export function ProductOptionsModal({
   onClose,
   onConfirm,
   submitting = false,
+  title = 'Choose options',
+  confirmLabel = 'Add to cart',
+  description = '',
+  error = '',
 }) {
   const { palette: modalBasePalette } = useTheme();
   const palette = getModalPalette(modalBasePalette);
@@ -177,7 +181,7 @@ export function ProductOptionsModal({
               </LinearGradient>
               <View style={styles.headerCopy}>
                 <Text style={styles.eyebrow}>PERSONALIZE YOUR PICK</Text>
-                <Text style={styles.title} numberOfLines={2}>Choose options</Text>
+                <Text style={styles.title} numberOfLines={2}>{title}</Text>
                 <Text style={styles.productName} numberOfLines={1}>{product.name || 'This product'}</Text>
               </View>
               <TouchableOpacity
@@ -215,6 +219,8 @@ export function ProductOptionsModal({
               showsVerticalScrollIndicator={false}
               bounces
             >
+              {!!description && <Text style={{ color: palette.colors.textSecondary, fontSize: 13, marginBottom: 14 }}>{description}</Text>}
+              {!!error && <Text accessibilityRole="alert" style={{ color: palette.colors.error, fontSize: 13, marginBottom: 14 }}>{error}</Text>}
               {groups.map((group, groupIndex) => {
                 const selectedValue = group.legacy
                   ? draftColor
@@ -298,7 +304,7 @@ export function ProductOptionsModal({
                 disabled={submitting}
                 activeOpacity={0.84}
                 accessibilityRole="button"
-                accessibilityLabel={validation.ok ? 'Add selected options to cart' : 'Complete product options'}
+                accessibilityLabel={validation.ok ? confirmLabel : 'Complete product options'}
                 accessibilityState={{ disabled: submitting, busy: submitting }}
                 testID="confirm-product-options"
               >
@@ -314,7 +320,7 @@ export function ProductOptionsModal({
                 ) : (
                   <>
                     <Ionicons name={validation.ok ? 'bag-add-outline' : 'options-outline'} size={18} color="#fff" />
-                    <Text style={styles.confirmButtonText}>{validation.ok ? 'Add to cart' : 'Complete selections'}</Text>
+                    <Text style={styles.confirmButtonText}>{validation.ok ? confirmLabel : 'Complete selections'}</Text>
                     <Ionicons name="arrow-forward" size={16} color="rgba(255,255,255,0.9)" />
                   </>
                 )}

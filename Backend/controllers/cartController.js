@@ -137,73 +137,21 @@ async function buildCartPayload(cart, userId, msg) {
     };
 }
 
-exports.addToCart = async (req, res) => {
-    const { id: userId } = req.user
-    const { id } = req.params
-    const { selectedColor, selectedOptions } = req.body || {}
-
+exports.editCartVariant = async (req, res) => {
     try {
-        const product = await Product.findOne(publicProductFilter({ _id: id }))
-            .select('_id name stock colors optionGroups')
-            .lean();
-        if (!product) {
-            return res.status(404).json({ msg: 'Product is not available' });
-        }
-        if (requireStoredProductStock(product.stock) < 1) {
-            return res.status(409).json({ msg: 'Product is out of stock' });
-        }
-        const selection = validateProductSelection(product, { selectedColor, selectedOptions });
-        if (!selection.ok) {
-            throw createProductSelectionError(product, selection, 'add');
-        }
-        const canonicalColor = selection.selectedColor;
-        const canonicalOptions = selection.selectedOptions;
-        const incomingKey = optionsKey(canonicalOptions);
+        const cart = await require('../services/cartVariantService').editCartVariant({ userId: req.user.id, lineId: req.params.id,
+            selectedColor: req.body?.selectedColor, selectedOptions: req.body?.selectedOptions, expected: req.body?.expected });
+        return res.json(await buildCartPayload(cart, req.user.id, 'Variant updated. Existing quantities were preserved.'));
+    } catch (error) { return sendCartError(res, error, 'Unable to update this variant. Refresh your bag and try again.'); }
+};
 
-        const existingCart = await Cart.findOne({ user: userId })
-
-        if (existingCart) {
-            await assertPersistedCartQuantities(existingCart);
-            const item = existingCart.cartItems.find(item =>
-                item.product.equals(id) &&
-                item.selectedColor === canonicalColor &&
-                optionsKey(item.selectedOptions) === incomingKey
-            )
-
-            if (item) {
-                await existingCart.populate('cartItems.product')
-                return res.status(200).json(await buildCartPayload(existingCart, userId, 'Item already in cart'))
-            }
-
-            existingCart.cartItems.push({
-                product: id,
-                selectedColor: canonicalColor,
-                selectedOptions: canonicalOptions,
-            })
-            await existingCart.populate('cartItems.product')
-            await existingCart.save()
-            return res.status(200).json(await buildCartPayload(existingCart, userId, 'Item added to cart'))
-
-        }
-
-        const newCart = new Cart({
-            user: userId,
-            cartItems: [
-                {
-                    product: id,
-                    selectedColor: canonicalColor,
-                    selectedOptions: canonicalOptions,
-                }
-            ]
-        })
-        await newCart.populate('cartItems.product')
-        await newCart.save()
-        res.status(200).json(await buildCartPayload(newCart, userId, 'Item added to cart'))
-    } catch (error) {
-        console.error('Error adding to cart:', error.message);
-        sendCartError(res, error, 'Server error while adding to cart');
-    }
-}
+exports.addToCart = async (req, res) => {
+    try {
+        const result = await require('../services/cartVariantService').addCartVariant({ userId: req.user.id, productId: req.params.id,
+            selectedColor: req.body?.selectedColor, selectedOptions: req.body?.selectedOptions });
+        return res.status(200).json(await buildCartPayload(result.cart, req.user.id, result.alreadyAdded ? 'Item already in cart' : 'Item added to cart'));
+    } catch (error) { return sendCartError(res, error, 'Unable to add this variant. Please try again.'); }
+};
 
 exports.mergeGuestCart = async (req, res) => {
     const { id: userId } = req.user;

@@ -2,7 +2,7 @@ const request = require('supertest');
 const express = require('express');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
 const cartRoutes = require('../../routes/cartRoutes');
 const Cart = require('../../models/Cart');
@@ -40,7 +40,7 @@ const createProduct = (seller, suffix, stock = 10, overrides = {}) => Product.cr
 
 beforeAll(async () => {
   process.env.JWT_SECRET = process.env.JWT_SECRET || 'cart-reliability-test-secret';
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri());
   app = express();
   app.use(express.json());
@@ -133,7 +133,7 @@ describe('cart reliability status contracts', () => {
       .send({});
 
     expect(response.status).toBe(409);
-    expect(response.body).toEqual({ msg: 'Product is out of stock' });
+    expect(response.body).toEqual({ msg: 'Product is out of stock.', code: 'CART_STOCK_EXCEEDED' });
     expect(await Cart.countDocuments({ user: buyer._id })).toBe(0);
   });
 

@@ -685,6 +685,7 @@ export default function ProductDetailScreen({ route, navigation }) {
                 })}</View>
               </View>)}
               {!!optionError && <Text accessibilityRole="alert" style={{ color: palette.colors.error, fontSize: 13 }}>{optionError}</Text>}
+              {productCartQuantity > 0 && <TouchableOpacity accessibilityRole="button" onPress={() => { selectionTouched.current = true; setSelectedOptions({}); setSelectedColor(null); setOptionError('Choose another color or size above, then add it to your cart.'); }} style={{ padding:12,borderRadius:12,borderWidth:1,borderColor:palette.colors.border }}><Text style={{ color:palette.colors.primary,fontWeight:'700' }}>+ Add another variant</Text></TouchableOpacity>}
             </View>}
 
             {product.tags?.length > 0 && (

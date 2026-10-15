@@ -12,6 +12,7 @@ import {
 import {
     decrementGuestCartLine,
     guestCartPayload,
+    guestLineId,
     incrementGuestCartLine,
     normalizeGuestCart,
     optionsKeyOf,
@@ -19,6 +20,7 @@ import {
     serializeGuestCart,
 } from "../utils/guestCart";
 import { validateProductSelection } from "../utils/productOptions";
+import { replaceGuestVariant } from '../utils/editCartVariant';
 
 const GlobalContext = createContext();
 
@@ -422,6 +424,32 @@ export const GlobalProvider = ({ children }) => {
         retryCartHydration()
     }, [cartOwner, retryCartHydration])
 
+    const handleEditCartVariant = async (line, product, choices) => {
+        const owner = cartOwnerRef.current;
+        setQtyUpdateId(line._id);
+        try {
+            if (owner === 'guest') {
+                const params = new URLSearchParams(); appendLocationParams(params);
+                const response = await axios.get(`${import.meta.env.VITE_API_URL}api/products/get-single-product/${product._id}?${params}`);
+                const current = response.data.product;
+                const selection = validateProductSelection(current, choices.selectedOptions, choices.selectedColor);
+                if (!selection.ok) throw new Error('Review the available options before saving.');
+                if (cartOwnerRef.current !== owner) throw new Error('Your account changed. Reopen your bag.');
+                const saved = saveGuestCart(replaceGuestVariant(getGuestCart(), line, current, selection, guestLineId(current._id, selection.selectedColor, selection.selectedOptions)));
+                setCartItems(guestCartState(saved));
+            } else {
+                const response = await axios.patch(`${import.meta.env.VITE_API_URL}api/cart/variant/${line._id}`, { ...choices,
+                    expected: { qty: line.qty, selectedColor: line.selectedColor || null, selectedOptions: line.selectedOptions || null } }, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
+                if (cartOwnerRef.current !== owner) throw new Error('Your account changed. Reopen your bag.');
+                setCartItems(normalizeServerCartPayload(response.data));
+            }
+            return true;
+        } catch (error) {
+            if (cartOwnerRef.current === owner && [404,409].includes(error.response?.status)) await fetchAuthoritativeCart(owner, false);
+            throw new Error(error.response?.data?.msg || error.message || 'Unable to edit this variant.');
+        } finally { setQtyUpdateId(null); }
+    };
+
     const handleQtyInc = async (id) => {
         try {
             setQtyUpdateId(id)
@@ -569,6 +597,7 @@ export const GlobalProvider = ({ children }) => {
         cartItems,
 
         handleQtyInc,
+        handleEditCartVariant,
         handleQtyDec,
         handleRemoveCartItem,
 

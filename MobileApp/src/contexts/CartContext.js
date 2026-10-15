@@ -28,6 +28,7 @@ import {
   writeGuestCart,
 } from '../utils/guestCart';
 import { normalizeServerCartPayload } from '../utils/cartPresentation';
+import { replaceGuestVariant } from '../utils/editCartVariant';
 import {
   describeSelectionError,
   validateProductSelections,
@@ -270,6 +271,29 @@ export const CartProvider = ({ children }) => {
     }
   }, [currentUserId, replaceCart, runGuestMutation]);
 
+  const handleEditCartVariant = useCallback(async (line, product, choices) => {
+    const owner = cartOwnerRef.current;
+    setQtyUpdateId(line._id);
+    try {
+      if (!currentUserId) {
+        const response = await api.get(`/api/products/get-single-product/${product._id}`);
+        const current = response.data.product;
+        const selection = validateProductSelections(current, choices);
+        if (!selection.ok) throw new Error('Review the available options before saving.');
+        await runGuestMutation(items => replaceGuestVariant(items, line, current, selection, guestLineId(current._id, selection.selectedColor, selection.selectedOptions)));
+      } else {
+        const response = await api.patch(`/api/cart/variant/${line._id}`, { ...choices,
+          expected: { qty: line.qty, selectedColor: line.selectedColor || null, selectedOptions: line.selectedOptions || null } });
+        if (owner !== cartOwnerRef.current) throw new Error('Your account changed. Reopen your bag.');
+        replaceCart(normalizeServerCart(response.data));
+      }
+      return true;
+    } catch (error) {
+      if (owner === cartOwnerRef.current && [404,409].includes(error.response?.status)) await fetchAuthoritativeCart(owner);
+      throw new Error(error.response?.data?.msg || error.message || 'Unable to edit this variant.');
+    } finally { setQtyUpdateId(null); }
+  }, [currentUserId, replaceCart, runGuestMutation, fetchAuthoritativeCart]);
+
   const handleAddToCart = useCallback(async (
     id,
     selectedColor = null,
@@ -477,6 +501,7 @@ export const CartProvider = ({ children }) => {
       cartItems,
       fetchCart,
       handleAddToCart,
+      handleEditCartVariant,
       handleQtyInc,
       handleQtyDec,
       handleRemoveCartItem,

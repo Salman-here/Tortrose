@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { replaceGuestVariant } from '../src/utils/editCartVariant.js';
+const product={_id:'mug',stock:10},red={_id:'r',product,qty:2,selectedColor:'Red',selectedOptions:{Color:'Red'}},white={_id:'w',product,qty:3,selectedColor:'White',selectedOptions:{Color:'White'}};
+test('editing a guest choice replaces rather than duplicates and preserves its quantity',()=>{const result=replaceGuestVariant([red],red,product,{selectedColor:'White',selectedOptions:{Color:'White'}},'new-white');assert.equal(result.length,1);assert.equal(result[0].qty,2);assert.equal(result[0]._id,'new-white');assert.equal(result[0].selectedColor,'White');});
+test('editing into a chosen color merges both quantities exactly once',()=>{const result=replaceGuestVariant([red,white],red,product,{selectedColor:'White',selectedOptions:{Color:'White'}},'new-white');assert.equal(result.length,1);assert.equal(result[0].qty,5);assert.equal(result[0]._id,'w');assert.throws(()=>replaceGuestVariant(result,red,product,{selectedColor:'White'},'new-white'));});
+test('stale edits and stock shortages preserve the original guest bag',()=>{assert.throws(()=>replaceGuestVariant([{...red,qty:4}],red,product,{selectedColor:'White'},'new-white'));assert.throws(()=>replaceGuestVariant([red,white],red,{...product,stock:4},{selectedColor:'White'},'new-white'));assert.equal(red.selectedColor,'Red');assert.equal(red.qty,2);});
