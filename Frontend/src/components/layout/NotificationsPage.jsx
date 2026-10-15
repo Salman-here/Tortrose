@@ -17,6 +17,7 @@ import {
     resolveNotificationSurfaceAccount,
 } from '../../utils/notificationInboxSafety';
 import { formatSyntheticPaidOrderReceipt } from '../../utils/orderReceipt';
+import { notificationMatchesSearch } from '../../utils/notificationSearch';
 
 const NotificationsPage = () => {
     const { products = [], orders = [], dashboardRole } = useOutletContext() || {};
@@ -333,7 +334,7 @@ const NotificationsPage = () => {
     }, [notifications]);
     const filtered = notifications.filter(notification => {
         if (filter !== 'all' && notification.category !== filter) return false;
-        if (searchTerm && !notification.title.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+        if (!notificationMatchesSearch(notification, searchTerm)) return false;
         return true;
     });
     const unreadCount = Number.isSafeInteger(visibleDurableUnread) ? visibleDurableUnread : 0;
