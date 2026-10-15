@@ -2162,7 +2162,16 @@ function explicitReviewTool(lastUserText, role) {
   else if (/\breturn\b/i.test(lastUserText) && /\b(?:accept|acceptance|refund)\b/i.test(lastUserText) && role === 'seller') tool = 'accept_return';
   else if (/\bcancel/i.test(lastUserText)) tool = 'cancel_order';
   else if (/\b(?:shipped|delivered|processing|confirmed)\b/i.test(lastUserText) && /\bORD-[a-z0-9-]+\b/i.test(lastUserText) && role === 'seller') tool = 'update_order_status';
-  else if (/\b(?:COD|cash on delivery)\b/i.test(lastUserText) && /\border\b/i.test(lastUserText)) tool = 'preview_order';
+  else if (/\b(?:COD|cash on delivery)\b/i.test(lastUserText) && /\border\b/i.test(lastUserText)) {
+    const beforeReview = lastUserText.slice(0, lastUserText.search(/\b(?:preview|review)\b/i));
+    const changesCartFirst = /\b(?:cart|basket)\b/i.test(lastUserText)
+      && /(?:^|[,;.]\s*|\b(?:and|then)\s+)(?:please\s+)?(?:add|set|change|update|remove|increase|decrease)\s+/i.test(beforeReview);
+    // Restricting the model to preview_order would silently skip explicitly
+    // requested prerequisite cart edits and quote the old selections instead.
+    // Keep all allowed tools available; placement still requires a later
+    // confirmation of the resulting signed preview.
+    tool = changesCartFirst ? '' : 'preview_order';
+  }
   return tool && isToolAllowedForRole(tool, role) ? tool : '';
 }
 function completeActionDraft(state, draft, completedTools, conversationMessages, canRetry, lastUserText = '', role = 'guest') {

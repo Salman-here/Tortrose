@@ -624,6 +624,14 @@ describe('AI chat controller daily limit enforcement', () => {
     }));
   });
 
+  it('does not force a stale COD preview before explicitly requested prerequisite cart edits', () => {
+    const { __private } = require('../../controllers/aiChatController');
+    expect(__private.explicitReviewTool('Set the White mug in my cart to quantity 2, and add Yellow quantity 1 as a separate variant. Then preview a cash on delivery order for the whole cart. Do not place it until I confirm.', 'user')).toBe('');
+    expect(__private.explicitReviewTool('Preview a cash on delivery order for my current cart. Do not change any items.', 'user')).toBe('preview_order');
+    expect(__private.explicitReviewTool('Preview a cash on delivery order for the whole cart.', 'seller')).toBe('preview_order');
+    expect(__private.explicitReviewTool('Preview my withdrawal request.', 'seller')).toBe('request_withdrawal');
+  });
+
   it('forces every explicitly requested mobile tool and only summarizes after completion', async () => {
     const originalFetch = global.fetch;
     const fetchMock = jest.fn()
