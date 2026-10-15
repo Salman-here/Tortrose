@@ -90,3 +90,9 @@ test('all legal pages are prerendered and docs app links have a canonical SSR de
   assert.match(source('../src/pages/DocsPage.jsx'), /typeof window === 'undefined'\) return `https:\/\/rozare\.com\$\{path\}`/);
   assert.match(source('../src/pages/CommercePolicyPage.jsx'), /getElementById\(sectionId\)/);
 });
+
+test('the active seller activation flow exposes real public legal links on both platforms', () => {
+  const web = source('../src/pages/BecomeSeller.jsx'), native = source('../../MobileApp/src/screens/BecomeSellerScreen.js');
+  assert.match(web, /By activating a seller account/); assert.match(web, /to="\/terms"/); assert.match(web, /to="\/privacy"/);
+  assert.match(native, /By activating a seller account/); assert.match(native, /navigation\.navigate\('TermsOfService'\)/); assert.match(native, /navigation\.navigate\('PrivacyPolicy'\)/);
+});

@@ -1044,6 +1044,7 @@ export default function BecomeSellerScreen({ navigation }) {
             <TouchableOpacity style={[styles.primaryButton, { marginTop: 20 }]} onPress={handleVisibilityNext} accessibilityRole="button"><Text style={styles.primaryButtonText}>Continue to verification</Text><Ionicons name="arrow-forward" size={18} color="#fff" /></TouchableOpacity>
           </GlassPanel>}
           {flowStep === 'whatsapp' && renderWhatsApp()}
+          <Text style={[styles.mutedText, { fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 20 }]}>By activating a seller account, you agree to our <Text accessibilityRole="link" style={{ color: palette.colors.primary }} onPress={() => navigation.navigate('TermsOfService')}>Terms and Conditions</Text>. Read our <Text accessibilityRole="link" style={{ color: palette.colors.primary }} onPress={() => navigation.navigate('PrivacyPolicy')}>Privacy Policy</Text>.</Text>
       </KeyboardAwareFormScrollView>
     </GlassBackground>
   );
