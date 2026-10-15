@@ -2,6 +2,8 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Store = require('../models/Store');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
+const crypto = require('node:crypto');
 const {
     resolveRequestedCurrency,
     roundMoney,
@@ -313,6 +315,31 @@ exports.getSellerNotifications = async (req, res) => {
             ...sellerOrderScope(userId, sellerProductIds),
         }).sort({ createdAt: -1 });
 
+        // This endpoint is a legacy activity fallback, not a second inbox.
+        // Keep fallback coverage only where this seller has no durable copy
+        // of the same event. Read durable rows count too: otherwise a read
+        // confirmation would reappear as a new unread synthetic update.
+        const durable = await Notification.find({
+            user: userId,
+            targetRole: 'seller',
+            aggregateType: 'Order',
+            aggregateId: { $in: recentOrders.map(order => String(order._id)) },
+            eventType: { $in: ['order.placed', 'order.paid', 'order.no_charge_confirmed', 'order.confirmed', 'order.reconfirmed'] },
+        }).select('aggregateId eventType eventKey').lean();
+        const durableTypes = new Set(durable.map(row => `${row.aggregateId}:${row.eventType}`));
+        const durableEventKeys = new Set(durable.map(row => row.eventKey).filter(Boolean));
+        const hasDurable = (order, type) => durableTypes.has(`${order._id}:${type}`);
+        const hasDurableCurrentConfirmation = (order) => {
+            const at = new Date(order.confirmation?.confirmedAt);
+            if (!Number.isFinite(at.getTime())) return false;
+            // Reconfirmation is a distinct transition. An older confirmation
+            // must not hide a newer event whose durable delivery is pending.
+            return ['confirmed', 'reconfirmed'].some(decision => {
+                const hash = crypto.createHash('sha256').update(`${decision}:${at.toISOString()}`).digest('hex');
+                return durableEventKeys.has(`order:${order._id}:decision:${hash}:seller:${userId}:v1`);
+            });
+        };
+
         const notifications = [];
 
         sellerProducts.filter(p => p.stock === 0).forEach(p => {
@@ -332,21 +359,21 @@ exports.getSellerNotifications = async (req, res) => {
                 entry => String(entry?.seller || '') === String(userId)
             )?.status || order.orderStatus;
 
-            if (sellerStatus === 'pending') {
+            if (sellerStatus === 'pending' && !['order.placed', 'order.paid', 'order.no_charge_confirmed'].some(type => hasDurable(order, type))) {
                 notifications.push({ id: `order-${order._id}`, type: 'info', category: 'order', title: `New order ${order.orderId}`, description: `${sellerItems.length} item(s) awaiting your review`, time: order.createdAt, read: false, orderId: order._id });
             }
-            if (order.isPaid && sellerStatus === 'confirmed') {
+            if (order.isPaid && sellerStatus === 'confirmed' && !hasDurable(order, 'order.paid')) {
                 const sellerMoney = sellerNotificationMoney(order, userId, sellerItems);
                 if (sellerMoney) {
                     notifications.push({ id: `paid-${order._id}`, type: 'success', category: 'payment', title: `Payment received for ${order.orderId}`, description: formatOrderMoney(sellerMoney.amount, sellerMoney.currency), time: order.paidAt || order.createdAt, read: false, orderId: order._id });
                 }
             }
-            if (order.confirmation?.confirmedAt && order.confirmation?.confirmedVia === 'email') {
+            if (order.confirmation?.confirmedAt && order.confirmation?.confirmedVia === 'email' && !hasDurableCurrentConfirmation(order)) {
                 notifications.push({
                     id: `confirmed-${order._id}`,
                     type: 'success',
                     category: 'order',
-                    title: `Buyer confirmed order ${order.orderId} via email`,
+                    title: `Buyer confirmed order ${order.orderId} via confirmation link`,
                     description: 'Buyer verified the order — ready to process',
                     time: order.confirmation.confirmedAt,
                     read: false,

@@ -5,6 +5,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 
 const Order = require('../../models/Order');
 const Product = require('../../models/Product');
+const Notification = require('../../models/Notification');
 const {
   getSellerAnalytics,
   getSellerNotifications,
@@ -76,7 +77,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
-  await Promise.all([Order.deleteMany({}), Product.deleteMany({})]);
+  await Promise.all([Order.deleteMany({}), Product.deleteMany({}), Notification.deleteMany({})]);
 });
 
 afterAll(async () => {
