@@ -10,6 +10,7 @@ import {
 } from '../src/utils/returnPresentationSafety.js';
 import { BUYER_CANCELLABLE_RETURN_STATUSES } from '../src/utils/returns.js';
 import { startCancellationRefundRefresh } from '../src/utils/orderCancellationPresentation.js';
+import { publishAfterSalesChange, subscribeAfterSalesChange } from '../src/utils/afterSalesRefresh.js';
 
 const source = readFileSync(new URL('../src/components/layout/BuyerReturnsPanel.jsx', import.meta.url), 'utf8');
 // Execute the panel's real hook/control flow with deterministic effects and
@@ -23,13 +24,14 @@ const dependencyNames = [
   'inspectBuyerReturnMutationResponse', 'inspectBuyerReturnOrderContext',
   'inspectBuyerReturnsResponse', 'BUYER_CANCELLABLE_RETURN_STATUSES',
   'startCancellationRefundRefresh', 'window', 'document', 'globalThis', 'useReturnDialogAccessibility',
+  'publishAfterSalesChange', 'subscribeAfterSalesChange',
 ];
 const createPanel = new Function(...dependencyNames, `
   const API = '/api/returns';
   ${constants}
   ${control}
     return { load, openRequest, submitReturn, cancelReturn,
-      setQuantities, setReasonCategory, setReasonDetails,
+      setQuantities, setReasonCategory, setReasonDetails, setPhotos,
       state: { groups, requests, loading, loadError, selectedGroup, quantities,
         reasonCategory, reasonDetails, submitting, cancellingId, selection, returnPending,
         requestKey: requestKeyRef.current } };
@@ -42,6 +44,7 @@ const IDS = {
   product: '64b000000000000000000103', seller: '64b000000000000000000104',
   buyer: '64b000000000000000000105', store: '64b000000000000000000106',
   request: '64b000000000000000000107',
+  photo: '64b000000000000000000108',
 };
 const order = {
   _id: IDS.order, orderId: 'ORD-RETURN-1001', currency: 'PKR',
@@ -206,6 +209,7 @@ const harness = () => {
     (request, active) => startCancellationRefundRefresh(request, active, 5000, timerApi),
     window, document, { crypto: { randomUUID: () => '12345678-1234-4123-8123-123456789abc' } },
     () => ({ current: null }),
+    publishAfterSalesChange, subscribeAfterSalesChange,
   ];
   const Panel = createPanel(...dependencies);
   const render = () => {
@@ -258,6 +262,7 @@ const harness = () => {
       current.setQuantities({ [IDS.item]: 1 });
       current.setReasonCategory('changed_mind');
       current.setReasonDetails('Preserve this detailed return draft during seller status updates.');
+      current.setPhotos([{ _id: IDS.photo, url: 'https://res.cloudinary.com/qa/return.png' }]);
       await flush();
     },
   };
@@ -365,7 +370,7 @@ test('unverified and unauthorized snapshots disable actions and preserve an open
     assert.ok(app.state.selectedGroup, type);
     app.unmount();
   }
-  assert.match(source, /disabled=\{submitting \|\| !selection.valid \|\| Boolean\(loadError\)\}/);
+  assert.match(source, /disabled=\{submitting \|\| uploading \|\| !selection.valid \|\| Boolean\(loadError\)\}/);
   assert.match(source, /Retry return information/);
 });
 

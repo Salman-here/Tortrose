@@ -215,7 +215,7 @@ const GlassSignUpPage = () => {
           )}
         </div>
         <div className="py-4 px-8 border-t border-white/15 text-center">
-          <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>By signing up, you agree to our Terms and Privacy Policy</p>
+          <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>By signing up, you agree to our <Link className="underline" to="/terms">Terms and Conditions</Link>. Read our <Link className="underline" to="/privacy">Privacy Policy</Link>.</p>
         </div>
       </div>
     </div>

@@ -8,6 +8,7 @@ jest.mock('../../src/components/common/GlassPanel', () => 'GlassPanel');
 jest.mock('../../src/components/common/PremiumBackHeader', () => 'Header');
 jest.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView' }));
 const navigation = { navigate: jest.fn(), goBack: jest.fn() };
+const policySection = (policy, id) => commercePolicies[policy].sections.find(row => row.id === id).content;
 afterEach(() => jest.clearAllMocks());
 test.each(Object.entries(commercePolicies))('%s screen renders every shared policy section', (key, policy) => {
   const screen = render(<CommercePolicyScreen route={{ name: policy.screen }} navigation={navigation} />);
@@ -23,7 +24,7 @@ test('refund page distinguishes Wallet and card destinations and initiation from
   expect(screen.getByText(refundTimeline)).toBeTruthy();
   expect(refundTimeline).toContain(`${policyConfig.approvedRefundInitiationBusinessDays} business days`);
   expect(screen.getByText(/credited to your Rozare Wallet in the saved order currency/)).toBeTruthy();
-  expect(screen.getByText(/funds held from that original order/)).toBeTruthy();
+  expect(screen.getByText(/funds held from the original Safepay or Wallet order/)).toBeTruthy();
   expect(screen.getByText(/additional time to appear/)).toBeTruthy();
   fireEvent.press(screen.getByText('Cancellation Policy →'));
   expect(navigation.navigate).toHaveBeenCalledWith('CancellationPolicy');
@@ -37,21 +38,54 @@ test('terms include legal entity, governing law, complaints and no unsupported p
 });
 
 test('Raast policies preserve full Wallet cancellations and restrict original-card deductions to cards', () => {
-  const terms = commercePolicies.terms.sections.find(row => row.title === '5. Payments and currency').content;
-  const subscriptions = commercePolicies.terms.sections.find(row => row.title === '6. Seller subscriptions and saved cards').content;
-  const cancellation = commercePolicies.cancellation.sections.find(row => row.title === 'Cancelling before shipment').content;
-  const refundCancellation = commercePolicies.refunds.sections.find(row => row.title === 'Before-shipment cancellations').content;
-  const fee = commercePolicies.cancellation.sections.find(row => row.title === 'Buyer-requested card cancellation processing fee').content;
+  const terms = policySection('terms', 'payments');
+  const subscriptions = policySection('terms', 'subscriptions');
+  const cancellation = policySection('cancellation', 'refund-choices');
+  const refundCancellation = policySection('refunds', 'before-shipment');
+  const fee = policySection('cancellation', 'card-deduction');
   expect(terms).toContain('eligible PKR Raast payments');
-  expect(terms).toContain('requires a supported Pakistani banking or wallet app');
-  expect(subscriptions).toContain('Raast is not available for these flows');
-  expect(cancellation).toContain('Wallet-paid or Raast-paid cancellation receives a full Rozare Wallet refund, without a buyer deduction or original-card option');
+  expect(terms).toContain('Raast requires a supported Pakistani banking or wallet app');
+  expect(subscriptions).toContain('use card payments, not Raast');
+  expect(cancellation).toContain('Raast-paid cancellations receive the full eligible amount in Rozare Wallet, with no buyer processing deduction');
   for (const content of [cancellation, refundCancellation]) {
-    expect(content).toContain('Raast cancellations do not offer an automatic refund to the original bank account');
-    expect(content).toContain('original-card refund less the processing');
+    expect(content).toContain('Raast cancellation flow is Wallet-only');
+    expect(content).toContain('original-card refund less the');
   }
   expect(refundCancellation).toContain('the original-card deduction is 6.2%');
   expect(fee).toContain('plus PKR30 once per checkout');
+});
+
+test('returns require photos and a decision before dispatch, with no rejection after approval', () => {
+  expect(policySection('refunds', 'request-review')).toContain('Both refund and replacement requests require photos');
+  expect(policySection('refunds', 'request-review')).toContain('before collection or return shipment');
+  expect(policySection('refunds', 'approved-return')).toContain('does not allow the seller to reject an already approved return');
+  expect(policySection('refunds', 'replacements')).toContain('does not also create a money refund');
+});
+
+test('warranty policy states delivery clock, declared resolution, appeals and no automatic hold', () => {
+  expect(policySection('refunds', 'warranty-claims')).toContain('duration starts from delivery');
+  expect(policySection('refunds', 'warranty-claims')).toContain('Before approving, the seller declares the resolution');
+  expect(policySection('refunds', 'warranty-appeals')).toContain('even if the warranty expires');
+  expect(policySection('refunds', 'warranty-appeals')).toContain('Replacements and appeals do not restart');
+  expect(policySection('refunds', 'warranty-funding')).toContain('claim alone does not reserve or hold seller earnings');
+});
+
+test('seller disclosure distinguishes order fees, available funds, historical reports and reviewed loss', () => {
+  expect(policySection('terms', 'seller-fees')).toContain('PKR30 once per checkout');
+  expect(policySection('terms', 'seller-fees')).toContain('Withdrawals do not charge this deduction again');
+  expect(policySection('terms', 'seller-funds')).toContain('selected-period revenue uses orders placed');
+  expect(policySection('terms', 'seller-funds')).not.toContain('Payments shows gross');
+  expect(policySection('terms', 'payment-reviews')).toContain('final provider decision with supporting evidence');
+  expect(policySection('terms', 'payment-reviews')).toContain('Future eligible earnings first cover that shortfall');
+});
+
+test('saved-card disclosure preserves optional checkout consent and separate recurring authorisation', () => {
+  const cards = policySection('terms', 'saved-cards');
+  expect(cards).toContain('after successful payment');
+  expect(cards).toContain('Leaving it unchecked does not add that card');
+  expect(cards).toContain('not your full card number or CVV');
+  expect(cards).toContain('does not automatically change a subscription’s billing card');
+  expect(policySection('terms', 'subscriptions')).toContain('separate recurring-payment agreement');
 });
 test('confirmed legal details and service commitments are complete and the draft notice is removed', () => {
   expect(policyPublicationReady).toBe(true);

@@ -14,6 +14,7 @@ import { spacing, fontSize, fontWeight, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import api, { API_ENDPOINTS } from '../config/api';
 import { commercePolicies } from '../content/commercePolicies';
+import { commerceGuides, guideText, formatSubscriptionGuide } from '../content/commerceHelpContent';
 
 if (
   Platform.OS === 'android'
@@ -52,7 +53,7 @@ const SECTIONS = [
     id: 'cart-and-wishlist',
     title: 'Cart & Wishlist',
     icon: 'heart-outline',
-    body: 'Add products from cards, Product Details, or AI chat; update quantities within live stock limits. A guest cart syncs to the account after sign-in. Tap the heart to save products to the Wishlist and move them to Cart when ready.',
+    body: 'Add products from cards, Product Details or supported AI chat. Add each required colour, size or other option combination separately and adjust its cart quantity within stock limits. Use Add another variant for a different combination, or Edit variant to change an existing line. An edit matching another cart line merges quantities rather than creating a duplicate. A guest cart syncs after sign-in. Select the heart to save a product to Wishlist or Favorites.',
   },
   {
     id: 'become-a-seller',
@@ -94,7 +95,12 @@ const SECTIONS = [
     id: 'payments',
     title: 'Payments & Checkout',
     icon: 'card-outline',
-    body: 'Checkout supports Safepay card, Raast when offered for an eligible PKR checkout, Rozare Wallet, and Cash on Delivery. Raast requires a supported Pakistani banking or wallet app; saved-card setup and seller subscriptions remain card-only. One order uses one payment method. COD is available only when every seller allows it; otherwise use an available Safepay method or enough Wallet balance in the exact checkout currency. USD, PKR, EUR, and GBP Wallet balances stay separate and are never converted automatically. Add balance through Safepay card or Raast when offered for an eligible PKR top-up. Safepay and Wallet seller earnings remain held after delivery until the saved return window ends; timely unresolved returns retain their affected funds. Released earnings become withdrawable after payment-risk holds, refunds and withdrawal reservations are accounted for. Delivered COD revenue is reported, but cash and shipping payment are handled directly by the seller. Withdrawal requests require saved bank details and admin review.',
+    guide: commerceGuides.payments,
+    body: guideText(commerceGuides.payments),
+  },
+  {
+    id: 'seller-money', title: 'Seller Payments & Analytics', icon: 'analytics-outline',
+    guide: commerceGuides.sellerMoney, body: guideText(commerceGuides.sellerMoney),
   },
   {
     id: 'shipping',
@@ -106,7 +112,12 @@ const SECTIONS = [
     id: 'orders-returns',
     title: 'Orders, Returns & Refunds',
     icon: 'refresh-outline',
-    body: 'Buyers may cancel each unshipped store portion without seller approval. COD cancellation moves no money. Wallet-paid and Raast-paid cancellations refund fully to Rozare Wallet without a buyer processing deduction; Raast cancellations do not offer an automatic refund to the original bank account. Card-paid cancellations offer a full Wallet refund or an original-card refund less the displayed processing deduction. New original-card cancellation refunds use 6.2% + PKR30 per checkout, shared proportionally across sellers. Seller earnings on Safepay card, Raast and Wallet orders use the same fixed processing fee + tax rule once; Payments shows gross earnings, deductions and net pending/withdrawable balances. Sales analytics remain gross and withdrawals do not charge it again. Shipped portions stay unchanged. Return eligibility is frozen at checkout and starts at seller delivery. Timely unresolved returns keep their funds pending. Approved online returns credit the eligible full amount to buyer Wallet from the original held order; COD returns require verified funding from seller earnings or Safepay. Replacement-only returns do not create a money refund.',
+    guide: commerceGuides.returns,
+    body: guideText(commerceGuides.returns),
+  },
+  {
+    id: 'warranties', title: 'Warranty Claims & Appeals', icon: 'shield-checkmark-outline',
+    guide: commerceGuides.warranties, body: guideText(commerceGuides.warranties),
   },
   {
     id: 'coupons-discounts',
@@ -218,6 +229,13 @@ export const buildSubscriptionDocsBody = (catalog) => {
   return `Every seller starts with a ${trialDays}-day free trial, may list up to ${trialProductLimit} products during that trial, receives core Starter access plus eligible Elite growth tools, and does not need a credit card. Paid Starter includes ${starterFeatures}; it supports ${starterFeatured} featured products, has a ${starterList} list price, a ${starterDiscount}% launch discount to ${starterPrice}/month, and one ${starterIntro}-day introductory period when the account has not used it before. Its temporary growth tools are ${bonusFeatures}; they last for one ${bonusMonths}-month Starter bonus period, and restarting or switching plans does not grant a fresh period. Paid Elite supports ${eliteFeatured} featured products, has a ${eliteList} list price, a ${eliteDiscount}% launch discount to ${elitePrice}/month, and one ${eliteIntro}-day introductory period when eligible. Elite keeps the growth tools permanently while active and adds ${eliteOnlyFeatures}; Meta ads are an optional ${metaPrice}/month add-on. The first ${founderMax} sellers whose subscription Checkout completes with ${founderCode} receive an extra ${founderDiscount}% founder discount, locking Starter at ${starterFounder} or Elite at ${eliteFounder} while that subscription remains uninterrupted. Starting Checkout reserves a place for ${founderReservationMinutes} minutes, and the rate is claimed only after Rozare verifies subscription activation. The founder rate survives plan changes and renewals but is permanently forfeited if the subscription ends. Upgrades and Meta changes are immediate and may be prorated, downgrades start at period end, and cancellation keeps access active through the current period. When access ends, the public store and products are hidden but data is preserved. A Starter seller with unused bonus time has ${graceDays} days after blocking to re-subscribe before those bonus tools are permanently removed from Starter.`;
 };
 
+function GuideTopics({ guide, styles, palette, navigation }) {
+  return <View>
+    {guide.topics.map(topic => <View key={topic.title} style={{ marginTop: 12 }}><Text accessibilityRole="header" style={[styles.sectionTitle, { flex: 0, marginBottom: 4 }]}>{topic.title}</Text><Text style={styles.sectionBody}>{topic.text}</Text></View>)}
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 16 }}>{guide.links.map(link => <TouchableOpacity key={link.path} accessibilityRole="link" onPress={() => navigation.navigate(link.screen)} style={{ paddingVertical: 10 }}><Text style={{ color: palette.colors.primary }}>{link.label}</Text></TouchableOpacity>)}</View>
+  </View>;
+}
+
 export default function DocsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
@@ -301,14 +319,14 @@ export default function DocsScreen({ navigation }) {
               const open = openId === s.id;
               return (
                 <GlassPanel key={s.id} variant="card" style={styles.sectionCard}>
-                  <TouchableOpacity style={styles.sectionHeader} onPress={() => toggle(s.id)} activeOpacity={0.7}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={s.title} accessibilityState={{ expanded: open }} style={styles.sectionHeader} onPress={() => toggle(s.id)} activeOpacity={0.7}>
                     <View style={styles.iconWrap}>
                       <Ionicons name={s.icon} size={18} color={palette.colors.primary} />
                     </View>
                     <Text style={styles.sectionTitle}>{s.title}</Text>
                     <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color={palette.colors.textSecondary} />
                   </TouchableOpacity>
-                  {open && <Text style={styles.sectionBody}>{s.body}</Text>}
+                  {open && (s.guide ? <GuideTopics guide={s.guide} styles={styles} palette={palette} navigation={navigation} /> : <Text style={styles.sectionBody}>{s.id === 'subscription-plans' ? formatSubscriptionGuide(s.body) : s.body}</Text>)}
                 </GlassPanel>
               );
             })

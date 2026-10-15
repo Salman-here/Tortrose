@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { clearPrerenderSeoFallbacks } from './prerender-head.mjs';
 
 const root = resolve(process.cwd());
 const ssrPath = resolve(root, 'dist-ssr-home/home-ssr-entry.js');
@@ -22,7 +23,7 @@ if (!existsSync(indexPath)) {
 const { renderHome } = await import(pathToFileURL(ssrPath).href);
 const { html, helmet } = renderHome('/');
 
-let template = readFileSync(indexPath, 'utf8');
+let template = clearPrerenderSeoFallbacks(readFileSync(indexPath, 'utf8'));
 
 // Inject Helmet-managed head tags
 if (helmet) {

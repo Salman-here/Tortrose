@@ -1,11 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 import { parse } from '@babel/parser';
+import { commerceFaqCategories, commerceFaqById, commerceGuides, guideText } from '../../src/content/commerceHelpContent';
+import { privacySections, paymentPrivacyNotice } from '../../src/content/privacyContent';
 
 const read = (...segments) => fs.readFileSync(path.resolve(__dirname, ...segments), 'utf8').replace(/\r\n/g, '\n');
 
 const evaluateStatic = (node) => {
   if (!node) return undefined;
+  if (node.type === 'Identifier' && node.name === 'commerceGuides') return commerceGuides;
+  if (node.type === 'MemberExpression') return evaluateStatic(node.object)?.[node.property.name || node.property.value];
+  if (node.type === 'CallExpression' && node.callee.name === 'guideText') return guideText(evaluateStatic(node.arguments[0]));
   if (node.type === 'StringLiteral' || node.type === 'NumericLiteral' || node.type === 'BooleanLiteral') {
     return node.value;
   }
@@ -61,20 +66,20 @@ describe('website and mobile information parity', () => {
     expect(mobilePolicies).toContain("from '../content/commercePolicies'");
     expect(webPolicies).toContain('document.sections.map');
     expect(mobilePolicies).toContain('document.sections.map');
-    expect(withoutIcons(readStaticConstant(mobilePrivacy, 'sections')))
-      .toEqual(withoutIcons(readStaticConstant(websitePrivacy, 'sections')));
+    for (const privacy of [mobilePrivacy, websitePrivacy]) {
+      expect(privacy).toContain('content/privacyContent');
+      expect(privacy).toContain('privacySections.map');
+      expect(privacy).toContain('{paymentPrivacyNotice}');
+    }
+    expect(privacySections).toHaveLength(12);
   });
 
   it('keeps FAQ and About aligned after both surfaces switch to Safepay', () => {
-    const websiteFaqData = readStaticConstant(websiteFaq, 'faqCategories');
-    const mobileFaqData = readStaticConstant(mobileFaq, 'faqCategories');
-    expect(mobileFaqData.map(({ category, questions }) => ({
-      category,
-      questions: questions.map(({ q, a }) => ({ q, a })),
-    }))).toEqual(websiteFaqData.map(({ category, questions }) => ({
-      category,
-      questions: questions.map(({ q, a }) => ({ q, a })),
-    })));
+    for (const faq of [websiteFaq, mobileFaq]) {
+      expect(faq).toContain('content/commerceHelpContent');
+      expect(faq).toContain('commerceFaqCategories.map');
+    }
+    expect(commerceFaqCategories.flatMap(row => row.questions).length).toBeGreaterThan(25);
 
     expect(withoutIcons(readStaticConstant(mobileAbout, 'values')))
       .toEqual(withoutIcons(readStaticConstant(websiteAbout, 'values')));
@@ -94,33 +99,24 @@ describe('website and mobile information parity', () => {
     const mobileSections = readStaticConstant(mobileDocs, 'SECTIONS');
     const payments = mobileSections.find(section => section.id === 'payments').body;
     const returns = mobileSections.find(section => section.id === 'orders-returns').body;
-    const faqItems = readStaticConstant(mobileFaq, 'faqCategories').flatMap(({ questions }) => questions);
-    expect(payments).toContain('Raast when offered for an eligible PKR checkout');
-    expect(payments).toContain('saved-card setup and seller subscriptions remain card-only');
-    for (const source of [websiteDocs, returns]) {
-      expect(source).toContain('Raast-paid cancellations refund fully to Rozare Wallet without a buyer processing deduction');
-      expect(source).toContain('Raast cancellations do not offer an automatic refund to the original bank account');
-    }
-    expect(returns).toContain('original held order');
-    expect(faqItems.find(({ q }) => q === 'What payment methods are accepted?').a)
+    expect(payments).toContain('eligible PKR Raast');
+    expect(payments).toContain('Seller subscriptions and separate card setup remain card-only');
+    expect(returns).toContain('Wallet and Raast cancellations refund fully to Wallet');
+    expect(returns).toContain('Card cancellations offer a full Wallet refund or an original-card refund less');
+    expect(returns).toContain('original held order funds');
+    expect(commerceFaqById['payment-methods'].a)
+      .toContain('Raast where offered for a PKR payment');
+    expect(payments)
       .toContain('supported Pakistani banking or wallet app');
-    expect(faqItems.find(({ q }) => q === 'How does Rozare Wallet work?').a)
-      .toContain('Raast when offered for an eligible PKR top-up');
-    expect(faqItems.find(({ q }) => q === 'Can I cancel a paid order before shipment?').a)
-      .toContain('6.2% + PKR30 once per checkout');
-    for (const privacy of [websitePrivacy, mobilePrivacy]) {
-      expect(privacy).toContain('Online card and eligible PKR Raast payments use Safepay');
-      expect(privacy).toContain('Recurring subscription consent is separate from permission to save a card');
-    }
+    expect(commerceFaqById['seller-fees'].a).toContain('6.2% plus PKR30 once per checkout');
+    expect(paymentPrivacyNotice).toContain('eligible PKR Raast payments');
+    expect(paymentPrivacyNotice).toContain('Permission to save a card is separate');
   });
 
   it('keeps factual AI, tags, tracking, and verification guidance explicit', () => {
     const docsText = readStaticConstant(mobileDocs, 'SECTIONS')
       .map(({ body }) => body)
       .join(' ');
-    const faqItems = readStaticConstant(mobileFaq, 'faqCategories')
-      .flatMap(({ questions }) => questions);
-    const faqAnswer = (question) => faqItems.find(({ q }) => q === question)?.a || '';
 
     expect(docsText).toContain('Web and app chat history is kept separate from WhatsApp chat history.');
     expect(docsText).toContain('Web and app shopping chat allow 5 messages per UTC day for guests and 20 for signed-in buyers');
@@ -128,9 +124,9 @@ describe('website and mobile information parity', () => {
     expect(docsText).not.toMatch(/same conversation context is shared/i);
     expect(docsText).not.toMatch(/(?:up to|allow(?:s)?) 15 tags/i);
 
-    expect(faqAnswer('How do I track my order?')).not.toMatch(/tracking number|email/i);
-    expect(faqAnswer('What is the Trust system?')).toContain('does not grant a verified badge');
-    expect(faqAnswer('How are stores verified?')).toContain('an admin reviews the store');
+    expect(commerceFaqById['delivery-time'].a).not.toMatch(/tracking number|email/i);
+    expect(commerceFaqById.trust.a).toContain('verified badge is a separate status');
+    expect(commerceFaqById['store-verification'].a).toContain('An admin reviews the application');
   });
 
   it('documents the complete subscription contract and loads live catalog values', () => {

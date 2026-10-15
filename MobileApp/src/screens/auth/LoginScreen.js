@@ -175,7 +175,7 @@ export default function LoginScreen({ navigation, route }) {
 
           <View style={styles.footer}>
             <Ionicons name="lock-closed-outline" size={12} color={palette.colors.textLight} />
-            <Text style={styles.footerText}>By signing in, you agree to our Terms of Service and Privacy Policy</Text>
+            <Text style={styles.footerText}>By signing in, you agree to our <Text accessibilityRole="link" style={{ color: palette.colors.primary }} onPress={() => navigation.navigate('TermsOfService')}>Terms and Conditions</Text>. Read our <Text accessibilityRole="link" style={{ color: palette.colors.primary }} onPress={() => navigation.navigate('PrivacyPolicy')}>Privacy Policy</Text>.</Text>
           </View>
       </KeyboardAwareFormScrollView>
     </GlassBackground>

@@ -60,6 +60,7 @@
     { "source": "/shipping-policy", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/policy-shipping.html" },
     { "source": "/refund-policy", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/policy-refunds.html" },
     { "source": "/cancellation-policy", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/policy-cancellation.html" },
+    { "source": "/privacy", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/policy-privacy.html" },
     {
       "source": "/sitemap-products.xml",
       "destination": "https://rozare.up.railway.app/sitemap-products.xml"

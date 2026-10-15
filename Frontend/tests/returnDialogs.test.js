@@ -27,7 +27,8 @@ const request = { _id: '64b000000000000000000001', returnNumber: 'RET-C1', order
 
 function baseContext() {
   const calls = { closed: [], portals: 0, writes: [] };
-  const context = { React, motion: { div: motionDiv }, AnimatePresence: ({ children }) => React.createElement(React.Fragment, null, children),
+  const context = { React, AfterSalesPhotos: () => null, ReturnPhotoPicker: () => null,
+    motion: { div: motionDiv }, AnimatePresence: ({ children }) => React.createElement(React.Fragment, null, children),
     getReturnItemVariantLabels, inspectReturnPresentationSnapshot, RETURN_STATUS_LABELS, RETURN_STATUS_TRANSITIONS, returnResolutionLabel, returnStatusTone,
     API: '/api/returns', document: { body: {} }, useAuth: () => ({ currentUser: { _id: 'seller-1' } }), useSearchParams: () => [new URLSearchParams(), () => {}],
     useCallback: fn => fn, useEffect() {}, useRef: value => ({ current: value }),
@@ -77,10 +78,11 @@ for (const busy of [false, true]) {
   });
 }
 
-for (const busy of [false, true]) {
-  test(`buyer return popup has its title association and read-only variants with busy=${busy}`, () => {
+for (const [submitting, uploading] of [[false, false], [true, false], [false, true]]) {
+  const busy = submitting || uploading;
+  test(`buyer return popup has its title association and read-only variants with submitting=${submitting}, uploading=${uploading}`, () => {
     const f = baseContext();
-    f.context.submitting = busy;
+    Object.assign(f.context, { submitting, uploading, photos: [], formError: '', orderContext: { orderId: '64b000000000000000000001' }, setPhotos() {}, setUploading() {}, setFormError() {} });
     f.context.setSelectedGroup = value => f.calls.closed.push(value);
     f.context.useCallback = fn => fn;
     const closeStart = buyerSource.indexOf('const closeDialog =');

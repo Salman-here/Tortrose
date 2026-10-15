@@ -48,7 +48,7 @@ export default function ContactScreen({ navigation }) {
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <PremiumBackHeader
           title="Contact Us"
-          subtitle="We'd love to hear from you"
+          subtitle="Order and account support"
           icon="mail-outline"
           onBack={() => navigation.goBack()}
           rightIcon="headset-outline"
@@ -72,14 +72,16 @@ export default function ContactScreen({ navigation }) {
             ))}
 
             <GlassPanel variant="card" style={styles.formCard}>
-              <Text style={styles.formTitle}>Complaints and payment support</Text>
+              <Text style={styles.formTitle}>Complaints and case support</Text>
               <Text style={styles.ctaText}>{supportTimeline}</Text>
-              <Text style={styles.ctaText}>Include your order or subscription reference. Never send passwords, full card numbers, CVV or OTPs.</Text>
+              <Text style={styles.ctaText}>Include the order and payment, return, warranty, withdrawal or subscription reference, a clear description and relevant evidence. Never send passwords, full card numbers, CVV or OTPs.</Text>
               <TouchableOpacity accessibilityRole="link" onPress={() => Linking.openURL(`mailto:${policyConfig.companyEmail}`).catch(() => Alert.alert('Company email', policyConfig.companyEmail))}><Text style={styles.ctaLink}>{policyConfig.companyEmail}</Text></TouchableOpacity>
               {!!policyConfig.supportPhone && <TouchableOpacity accessibilityRole="link" onPress={() => Linking.openURL(`tel:${policyConfig.supportPhone.replace(/[^+\d]/g, '')}`).catch(() => Alert.alert('Support phone', policyConfig.supportPhone))}><Text style={styles.ctaLink}>{policyConfig.supportPhone}</Text></TouchableOpacity>}
               {policyConfig.sameOperatingAddress === false && !!policyConfig.operatingAddress && <Text style={styles.ctaText}>Operating address: {policyConfig.operatingAddress}</Text>}
-              <TouchableOpacity accessibilityRole="link" onPress={() => navigation.navigate('RefundPolicy')}><Text style={styles.ctaLink}>Refund policy and processing times →</Text></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="link" onPress={() => navigation.navigate('RefundPolicy')}><Text style={styles.ctaLink}>Returns, refunds and warranties →</Text></TouchableOpacity>
               <TouchableOpacity accessibilityRole="link" onPress={() => navigation.navigate('CancellationPolicy')}><Text style={styles.ctaLink}>Cancellation policy →</Text></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="link" onPress={() => navigation.navigate('TermsOfService')}><Text style={styles.ctaLink}>Payment reviews and seller funds →</Text></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="link" onPress={() => navigation.navigate('FAQ')}><Text style={styles.ctaLink}>Frequently Asked Questions →</Text></TouchableOpacity>
             </GlassPanel>
             {/* Contact Form */}
             <GlassPanel variant="card" style={styles.formCard}>

@@ -74,7 +74,7 @@ function ContactPage() {
             Contact Us
           </h1>
           <p style={{ color: 'hsl(var(--muted-foreground))' }} className="max-w-lg mx-auto">
-            Have a question, feedback, or need help? We'd love to hear from you.
+            Get help with an order, payment, return, warranty claim or seller account.
           </p>
         </div>
 
@@ -98,7 +98,7 @@ function ContactPage() {
           ))}
         </div>
 
-        <section className="glass-panel p-6 mb-8 space-y-3"><h2 className="font-semibold">Complaints and payment support</h2><p className="text-sm text-muted-foreground">{supportTimeline}</p><p className="text-sm">Include your order or subscription reference and a description of the issue. Do not send passwords, card numbers, CVV or OTPs.</p><a className="underline" href={`mailto:${policyConfig.supportEmail}`}>{policyConfig.supportEmail}</a>{policyConfig.supportPhone && <a className="block underline" href={`tel:${policyConfig.supportPhone.replace(/[^+\d]/g, '')}`}>{policyConfig.supportPhone}</a>}{policyConfig.sameOperatingAddress === false && policyConfig.operatingAddress && <p className="text-sm">Operating address: {policyConfig.operatingAddress}</p>}<p className="text-sm"><Link className="underline" to="/refund-policy">Refund policy and processing times</Link> · <Link className="underline" to="/cancellation-policy">Cancellation policy</Link></p></section>
+        <section className="glass-panel p-6 mb-8 space-y-3"><h2 className="font-semibold">Complaints and case support</h2><p className="text-sm text-muted-foreground">{supportTimeline}</p><p className="text-sm">Include the order and payment, return, warranty, withdrawal or subscription reference, a clear description and relevant evidence. Never send passwords, full card numbers, CVV or OTPs.</p><a className="underline" href={`mailto:${policyConfig.supportEmail}`}>{policyConfig.supportEmail}</a>{policyConfig.supportPhone && <a className="block underline" href={`tel:${policyConfig.supportPhone.replace(/[^+\d]/g, '')}`}>{policyConfig.supportPhone}</a>}{policyConfig.sameOperatingAddress === false && policyConfig.operatingAddress && <p className="text-sm">Operating address: {policyConfig.operatingAddress}</p>}<nav aria-label="Support policies" className="flex flex-wrap gap-x-4 gap-y-2 text-sm"><Link className="underline" to="/refund-policy">Returns, refunds and warranties</Link><Link className="underline" to="/cancellation-policy">Cancellation Policy</Link><Link className="underline" to="/terms#payment-reviews">Payment reviews and seller funds</Link><Link className="underline" to="/faq">Frequently Asked Questions</Link></nav></section>
         {/* Contact Form */}
         <div className="glass-panel-strong p-6 sm:p-8">
           <h2 className="text-xl font-bold mb-6" style={{ color: 'hsl(var(--foreground))' }}>

@@ -217,7 +217,7 @@ export default function SignUpScreen({ navigation, route }) {
             </View>
           </GlassPanel>
 
-          <Text style={styles.footerText}>By creating an account, you agree to our Terms of Service and Privacy Policy</Text>
+          <Text style={styles.footerText}>By creating an account, you agree to our <Text accessibilityRole="link" style={{ color: palette.colors.primary }} onPress={() => navigation.navigate('TermsOfService')}>Terms and Conditions</Text>. Read our <Text accessibilityRole="link" style={{ color: palette.colors.primary }} onPress={() => navigation.navigate('PrivacyPolicy')}>Privacy Policy</Text>.</Text>
       </KeyboardAwareFormScrollView>
     </GlassBackground>
   );

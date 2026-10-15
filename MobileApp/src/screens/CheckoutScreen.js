@@ -70,6 +70,7 @@ import useSavedSafepayCards from '../hooks/useSavedSafepayCards';
 import useCheckoutQuote from '../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../utils/checkoutQuote';
 import { getOriginalPaymentRefundCopy, getSafepayCheckoutLabel } from '../utils/paymentPresentation';
+import CheckoutPolicyNotice from '../components/common/CheckoutPolicyNotice';
 import { getOrderItemOptionPairs } from '../utils/orderPresentation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
@@ -1483,12 +1484,7 @@ export default function CheckoutScreen({ navigation }) {
             <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{checkoutMoney(totalAmount)}</Text></View>
           </GlassPanel>
           <GlassPanel variant="card" style={styles.section}>
-            <Text style={styles.summaryLabel}>Before placing your order, review our policies. Standard approved product returns are credited to your Rozare Wallet after funding is verified, not automatically to your original payment method. Review each item’s return eligibility before purchase.</Text>
-            <Text style={[styles.summaryLabel, { marginTop: 10 }]}>For a buyer-requested cancellation before shipment, Safepay orders offer a full Wallet refund. Verified card payments may instead refund to the original card less a processing fee of 6.2% + PKR30 per checkout; partial cancellations use their allocated share. Original-payment refunds for Raast require support review and are not currently available in checkout. Wallet-paid cancellations refund fully to Wallet.</Text>
-            {[
-              ['Terms and Conditions', 'TermsOfService'], ['Shipping and Delivery', 'ShippingPolicy'],
-              ['Return and Refund', 'RefundPolicy'], ['Cancellation', 'CancellationPolicy'], ['Privacy Policy', 'PrivacyPolicy'],
-            ].map(([label, screen]) => <TouchableOpacity key={screen} accessibilityRole="link" style={{ paddingVertical: 10 }} onPress={() => navigation.navigate(screen)}><Text style={{ color: palette.colors.primary }}>{label} →</Text></TouchableOpacity>)}
+            <CheckoutPolicyNotice onOpenPolicy={screen => navigation.navigate(screen)} />
           </GlassPanel>
         </KeyboardAwareFormScrollView>
 

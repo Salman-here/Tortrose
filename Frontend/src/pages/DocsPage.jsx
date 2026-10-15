@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
 import { formatUsdCents, getSubscriptionPricing } from '../utils/subscriptionPricing';
+import { commerceFaqById, commerceGuides } from '../../../MobileApp/src/content/commerceHelpContent';
 
 // On the docs subdomain, internal app links must hop to the main domain.
 const mainHref = (path) => {
-  if (typeof window === 'undefined') return path;
+  if (typeof window === 'undefined') return `https://rozare.com${path}`;
   const host = window.location.hostname;
   if (host.startsWith('docs.')) {
     return `${window.location.protocol}//${host.replace(/^docs\./, '')}${path}`;
@@ -37,8 +38,10 @@ const SECTIONS = [
   { id: 'whatsapp-integration', title: 'Manage Store via WhatsApp', icon: Smartphone },
   { id: 'subscription-plans', title: 'Subscription Plans', icon: Award },
   { id: 'payments', title: 'Payments & Checkout', icon: CreditCard },
+  { id: 'seller-money', title: 'Seller Payments & Analytics', icon: BarChart3 },
   { id: 'shipping', title: 'Shipping & Delivery', icon: Truck },
   { id: 'orders-returns', title: 'Orders, Returns & Refunds', icon: RefreshCw },
+  { id: 'warranties', title: 'Warranty Claims & Appeals', icon: Shield },
   { id: 'coupons-discounts', title: 'Coupons & Discounts', icon: Ticket },
   { id: 'trust-safety', title: 'Trust & Safety', icon: Shield },
   { id: 'store-verification', title: 'Store Verification', icon: CheckCircle },
@@ -356,7 +359,7 @@ function DocsPage() {
                   <li><strong>Smart product search</strong> — Understands natural language and slang. Say "something cosy for winter" or "chapal" and it finds matching items.</li>
                   <li><strong>Style & outfit advice</strong> — Personalized fashion recommendations, color suggestions, and outfit pairings.</li>
                   <li><strong>Cart management</strong> — "Add this to my cart", "Remove the shoes", "Increase quantity to 3".</li>
-                  <li><strong>One-chat ordering</strong> — Confirm address and payment in chat; the AI places the order for you.</li>
+                  <li><strong>Assisted ordering</strong> — Review your items, address and payment choice in chat, then complete any required secure payment approval.</li>
                   <li><strong>Order tracking</strong> — "Where is my order?", "Show my last 5 orders", "Cancel order ORD-1234".</li>
                   <li><strong>Coupon discovery</strong> — Finds active coupons and validates them automatically against your cart.</li>
                   <li><strong>Wishlist</strong> — "Save this for later" or "Show my wishlist" through chat.</li>
@@ -434,13 +437,13 @@ function DocsPage() {
                   'Open the cart, review items, then go to checkout.',
                   'Confirm or edit the shipping address. Apply a coupon if you have one.',
                   'Choose Cash on Delivery, an available Safepay card or eligible PKR Raast method, or Rozare Wallet. The full order uses one payment method.',
-                  'Place the order. You will receive a confirmation email and notification.',
+                  'Complete any required payment or COD confirmation, then check the verified order status. Supported updates are also sent through your available notification channels.',
                 ]} />
 
                 <h3>Order tracking</h3>
                 <ul>
                   <li><strong>Via AI</strong> — "Where is my last order?" or "Show all my orders".</li>
-                  <li><strong>Via website</strong> — Visit /track-order or your dashboard.</li>
+                  <li><strong>Via website</strong> — Open <a href={mainHref('/track-order')}>Track Order</a> or My Orders.</li>
                   <li><strong>Statuses</strong> — Pending → Confirmed → Processing → Shipped → Delivered.</li>
                 </ul>
               </DocSection>
@@ -453,6 +456,7 @@ function DocsPage() {
                   <li>Increase or decrease quantity directly from the cart, the product card, or the product detail page.</li>
                   <li>Guests can build a cart locally; signing in syncs it to your account automatically.</li>
                   <li>Cart respects per-product stock limits. You'll be notified if a product runs out before checkout.</li>
+                  <li>Add each required colour, size or other option combination as its own cart line. Use Add another variant for a different combination, or Edit variant to change an existing line. If an edit matches a variant already in the cart, its quantities are merged rather than duplicated.</li>
                 </ul>
 
                 <h3>Wishlist</h3>
@@ -481,7 +485,7 @@ function DocsPage() {
                 <FeatureGrid features={[
                   { icon: Store, title: 'Online Storefront', desc: 'A fully customizable storefront with your own slug, optional custom subdomain, logo, banner, description, and social links.' },
                   { icon: Bot, title: 'AI Business Partner', desc: 'A built-in AI assistant that adds products, updates stock, runs analytics, manages orders, creates coupons, and gives growth advice.' },
-                  { icon: CreditCard, title: 'Seller Payments', desc: 'A Payments tab for online balance, COD revenue, total revenue, estimated revenue, bank details, and withdrawal requests.' },
+                  { icon: CreditCard, title: 'Seller Payments', desc: 'Current online funds, saved payout details and withdrawal history, with historical revenue in Analytics.' },
                   { icon: BarChart3, title: 'Real-Time Analytics', desc: 'Revenue, top products, order trends, customer insights, low-stock alerts and period comparisons.' },
                   { icon: Smartphone, title: 'WhatsApp Management', desc: 'Manage key store tasks from WhatsApp by chatting with AI. Get instant alerts on every new order.' },
                   { icon: Ticket, title: 'Coupons & Discounts', desc: 'Percent or fixed-amount coupons with min order amount, max uses, expiry, and per-user limits.' },
@@ -492,7 +496,7 @@ function DocsPage() {
                 <ul>
                   <li>A valid email address.</li>
                   <li>An active store (created during signup) — required before listing products.</li>
-                  <li>No upfront fees during the 15-day free trial.</li>
+                  <li>No subscription charge during the free trial. Online-order processing deductions still apply.</li>
                   <li>Optional: Apply for verification once your store is live.</li>
                 </ul>
               </DocSection>
@@ -507,7 +511,7 @@ function DocsPage() {
                   <li><strong>Overview</strong> — Live revenue, orders, products, store views, trust count, low-stock alerts and pending order badges.</li>
                   <li><strong>Products</strong> — Add, edit, delete, and bulk-update products. Includes bulk discount and bulk price tools.</li>
                   <li><strong>Orders</strong> — Every order containing your products. Update status, view full order detail, contact the customer.</li>
-                  <li><strong>Payments</strong> — Link your bank account, track online withdrawable balance, COD delivered revenue, total revenue, estimated revenue, and withdrawal requests.</li>
+                  <li><strong>Payments</strong> — Manage payout details, available online funds, holds and withdrawal requests. View historical revenue in Analytics.</li>
                   <li><strong>Coupons</strong> — Create, toggle, edit, and delete discount coupons.</li>
                   <li><strong>Analytics</strong> — Revenue charts, order trends, top products, status pie chart, growth metrics with period comparison.</li>
                   <li><strong>Store Settings</strong> — Update store name, description, logo, banner, payment options, return &amp; warranty policy, social links.</li>
@@ -688,45 +692,12 @@ function DocsPage() {
 
               {/* PAYMENTS */}
               <DocSection id="payments" title="Payments & Checkout" icon={CreditCard}>
-                <h3>Payment methods</h3>
-                <ul>
-                  <li><strong>Safepay</strong> — Secure card payments and Raast when offered for an eligible PKR checkout. Raast requires a supported Pakistani banking or wallet app. The secure form shows available methods; saved-card setup and seller subscriptions remain card-only.</li>
-                  <li><strong>Rozare Wallet</strong> — Pay instantly from a sufficient Wallet balance in the same currency as the order. Wallet balances are never converted automatically.</li>
-                  <li><strong>Cash on Delivery (COD)</strong> — Pay when your order arrives, only when every seller in your cart allows COD.</li>
-                </ul>
-                <p>Sellers control COD from Seller Dashboard → Store Settings → Payment Options. Stores default to both online payment and COD. A seller can switch to online payment only, which means COD is unavailable for that seller's products.</p>
-                <InfoBox type="info" title="Mixed-seller carts">
-                  A checkout has one payment method for the full order. If your cart contains even one seller that accepts online payment only, Cash on Delivery is disabled for the whole checkout. Pay by an available Safepay method or with a sufficient same-currency Rozare Wallet balance, or remove the online-only seller items to use COD for the remaining sellers.
-                </InfoBox>
+                <CommerceGuide guide={commerceGuides.payments} />
+                <p>Sellers can allow COD or choose online-only payments in Store Settings. For earnings, deductions and withdrawals, see <a href="#seller-money">Seller Payments and Analytics</a>.</p>
+              </DocSection>
 
-                <h3>Rozare Wallet</h3>
-                <ul>
-                  <li>Open User Dashboard → Wallet to view balances and transaction history or add balance through Safepay card or Raast when offered for an eligible PKR top-up.</li>
-                  <li>USD, PKR, EUR, and GBP balances are kept separately. An order can use only the balance matching its checkout currency.</li>
-                  <li>Wallet payment is atomic: the order is confirmed and stock is committed only when the full amount is successfully debited.</li>
-                  <li>Approved online-order return refunds use the original held order funds; COD returns require verified seller funding. Refunds credit the Wallet in the saved order currency.</li>
-                </ul>
-
-                <h3>Two checkout experiences</h3>
-                <ul>
-                  <li><strong>AI checkout</strong> — Tell the AI to place your order; it confirms address and payment in chat.</li>
-                  <li><strong>Traditional checkout</strong> — Standard form-based flow at <code>/checkout</code> with smart auto-fill from your saved address.</li>
-                </ul>
-
-                <h3>Tax &amp; shipping</h3>
-                <p>Tax is calculated at checkout based on platform settings. Shipping costs come from the seller's chosen shipping method. Both are clearly displayed before you confirm.</p>
-
-                <h3>For sellers: receiving payments</h3>
-                <p>Sellers do not need to configure online payments for their stores. Rozare provides Safepay card, eligible PKR Raast, and Wallet checkout. Sellers only choose whether COD is also allowed. Paid order revenue is tracked in Seller Dashboard - Payments.</p>
-                <ul>
-                  <li><strong>Online balances</strong> - Safepay- and Wallet-paid earnings remain held after delivery until the saved return window ends; timely unresolved returns retain their affected funds. Released earnings remain separately withdrawable in the seller currency frozen on each order. Changing store currency does not convert existing balances. Refunds, payment-risk holds and withdrawal reservations affect availability.</li>
-                  <li><strong>COD revenue</strong> - Cash on Delivery payments and shipping are handled by the seller directly. Rozare shows delivered COD revenue for reporting, but it is not withdrawn through Rozare.</li>
-                  <li><strong>Estimated revenue</strong> - Delivered revenue plus pending Safepay and COD order revenue, so sellers can see what may be coming next.</li>
-                  <li><strong>Withdrawals</strong> - Choose a native balance and a bank account accepting the same currency. Minimums are USD 5, PKR 2,000, EUR 5 and GBP 5. No balance conversion is offered. Requests reserve funds once; admins approve, transfer manually, then record payment evidence. An uncertain transfer stays reserved for review.</li>
-                  <li><strong>Historical revenue</strong> - Charts and sales reports use each order's saved exchange rates when shown in another store currency. Reporting equivalents are not additional withdrawable money.</li>
-                  <li><strong>Store currency changes</strong> - Review the product count and three examples, shipping fees and coupon money conversions at one rate snapshot. Confirmation converts and saves these together; percentage discounts and admin tax settings stay unchanged. A completed change starts a 60-day waiting period. Existing orders and balances keep their original currencies.</li>
-                  <li><strong>Store visibility</strong> - During seller setup, choose Global, Country, State, City or Town before WhatsApp verification. Your store country is selected by default. Choose Global only if you can ship globally; Global stores appear in Global shopping. You can change visibility later in Store Settings without changing the store address or currency.</li>
-                </ul>
+              <DocSection id="seller-money" title="Seller Payments & Analytics" icon={BarChart3}>
+                <CommerceGuide guide={commerceGuides.sellerMoney} />
               </DocSection>
 
               {/* SHIPPING */}
@@ -764,36 +735,13 @@ function DocsPage() {
                     </React.Fragment>
                   ))}
                 </div>
-                <p>You'll get a notification at every status change — in-app, by email, and via WhatsApp if connected.</p>
+                <p>Track each seller’s items in My Orders. Supported updates appear through your enabled notification channels; the recorded order status is the reference for progress.</p>
+                <CommerceGuide guide={commerceGuides.returns} />
+                <p>The policy saved with each purchased item sets its return eligibility and deadline. Contact <a href={mainHref('/contact')}>support</a> if you disagree with a decision or cannot access an eligible action.</p>
+              </DocSection>
 
-                <h3>Cancelling an order</h3>
-                <ul>
-                  <li><strong>Via AI</strong> — "Cancel my order ORD-1234".</li>
-                  <li><strong>Via dashboard</strong> — Open the order and click "Cancel" while still cancellable.</li>
-                  <li>Cancel before shipment, including paid orders. Cancel each unshipped store portion independently if another store already shipped. COD moves no money. Wallet-paid and Raast-paid cancellations refund fully to Rozare Wallet without a buyer processing deduction; Raast cancellations do not offer an automatic refund to the original bank account. Card-paid cancellations offer a full Wallet refund or an original-card refund less the displayed processing fee. New original-card cancellation refunds use 6.2% + PKR30 once per checkout, shared proportionally across sellers. Seller approval is not required. See the <a href="https://rozare.com/cancellation-policy">Cancellation Policy</a>.</li>
-                  <li>Seller online earnings from Safepay card, Raast and Wallet orders use the fixed processing fee + tax rule once per checkout. Payments separates gross earnings, combined deductions, pending net funds and net withdrawable balance. Sales analytics remain gross; withdrawing does not charge the fee again.</li>
-                </ul>
-
-                <h3>Seller-specific returns</h3>
-                <ul>
-                  <li>Each seller configures whether returns are allowed, the return window after delivery, and whether the resolution is a Rozare Wallet refund or replacement. Products can override the store default.</li>
-                  <li>The policy is saved on each order item at checkout, so a later Store Settings change does not remove the buyer's purchased return terms.</li>
-                  <li>After a seller's portion is delivered, eligible items show Request Return in the buyer's order details until that item's deadline.</li>
-                  <li>For a multi-seller order, only the eligible items belonging to a seller who allows returns can be selected. Each seller receives and manages only their own request.</li>
-                  <li>The buyer chooses quantities and writes a reason. Duplicate or excess return quantities are rejected server-side.</li>
-                </ul>
-
-                <h3>Return tracking and refunds</h3>
-                <p>Read the <a href="https://rozare.com/refund-policy">Return and Refund Policy</a> for the refund destination, processing turnaround time and complaint contacts.</p>
-                <p>Return requests move through approval, pickup, transit to the seller, receipt, and seller review. Every seller status change sends the buyer an in-app, push, and WhatsApp update when those channels are available.</p>
-                <p>Safepay and Wallet order earnings remain pending after delivery until each saved return window ends. A timely open return keeps its affected funds held until resolution. An accepted online-order return refunds the buyer Wallet from the original held funds without another seller payment. COD returns still use seller earnings or verified Safepay funding. A failed or mismatched payment never credits the Wallet. Replacement-only returns complete without a money transfer.</p>
-
-                <InfoBox type="info" title="Refund safety">
-                  A return request does not itself create money. Rozare caps refunds to the selected seller's remaining item, tax, shipping, and discount allocation, prevents duplicate quantities, and uses idempotent Wallet transactions so retries cannot credit the buyer twice.
-                </InfoBox>
-
-                <h3>Complaint system</h3>
-                <p>If something goes wrong, file a complaint and the Rozare team will help mediate between you and the seller. Categories include product issues, delivery problems, refund requests, and seller disputes.</p>
+              <DocSection id="warranties" title="Warranty Claims & Appeals" icon={Shield}>
+                <CommerceGuide guide={commerceGuides.warranties} />
               </DocSection>
 
               {/* COUPONS */}
@@ -875,13 +823,13 @@ function DocsPage() {
 
               {/* MOBILE APP */}
               <DocSection id="mobile-app" title="Rozare Mobile App" icon={Smartphone}>
-                <p>The Rozare mobile app experience (iOS &amp; Android, built with React Native / Expo) brings marketplace and seller dashboard workflows to your phone.</p>
+                <p>Rozare’s mobile app brings shopping, order tracking and seller tools to compatible iOS and Android devices. Use official download links where available.</p>
                 <h3>Mobile features</h3>
                 <ul>
                   <li>Browse products, place orders, and chat with the AI from your phone.</li>
                   <li>Liquid-glass design with light and dark themes that match your system preference.</li>
                   <li>Push notifications for orders, deliveries, and chat replies.</li>
-                  <li>Pull-to-refresh on every data screen.</li>
+                  <li>Refresh supported screens to check the latest account and order information.</li>
                   <li>Onboarding walkthrough on first launch.</li>
                   <li>Voice search and voice mode in chat.</li>
                   <li>Sellers get quick-action grids on the home screen, store trust controls, and bulk operations.</li>
@@ -895,6 +843,9 @@ function DocsPage() {
                   <li><strong>Conversational AI in your language</strong> — The AI understands English, modern Roman Urdu, and common product slang.</li>
                   <li><strong>Local checkout</strong> — Prices are shown in your selected currency. Safepay checkout offers supported cards and Raast for eligible PKR payments.</li>
                 </ul>
+                <h3>Seller currency and store visibility</h3>
+                <p>Review the currency-change quote in Seller Dashboard before confirming. It converts the quoted product prices, shipping charges and fixed coupon amounts together; percentage discounts and platform tax settings stay unchanged. A completed change starts the displayed 60-day waiting period. Existing orders and earned balances keep their saved currencies.</p>
+                <p>Store visibility controls discovery by Global, Country, State, City or Town. Choose an area you can serve. Changing visibility in Store Settings does not change the store address, currency or delivery commitments.</p>
               </DocSection>
 
               {/* TROUBLESHOOTING */}
@@ -910,20 +861,17 @@ function DocsPage() {
                 </ul>
 
                 <h3>Contact support</h3>
-                <p>Visit <a href={mainHref('/contact')} style={{ color: 'hsl(220, 70%, 65%)' }}>/contact</a> to email support, or open the in-app chatbot and say "I need help with..." so the AI can guide you and collect details for supported complaint flows.</p>
+                <p><a href={mainHref('/contact')} style={{ color: 'hsl(220, 70%, 65%)' }}>Contact support</a> with the order, return, warranty or payment reference. AI can help with supported tasks, but do not share passwords, full card numbers, CVV or OTPs in chat.</p>
               </DocSection>
 
               {/* FAQ */}
               <DocSection id="faq" title="Frequently Asked Questions" icon={HelpCircle}>
-                <FAQItem q="Is Rozare free for shoppers?" a="Yes. Shopping is completely free. You only pay for the products you buy. There are no membership fees." />
+                <FAQItem q="Is there a buyer membership fee?" a="There is no buyer membership fee. Review your checkout total for products, delivery, tax and discounts, and the policies for any applicable cancellation deduction." />
                 <FAQItem q="How much does it cost to sell on Rozare?" a={`Every new seller gets a ${trialDays}-day free trial with up to ${trialProductLimit} product listings. Starter is ${formatUsdCents(pricing.starter.standardAmountCents)}/month after a ${pricing.starter.advertisedDiscountPercent}% launch discount and includes one ${pricing.starter.freePeriodDays}-day intro when eligible. Elite is ${formatUsdCents(pricing.elite.standardAmountCents)}/month after a ${pricing.elite.advertisedDiscountPercent}% launch discount and includes one ${pricing.elite.freePeriodDays}-day intro when eligible. The first ${founderMaxRedemptions} completed ${founderCode} Checkouts can lock an extra ${founderDiscountPercent}% founder discount: ${formatUsdCents(pricing.starter.founderAmountCents)} Starter or ${formatUsdCents(pricing.elite.founderAmountCents)} Elite while the subscription stays uninterrupted. A Checkout reservation lasts ${founderReservationMinutes} minutes. Meta ads add ${formatUsdCents(pricing.metaAdsAddonCents)}/month.`} />
                 <FAQItem q="Can I manage my store from WhatsApp?" a="Yes. Once you connect your WhatsApp number in seller settings, you can chat with the Rozare AI to handle supported tasks such as adding products, updating stock, managing orders, running discounts, and checking analytics. You can also get instant notifications for new orders." />
-                <FAQItem q="Does Rozare have a mobile app?" a="Rozare includes a React Native / Expo mobile app experience for iOS and Android with shopping, selling, AI chat, push notifications, voice search, and the same core marketplace workflows." />
+                <FAQItem q="Does Rozare have a mobile app?" a="Rozare’s mobile experience supports shopping, seller tools, AI assistance, order tracking and eligible notifications on compatible iOS and Android builds. Use official download links where available." />
                 <FAQItem q="How does the AI know about my store?" a="The AI calls secure server-side tools that read and write only your store's data. Other sellers cannot see your data, and you cannot see theirs." />
-                <FAQItem q="Is my data safe?" a="Yes. All traffic is encrypted (HTTPS). Authentication uses JWT tokens. Personal data is never sold or shared with third parties outside what's required to fulfil your order." />
-                <FAQItem q="What payment methods are available?" a="Checkout supports Safepay card, Raast when offered for eligible PKR checkout, Rozare Wallet, and Cash on Delivery. One order uses one payment method. COD is available only when every seller allows it; otherwise use an available Safepay method or a sufficient same-currency Wallet balance." />
-                <FAQItem q="How do returns and refunds work?" a="Return eligibility is seller- and item-specific and opens after that seller portion is delivered. Request it from order details within the saved policy window. The seller tracks pickup and review. Approved Safepay and Wallet order returns credit your Rozare Wallet from the original held order funds; COD returns require verified funding from seller earnings or Safepay." />
-                <FAQItem q="How do sellers receive Safepay payments?" a="Sellers add their bank details in Seller Dashboard - Payments. Safepay-paid order revenue is held after delivery until the saved return window ends, and a timely unresolved return retains its affected funds. Released earnings can be requested for withdrawal and admin review. COD payments are handled by the seller directly." />
+                {['privacy', 'payment-methods', 'cards', 'return-request', 'return-refund', 'replacement', 'warranty', 'warranty-appeal', 'seller-fees', 'withdrawals', 'analytics', 'payment-review'].map(id => <FAQItem key={id} q={commerceFaqById[id].q} a={commerceFaqById[id].a} />)}
                 <FAQItem q="What's the difference between Starter and Elite?" a={`Both paid plans include unlimited listings, unlimited seller AI chat, a custom subdomain, WhatsApp store management and core marketplace features. Starter supports ${starterFeaturedLimit} featured products and includes the growth-tool bundle for ${starterBonusMonths} months. Elite supports ${eliteFeaturedLimit} featured products, keeps those growth tools permanently while active, and adds custom themes plus Rozare-run TikTok ads. Meta ads can be added to Elite for ${formatUsdCents(pricing.metaAdsAddonCents)}/month.`} />
                 <FAQItem q={`What happens after my ${trialDays}-day free trial ends?`} a="If you don't subscribe, your store and products are temporarily hidden until you subscribe — your data is preserved. Subscribe to Starter or Elite to reactivate everything, with the account's one-time introductory period applied only if it is still eligible." />
                 <FAQItem q="Can I cancel anytime?" a="Yes. Cancel from Seller Dashboard → Subscription. Your store stays active until the end of your current billing period." />
@@ -956,6 +904,10 @@ function DocsPage() {
 }
 
 // ─── Helper Components ───
+
+function CommerceGuide({ guide }) {
+  return <>{guide.topics.map(topic => <React.Fragment key={topic.title}><h3>{topic.title}</h3><p>{topic.text}</p></React.Fragment>)}<nav aria-label={`${guide.title} policies`} className="flex flex-wrap gap-x-5 gap-y-2 text-sm my-4">{guide.links.map(link => <a key={link.path} href={mainHref(link.path)}>{link.label}</a>)}</nav></>;
+}
 
 function DocSection({ id, title, icon: Icon, children }) {
   return (

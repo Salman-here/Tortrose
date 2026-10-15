@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
+import { checkoutPolicyNotice } from '../../../../MobileApp/src/content/commercePolicies';
 export default function CheckoutPolicyLinks() {
-  return <aside className="text-xs text-muted-foreground leading-relaxed space-y-2 my-4">
-    <p>Before placing your order, review the <Link className="underline" to="/terms">Terms and Conditions</Link>, <Link className="underline" to="/shipping-policy">Shipping and Delivery</Link>, <Link className="underline" to="/refund-policy">Return and Refund</Link>, <Link className="underline" to="/cancellation-policy">Cancellation</Link> and <Link className="underline" to="/privacy">Privacy</Link> policies.</p>
-    <p>Standard approved product returns are credited to your Rozare Wallet after funding is verified; they are not automatically refunded to the original payment method. Review the item’s return eligibility before purchase.</p>
-    <p>For a buyer-requested cancellation before shipment, Safepay orders offer a full Wallet refund. Verified card payments may instead refund to the original card less a processing fee of 6.2% + PKR30 per checkout; a partial cancellation uses its allocated share. Original-payment refunds for Raast require support review and are not currently available in checkout. Wallet-paid cancellations refund fully to Wallet.</p>
+  return <aside aria-label="Checkout policies" className="text-xs text-muted-foreground leading-relaxed space-y-2 my-4">
+    <p>{checkoutPolicyNotice.introduction}{' '}<Link className="underline" to={checkoutPolicyNotice.terms.path}>{checkoutPolicyNotice.terms.label}</Link>.</p>
+    <nav aria-label="Related checkout policies" className="flex flex-wrap gap-x-4 gap-y-2">
+      {checkoutPolicyNotice.links.map(link => <Link key={link.path} className="underline" to={link.path}>{link.label}</Link>)}
+    </nav>
   </aside>;
 }
