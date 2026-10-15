@@ -21,6 +21,7 @@ import {
 } from "../utils/guestCart";
 import { validateProductSelection } from "../utils/productOptions";
 import { replaceGuestVariant } from '../utils/editCartVariant';
+import { parseGuestCartCookie, serializeGuestCartCookie } from '../utils/guestCartCookie';
 
 const GlobalContext = createContext();
 
@@ -40,7 +41,13 @@ const getGuestCart = () => {
     let cookieError = null;
     if (cookieData) {
         try {
-            return parseStoredGuestCart(cookieData);
+            const shared = parseGuestCartCookie(cookieData);
+            const local = localStorage.getItem(GUEST_CART_KEY);
+            if (local) {
+                const rich = parseStoredGuestCart(local);
+                if (serializeGuestCartCookie(rich) === cookieData) return rich;
+            }
+            return shared;
         } catch (error) {
             cookieError = error;
         }
@@ -59,12 +66,18 @@ const getGuestCart = () => {
 const saveGuestCart = (cart) => {
     const normalized = normalizeGuestCart(cart);
     const cartData = serializeGuestCart(normalized);
-    setCrossDomainCookie(GUEST_CART_COOKIE, cartData, 30);
+    const cookieData = serializeGuestCartCookie(normalized);
+    const previous = localStorage.getItem(GUEST_CART_KEY);
     localStorage.setItem(GUEST_CART_KEY, cartData);
     if (localStorage.getItem(GUEST_CART_KEY) !== cartData) {
         const error = new Error('The guest cart could not be persisted safely.');
         error.code = 'CART_PRESENTATION_DATA_INVALID';
         throw error;
+    }
+    setCrossDomainCookie(GUEST_CART_COOKIE, cookieData, 30);
+    if (getCookie(GUEST_CART_COOKIE) !== cookieData) {
+        if (previous === null) localStorage.removeItem(GUEST_CART_KEY); else localStorage.setItem(GUEST_CART_KEY, previous);
+        throw new Error('Your browser could not save the shared guest bag. Allow site cookies or sign in, then retry.');
     }
     return normalized;
 };
