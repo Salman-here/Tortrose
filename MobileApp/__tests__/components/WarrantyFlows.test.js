@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import BuyerWarrantySection from '../../src/components/BuyerWarrantySection';
 import SellerAfterSalesActionModal from '../../src/components/SellerAfterSalesActionModal';
+import ReturnPhotoPicker from '../../src/components/ReturnPhotoPicker';
 import api from '../../src/config/api';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -91,4 +92,32 @@ test('expired rejected original claim still offers an appeal, with its original 
   expect(screen.getByText('This appeal keeps the original claim and warranty deadline.')).toBeTruthy();
   expect(screen.queryByLabelText('Claim quantity')).toBeNull();
   expect(screen.getByText('Add photos (1/6)')).toBeTruthy();
+});
+
+test.each(['full_refund', 'replacement_only'])('ordinary %s return uses photo review and the purchased resolution before collection', async refundType => {
+  const request = { ...claim, kind: 'return', returnReviewVersion: 1, warrantySnapshot: undefined, policySnapshot: { ...claim.policySnapshot, refundType } };
+  const onSuccess = jest.fn(), onClose = jest.fn();
+  const reason = 'The attached photos show the defect. We will arrange collection.';
+  api.post.mockResolvedValue({ data: { success: true, returnRequest: { ...request, status: 'approved', resolution: refundType === 'replacement_only' ? 'replacement' : 'refund', decisionReason: reason } } });
+  const screen = render(<SellerAfterSalesActionModal action={{ type: 'decision', status: 'approved', request }} kind="return" onClose={onClose} onSuccess={onSuccess} />);
+  expect(screen.getByLabelText('View return photo 1')).toBeTruthy();
+  expect(screen.getByText('Purchased return resolution')).toBeTruthy();
+  expect(screen.queryByText('Planned resolution')).toBeNull();
+  fireEvent.press(screen.getByText('Confirm decision')); expect(api.post).not.toHaveBeenCalled();
+  fireEvent.changeText(screen.getByLabelText('Decision reason (required)'), reason);
+  await act(async () => { fireEvent.press(screen.getByText('Confirm decision')); });
+  expect(api.post).toHaveBeenCalledWith(`/api/returns/${ids.claim}/decision`, expect.objectContaining({ outcome: 'approve', reason, expectedUpdatedAt: at }));
+  expect(onSuccess).toHaveBeenCalledTimes(1);
+});
+
+test('ordinary return photo picker uploads actual selected files through its separate protected endpoint', async () => {
+  ImagePicker.requestMediaLibraryPermissionsAsync.mockResolvedValue({ granted: true });
+  ImagePicker.launchImageLibraryAsync.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///qa-return.png', fileName: 'qa-return.png', mimeType: 'image/png', fileSize: 100 }] });
+  api.post.mockResolvedValue({ data: { evidence: { _id: ids.photo, url: 'https://example.com/return.png' } } });
+  const changed = jest.fn(), busy = jest.fn();
+  const screen = render(<ReturnPhotoPicker orderId={ids.order} photos={[]} onChange={changed} onBusyChange={busy} />);
+  await act(async () => { fireEvent.press(screen.getByLabelText('Add return photos (0/6)')); });
+  expect(api.post).toHaveBeenCalledWith('/api/returns/evidence', expect.any(FormData), expect.objectContaining({ timeout: 60000 }));
+  expect(changed.mock.calls[0][0]([])).toEqual([{ _id: ids.photo, url: 'https://example.com/return.png' }]);
+  expect(busy).toHaveBeenCalledWith(true); expect(busy).toHaveBeenLastCalledWith(false);
 });

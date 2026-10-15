@@ -17,6 +17,14 @@ jest.mock('../../src/components/common/GlassPanel', () => {
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Icon' }));
 jest.mock('expo-image', () => ({ Image: 'Image' }));
+jest.mock('expo-image-picker', () => ({ requestMediaLibraryPermissionsAsync: jest.fn(), launchImageLibraryAsync: jest.fn() }));
+// These refresh tests exercise the parent draft/transaction boundary. The real
+// native upload component and ownership rules have their own focused tests.
+jest.mock('../../src/components/ReturnPhotoPicker', () => {
+  const ReactModule = require('react');
+  const { TouchableOpacity: Button, Text: Label } = require('react-native');
+  return ({ onChange }) => ReactModule.createElement(Button, { onPress: () => onChange([{ _id: '64b000000000000000000199', url: 'https://example.com/return.png' }]) }, ReactModule.createElement(Label, null, 'Attach QA return photo'));
+});
 
 const IDS = {
   order: '64b000000000000000000101', item: '64b000000000000000000102',
@@ -211,6 +219,7 @@ test('quiet success and network failures preserve the open form, quantity, reaso
   expect(Feedback.show).not.toHaveBeenCalled();
   // Submitting still uses the unchanged selected reason and draft quantity.
   api.post.mockReturnValue(new Promise(() => {}));
+  fireEvent.press(screen.getByText('Attach QA return photo'));
   fireEvent.press(screen.getByText('Submit Return Request'));
   expect(api.post).toHaveBeenCalledWith('/api/returns', expect.objectContaining({
     reasonCategory: 'changed_mind',
@@ -243,6 +252,7 @@ test.each(['financial', 'pagination'])('unverified %s responses disable actions 
   expect(screen.getByText('Retry return information before submitting.')).toBeTruthy();
   expect(screen.queryByText('Return requested')).toBeNull();
   expect(screen.queryByText('Returned - wallet refund issued')).toBeNull();
+  fireEvent.press(screen.getByText('Attach QA return photo'));
   fireEvent.press(screen.getByText('Submit Return Request'));
   expect(api.post).not.toHaveBeenCalled();
   expect(Feedback.show).not.toHaveBeenCalled();
@@ -253,6 +263,7 @@ test.each(['financial', 'pagination'])('unverified %s responses disable actions 
   expect(screen.getByText('1')).toBeTruthy();
   expect(screen.queryByText('Retry return information before submitting.')).toBeNull();
   api.post.mockReturnValue(new Promise(() => {}));
+  fireEvent.press(screen.getByText('Attach QA return photo'));
   fireEvent.press(screen.getByText('Submit Return Request'));
   expect(api.post).toHaveBeenCalledWith('/api/returns', expect.objectContaining({
     reasonDetails: 'Keep this draft until verified return information is available.',
@@ -316,6 +327,7 @@ test('latest verified eligibility disables an outdated quantity while preserving
   expect(screen.getByText('1')).toBeTruthy();
   expect(screen.getByDisplayValue('The draft should remain when the last eligible item was requested elsewhere.')).toBeTruthy();
   expect(screen.getByText('Return eligibility changed. Review the available items before submitting.')).toBeTruthy();
+  fireEvent.press(screen.getByText('Attach QA return photo'));
   fireEvent.press(screen.getByText('Submit Return Request'));
   expect(api.post).not.toHaveBeenCalled();
 });
@@ -403,6 +415,7 @@ test('a known same-store conflict refreshes the recorded request without generic
   api.post.mockRejectedValueOnce({ response: { status: 409, data: {
     code: 'RETURN_REQUEST_ALREADY_OPEN', msg: 'Finish return RET-1001-A1B2C3 before opening another return for this seller.',
   } } });
+  fireEvent.press(screen.getByText('Attach QA return photo'));
   fireEvent.press(screen.getByText('Submit Return Request'));
   await flush();
   expect(api.post).toHaveBeenCalledTimes(1);
@@ -423,6 +436,7 @@ test('a failed creation revalidates and retries the same request key without los
   fireEvent.press(screen.UNSAFE_getByProps({ name: 'add' }));
   fireEvent.changeText(screen.getByPlaceholderText('Describe the issue clearly for the seller.'), 'The pending request must use the same key after a network failure.');
   api.post.mockRejectedValueOnce(new Error('offline'));
+  fireEvent.press(screen.getByText('Attach QA return photo'));
   fireEvent.press(screen.getByText('Submit Return Request'));
   await flush();
   const firstBody = api.post.mock.calls[0][1];
@@ -432,6 +446,7 @@ test('a failed creation revalidates and retries the same request key without los
   expect(screen.getByDisplayValue('The pending request must use the same key after a network failure.')).toBeTruthy();
   expect(screen.getByText('1')).toBeTruthy();
   api.post.mockReturnValueOnce(new Promise(() => {}));
+  fireEvent.press(screen.getByText('Attach QA return photo'));
   fireEvent.press(screen.getByText('Submit Return Request'));
   expect(api.post).toHaveBeenCalledTimes(2);
   expect(api.post.mock.calls[1][1]).toEqual(firstBody);

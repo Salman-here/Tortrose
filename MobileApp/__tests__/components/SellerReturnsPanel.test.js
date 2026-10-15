@@ -152,7 +152,7 @@ describe('SellerReturnsPanel', () => {
     try {
       const screen = render(<SellerReturnsPanel />);
       await act(async () => { jest.runOnlyPendingTimers(); await Promise.resolve(); });
-      fireEvent.press(screen.getByText('Accept return'));
+      fireEvent.press(screen.getByText('Issue approved refund'));
       const choices = dialog.mock.calls.at(-1)[2];
       await act(async () => { await choices.find(choice => choice.text === 'Seller Balance').onPress(); });
       expect(api.post).toHaveBeenCalledWith(expect.stringContaining('/accept'), expect.objectContaining({ fundingSource: 'seller_balance', platform: 'mobile', expectedRefundAmount: 230, expectedRefundCurrency: 'PKR' }));
@@ -228,7 +228,7 @@ describe('SellerReturnsPanel', () => {
     expect(screen.getByText('Financial snapshot unavailable')).toBeTruthy();
     expect(screen.getByText('Amount unavailable')).toBeTruthy();
     expect(screen.getByLabelText('Retry loading returns')).toBeTruthy();
-    expect(screen.queryByLabelText('Accept return')).toBeNull();
+    expect(screen.queryByLabelText('Issue approved refund')).toBeNull();
     expect(screen.queryByLabelText('Reject return')).toBeNull();
     expect(mockFormatAmount).not.toHaveBeenCalled();
   });
@@ -243,7 +243,7 @@ describe('SellerReturnsPanel', () => {
     });
 
     expect(screen.getByText('$230.00')).toBeTruthy();
-    expect(screen.getByLabelText('Accept return')).toBeTruthy();
+    expect(screen.getByLabelText('Issue approved refund')).toBeTruthy();
     expect(screen.queryByText('Financial snapshot unavailable')).toBeNull();
     expect(mockFormatAmount).toHaveBeenCalledWith(230, { targetCurrency: 'PKR' });
   });
