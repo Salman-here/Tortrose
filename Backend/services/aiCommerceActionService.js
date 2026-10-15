@@ -69,7 +69,8 @@ function presentReturn(request) {
     requiresPhotoReview: doc.status === 'requested',
     nextStatuses: (RETURN_STATUS_TRANSITIONS[doc.status] || []).filter(next => doc.status === 'requested' || next !== 'rejected'),
     canCancelRequest: returns().BUYER_CANCELLABLE_STATUSES.includes(doc.status),
-    canAccept: ['under_review', 'accepted_pending_payment'].includes(doc.status), createdAt: doc.createdAt };
+    requiresReplacementShipment: doc.returnReviewVersion === 1 && doc.status === 'under_review' && doc.resolution === 'replacement',
+    canAccept: ['under_review', 'accepted_pending_payment'].includes(doc.status) && !(doc.returnReviewVersion === 1 && doc.resolution === 'replacement'), createdAt: doc.createdAt };
 }
 async function verifiedReturn(request) {
   const result = presentReturn(request);
@@ -472,6 +473,14 @@ async function executeCommerceTool(name, args = {}, user) {
       if (request.status === 'requested') {
         const url = `https://rozare.com/seller-dashboard/order-management?tab=returns&returnId=${request._id}`;
         const message = `Review the buyer's photos and record the initial decision at ${url}. No decision or collection has been performed.`;
+        return { success: true, requiresSecureAction: true, data: { url }, message, requiredDisclosure: message };
+      }
+    }
+    if (name === 'accept_return') {
+      const request = await ownedReturn(args.returnId, user, 'seller');
+      if (request.returnReviewVersion === 1 && request.status === 'under_review' && request.resolution === 'replacement') {
+        const url = `https://rozare.com/seller-dashboard/order-management?tab=returns&returnId=${request._id}`;
+        const message = `This replacement was already approved before collection. Add the shipment details at ${url}; no second decision, payment or shipment has been submitted.`;
         return { success: true, requiresSecureAction: true, data: { url }, message, requiredDisclosure: message };
       }
     }

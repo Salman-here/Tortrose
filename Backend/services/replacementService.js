@@ -49,8 +49,8 @@ async function dispatchReplacement({ requestId, sellerId, expectedUpdatedAt, ...
       if (!product) throw fail('The original replacement product is unavailable. Resolve the claim with the buyer before changing the product.', 'REPLACEMENT_PRODUCT_UNAVAILABLE');
       if (!Number.isSafeInteger(product.stock) || product.stock < 0) throw fail('Replacement inventory could not be verified. Correct the stock record before dispatching.', 'REPLACEMENT_STOCK_INVALID');
       const options = item.selectedOptions instanceof Map ? Object.fromEntries(item.selectedOptions) : item.selectedOptions || {};
-      for (const group of product.optionGroups || []) if (!group.values.includes(options[group.name] || (group.name.toLowerCase() === 'color' ? item.selectedColor : ''))) throw fail('The purchased replacement option is no longer available. Resolve the variant with the buyer.', 'REPLACEMENT_VARIANT_UNAVAILABLE');
-      if (!product.optionGroups?.length && item.selectedColor && product.colors?.length && !product.colors.includes(item.selectedColor)) throw fail('The purchased replacement colour is no longer available.', 'REPLACEMENT_VARIANT_UNAVAILABLE');
+      const selected = require('./productSelectionService').validateProductSelection(product, { selectedOptions: options, selectedColor: item.selectedColor });
+      if (!selected.ok) throw fail('The purchased replacement option is no longer available. Resolve the variant with the buyer.', 'REPLACEMENT_VARIANT_UNAVAILABLE');
     }
     for (const line of aggregateOrderInventoryLines(request.items)) {
       const changed = await Product.updateOne({ _id: line.productId, seller: sellerId, stock: { $gte: line.quantity }, isBlocked: { $ne: true } }, { $inc: { stock: -line.quantity } }, { session });

@@ -208,6 +208,18 @@ test('ordinary returns require owned, order-scoped return photos and a reasoned 
   expect(await WalletTransaction.countDocuments()).toBe(0);
 });
 
+test('replacement validates legacy Color together with modern Size before touching stock', async () => {
+  const fx = await fixture(), service = createWarrantyService({ now: () => clock });
+  await Product.updateOne({ _id: fx.product._id }, { $set: { optionGroups: [{ name: 'Size', values: ['Small'] }], colors: ['Blue','Green'] } });
+  fx.order.orderItems[0].selectedOptions = { Size: 'Small' }; await fx.order.save();
+  const claim = await service.createClaim(fx.input);
+  await service.decide({ claimId: String(claim._id), sellerId: fx.input.sellerId, outcome: 'approve', resolution: 'replacement', reason: 'We will replace the original purchased variant.' });
+  await inspect(claim, fx.seller); await approveReplacement({ returnRequestId: claim._id, sellerId: fx.seller._id });
+  await Product.updateOne({ _id: fx.product._id }, { $set: { colors: ['Green'] } });
+  await expect(dispatchReplacement({ requestId: String(claim._id), sellerId: fx.input.sellerId, shippingMethod: 'hand_delivery', operationKey: 'mixed-legacy-variant-guard-0001' })).rejects.toMatchObject({ code: 'REPLACEMENT_VARIANT_UNAVAILABLE' });
+  expect((await Product.findById(fx.product._id)).stock).toBe(10);
+});
+
 test('card-funded warranty refunds credit only after verified Sandbox capture (provider response simulated in this test)', async () => {
   const fx = await fixture({ method: 'cash_on_delivery' }), service = createWarrantyService({ now: () => clock });
   const claim = await service.createClaim(fx.input);

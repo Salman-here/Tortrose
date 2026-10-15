@@ -386,16 +386,16 @@ test('COD final acceptance supports secure Safepay handoff without charging, the
   expect((await Wallet.findOne({ user: f.buyer._id })).balances.USD).toBe(12);
   expect(await Payment.countDocuments()).toBe(0);
 });
-test('replacement-only acceptance completes its actual return flow without refund money', async () => {
+test('an upfront-approved replacement hands off to shipment details without a second decision or refund money', async () => {
   const f = await fixture({ statuses: ['delivered', 'delivered'], returnsEnabled: true });
   await Order.collection.updateOne({ _id: f.order._id }, { $set: { 'orderItems.0.returnPolicy.refundType': 'replacement_only', 'sellerPolicies.0.returnPolicy.refundType': 'replacement_only' } });
   f.order = await Order.findById(f.order._id);
   const request = await reviewedReturnFixture(f);
   const input = { returnId: String(request._id) };
   const preview = await run('accept_return', { ...input, ...ctx('replacement-preview') }, f.sellers[0]);
-  const result = await confirm(f.sellers[0], 'accept_return', input, preview);
-  expect(result.success).toBe(true);
-  expect(result.data.settlement.walletCredited).toBe(false);
+  expect(preview).toMatchObject({ success: true, requiresSecureAction: true });
+  expect(preview.data.url).toContain(`returnId=${request._id}`);
+  expect((await Return.findById(request._id)).status).toBe('under_review');
   expect(await Transaction.countDocuments({ type: 'return_refund' })).toBe(0);
   expect(await Payment.countDocuments()).toBe(0);
 });
