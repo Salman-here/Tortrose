@@ -185,6 +185,7 @@ export default async function middleware(request) {
   // third-party hosts are also intentionally excluded from production SEO.
   if (hostname === 'docs.rozare.com') {
     if (url.pathname === '/docs') return Response.redirect('https://docs.rozare.com/', 308);
+    if (url.pathname === '/') return rewrite(new URL('/docs-prerendered.html', url));
     if (url.pathname !== '/' && !PUBLIC_FILE_PATHS.has(url.pathname)) return unavailableResponse(404, 'page');
     return next();
   }

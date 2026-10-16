@@ -131,6 +131,11 @@ test('unknown documentation paths are 404 rather than copies of the documentatio
   assert.equal((await middleware(new Request('https://docs.rozare.com/favicon.svg'))).headers.get('x-middleware-next'), '1');
 });
 
+test('the documentation root explicitly serves its own prerender rather than the existing homepage index file', async () => {
+  const response = await middleware(new Request('https://docs.rozare.com/'));
+  assert.equal(response.headers.get('x-middleware-rewrite'), 'https://docs.rozare.com/docs-prerendered.html');
+});
+
 test('an unreadable store-status response is temporary unavailability, not a false permanent removal', async t => {
   t.mock.method(globalThis, 'fetch', async () => Response.json({ unexpected: true }));
   const response = await middleware(new Request('https://active-shop.rozare.com/'));
