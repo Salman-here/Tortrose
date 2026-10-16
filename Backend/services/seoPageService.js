@@ -33,11 +33,14 @@ const excerpt = (value, fallback, maxLength = 158) => {
 };
 
 const absoluteImageUrl = value => {
+  if (typeof value !== 'string') return '';
   const candidate = cleanText(value);
   if (!candidate) return '';
   try {
     const parsed = new URL(candidate, SITE_URL);
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return '';
+    parsed.hash = '';
+    return parsed.href;
   } catch (_) {
     return '';
   }
@@ -45,7 +48,7 @@ const absoluteImageUrl = value => {
 
 const productImages = product => [...new Set([
   absoluteImageUrl(product?.image),
-  ...(Array.isArray(product?.images) ? product.images.map(image => absoluteImageUrl(image?.url)) : []),
+  ...(Array.isArray(product?.images) ? product.images.map(image => absoluteImageUrl(typeof image === 'string' ? image : image?.url)) : []),
 ].filter(Boolean))];
 
 const formatMoney = (amount, currency) => {
@@ -81,6 +84,7 @@ const renderDocument = ({
   heading,
   lead,
   image = DEFAULT_IMAGE,
+  imageAlt,
   ogType = 'website',
   robots = INDEX_ROBOTS,
   jsonLd = [],
@@ -90,6 +94,7 @@ const renderDocument = ({
   const safeDescription = excerpt(description, 'Shop products from independent sellers and brands on Rozare.');
   const safeCanonical = cleanText(canonical, SITE_URL);
   const safeImage = absoluteImageUrl(image) || DEFAULT_IMAGE;
+  const safeImageAlt = cleanText(imageAlt, heading || safeTitle);
   const schemas = (Array.isArray(jsonLd) ? jsonLd : [jsonLd]).filter(Boolean);
   const schemaMarkup = schemas.map(schema => (
     `<script type="application/ld+json">${jsonForHtml(schema)}</script>`
@@ -106,15 +111,19 @@ const renderDocument = ({
   <meta name="googlebot" content="${htmlEscape(robots)}">
   <link rel="canonical" href="${htmlEscape(safeCanonical)}">
   <meta property="og:site_name" content="${SITE_NAME}">
+  <meta property="og:locale" content="en_US">
   <meta property="og:type" content="${htmlEscape(ogType)}">
   <meta property="og:title" content="${htmlEscape(safeTitle)}">
   <meta property="og:description" content="${htmlEscape(safeDescription)}">
   <meta property="og:url" content="${htmlEscape(safeCanonical)}">
   <meta property="og:image" content="${htmlEscape(safeImage)}">
+  ${safeImage.startsWith('https://') ? `<meta property="og:image:secure_url" content="${htmlEscape(safeImage)}">` : ''}
+  <meta property="og:image:alt" content="${htmlEscape(safeImageAlt)}">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${htmlEscape(safeTitle)}">
   <meta name="twitter:description" content="${htmlEscape(safeDescription)}">
   <meta name="twitter:image" content="${htmlEscape(safeImage)}">
+  <meta name="twitter:image:alt" content="${htmlEscape(safeImageAlt)}">
   ${schemaMarkup}
   <style>
     :root{color-scheme:light dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -144,7 +153,7 @@ const productCard = product => {
   const price = Number(product?.discountedPrice) > 0 && Number(product.discountedPrice) < Number(product?.price)
     ? Number(product.discountedPrice)
     : Number(product?.price);
-  return `<a class="card" href="${htmlEscape(url)}">${image ? `<img src="${htmlEscape(image)}" alt="${htmlEscape(name)}" loading="lazy">` : ''}<strong>${htmlEscape(name)}</strong><span class="muted">${htmlEscape(cleanText(product?.brand, product?.category || 'Marketplace product'))}</span><div class="price">${htmlEscape(formatMoney(price, product?.currency || product?.priceCurrency))}</div></a>`;
+  return `<a class="card" href="${htmlEscape(url)}">${image ? `<img src="${htmlEscape(image)}" alt="${htmlEscape(name)}" loading="lazy">` : ''}<strong>${htmlEscape(name)}</strong><span class="muted">${htmlEscape(cleanText(product?.brand, product?.category || 'Marketplace product'))}</span><div class="price">${htmlEscape(formatMoney(price, product?.currency || product?.priceCurrency))}</div>${Number(product?.stock) > 0 ? '' : '<span class="muted">Out of stock</span>'}</a>`;
 };
 
 const storeCard = store => {
@@ -193,7 +202,7 @@ const renderCatalogPage = ({ products = [], stores = [], canonical = SITE_URL, p
       : [{ name: 'Home', url: `${SITE_URL}/` }]),
   ];
   const productMarkup = products.length
-    ? `<h2>${productsOnly ? 'Available products' : 'Products to discover'}</h2><div class="grid">${products.map(productCard).join('')}</div>`
+    ? `<h2>${productsOnly ? 'Products' : 'Products to discover'}</h2><div class="grid">${products.map(productCard).join('')}</div>`
     : '<h2>Explore Rozare</h2><p>Browse the marketplace for products from currently active sellers.</p>';
   const storeMarkup = !productsOnly && stores.length
     ? `<h2>Active stores</h2><div class="grid">${stores.map(storeCard).join('')}</div>`
@@ -275,14 +284,15 @@ const renderStorePage = ({ store, products = [] }) => {
     canonical,
     heading: name,
     lead: description,
-    image: store?.logo || store?.banner,
+    image: absoluteImageUrl(store?.logo) || absoluteImageUrl(store?.banner),
+    imageAlt: `${name} logo`,
     jsonLd: [
       schema,
       breadcrumbSchema([{ name: 'Home', url: `${SITE_URL}/` }, { name, url: canonical }]),
     ],
     content: products.length
       ? `<h2>Products from ${htmlEscape(name)}</h2><div class="grid">${products.map(productCard).join('')}</div>`
-      : '<h2>Store catalog</h2><p>This active store has no in-stock public products at the moment.</p>',
+      : '<h2>Store catalog</h2><p>This store has no public products at the moment.</p>',
   });
 };
 
@@ -341,6 +351,7 @@ const renderProductPage = ({ product, store }) => {
     heading: name,
     lead: description,
     image: images[0],
+    imageAlt: name,
     ogType: 'product',
     jsonLd: [
       productSchema,

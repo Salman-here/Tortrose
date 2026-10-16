@@ -1,4 +1,6 @@
 import { next, rewrite } from '@vercel/functions';
+import { isPrivatePath, nonIndexableQuery } from './src/utils/indexingPolicy.js';
+export { isPrivatePath, nonIndexableQuery };
 
 const CANONICAL_HOST = 'rozare.com';
 const API_ORIGIN = String(process.env.SEO_API_ORIGIN || 'https://rozare.up.railway.app').replace(/\/+$/, '');
@@ -16,30 +18,6 @@ const CRAWLER_MARKERS = [
   'blexbot', 'gptbot', 'oai-searchbot', 'chatgpt-user', 'claudebot',
   'claude-web', 'perplexitybot', 'applebot', 'twitterbot', 'linkedinbot',
   'slackbot', 'whatsapp', 'telegrambot', 'discordbot',
-];
-
-const PRIVATE_EXACT_PATHS = new Set([
-  '/ai-chat',
-  '/checkout',
-  '/forgot-password',
-  '/login',
-  '/marketplace/trusted',
-  '/profile',
-  '/seller-signup',
-  '/settings/blocked-accounts',
-  '/signup',
-  '/success',
-  '/safepay/return',
-  '/unauthorized',
-]);
-
-const PRIVATE_PATH_PREFIXES = [
-  '/admin-dashboard',
-  '/auth',
-  '/orders',
-  '/reset-password',
-  '/seller-dashboard',
-  '/user-dashboard',
 ];
 
 const PUBLIC_EXACT_PATHS = new Set([
@@ -89,14 +67,6 @@ export const storefrontSlugFromHostname = value => {
   return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(prefix) ? prefix : null;
 };
 
-export const isPrivatePath = value => {
-  const pathname = (String(value || '').replace(/\/+$/, '') || '/').toLowerCase();
-  if (PRIVATE_EXACT_PATHS.has(pathname)) return true;
-  return PRIVATE_PATH_PREFIXES.some(prefix => (
-    pathname === prefix || pathname.startsWith(`${prefix}/`)
-  ));
-};
-
 const unavailableDocument = (status, kind = 'store') => `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${kind === 'store' ? 'Store' : 'Page'} unavailable | Rozare</title>
@@ -127,7 +97,7 @@ const storeIsIndexable = async slug => {
     if (response.status === 404) return false;
     if (!response.ok) return null;
     const payload = await response.json();
-    return payload?.indexable === true;
+    return typeof payload?.indexable === 'boolean' ? payload.indexable : null;
   } catch (_) {
     return null;
   } finally {
@@ -163,6 +133,21 @@ export const isKnownAppPath = value => {
   return Boolean(productIdFromPath(pathname) || storeSlugFromPath(pathname));
 };
 
+export const publicPageFunctionUrl = ({ url, storefrontSlug }) => {
+  const pathname = url.pathname;
+  const productId = productIdFromPath(pathname);
+  const target = new URL('/api/public-page', url);
+  if (productId) {
+    target.searchParams.set('kind', 'product'); target.searchParams.set('value', productId.toLowerCase());
+  } else if (storefrontSlug && pathname === '/') {
+    target.searchParams.set('kind', 'store'); target.searchParams.set('value', storefrontSlug);
+  } else if (['/', '/products', '/products/', '/marketplace', '/marketplace/'].includes(pathname)) {
+    target.searchParams.set('kind', pathname === '/' ? 'home' : pathname.replaceAll('/', ''));
+  } else return null;
+  if (nonIndexableQuery(url.searchParams)) target.searchParams.set('noindex', '1');
+  return target;
+};
+
 export const crawlerRenderUrl = ({ pathname, storefrontSlug }) => {
   const productId = productIdFromPath(pathname);
   if (productId) return `${API_ORIGIN}/api/seo/render/product/${encodeURIComponent(productId)}`;
@@ -180,7 +165,7 @@ export const crawlerRenderUrl = ({ pathname, storefrontSlug }) => {
 };
 
 export const config = {
-  matcher: '/((?!assets/|favicon\\.ico|robots\\.txt|sitemap(?:-[^/]+)?\\.xml|manifest\\.json|sw\\.js).*)',
+  matcher: '/((?!api/|assets/|favicon\\.ico|robots\\.txt|sitemap(?:-[^/]+)?\\.xml|manifest\\.json|sw\\.js).*)',
 };
 
 export default async function middleware(request) {
@@ -198,8 +183,13 @@ export default async function middleware(request) {
 
   // Actual platform hosts (docs/app/admin/etc.) own their routing. Preview and
   // third-party hosts are also intentionally excluded from production SEO.
-  if (isRozareSubdomain && !storefrontSlug) return next();
-  if (hostname !== CANONICAL_HOST && !storefrontSlug) return next();
+  if (hostname === 'docs.rozare.com') {
+    if (url.pathname === '/docs') return Response.redirect('https://docs.rozare.com/', 308);
+    if (url.pathname !== '/' && !PUBLIC_FILE_PATHS.has(url.pathname)) return unavailableResponse(404, 'page');
+    return next();
+  }
+  if (isRozareSubdomain && !storefrontSlug) return unavailableResponse(404, 'page');
+  if (hostname !== CANONICAL_HOST && !storefrontSlug) return next({ headers: { 'X-Robots-Tag': NOINDEX_HEADER } });
 
   if (storefrontSlug) {
     const indexable = await storeIsIndexable(storefrontSlug);
@@ -219,6 +209,25 @@ export default async function middleware(request) {
     return Response.redirect(target, 308);
   }
 
+  const productId = productIdFromPath(url.pathname);
+  if (productId) {
+    const canonicalPath = `/single-product/${productId.toLowerCase()}`;
+    if (storefrontSlug || url.pathname !== canonicalPath) {
+      const target = new URL(canonicalPath, `https://${CANONICAL_HOST}`);
+      target.search = url.search;
+      return Response.redirect(target, 308);
+    }
+  }
+  if (storefrontSlug && url.pathname !== '/' && !PUBLIC_FILE_PATHS.has(url.pathname) && isKnownAppPath(url.pathname)) {
+    const target = new URL(request.url); target.hostname = CANONICAL_HOST;
+    return Response.redirect(target, 308);
+  }
+  const normalizedPath = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+  if (PUBLIC_EXACT_PATHS.has(normalizedPath) && normalizedPath !== url.pathname) {
+    const target = new URL(request.url); target.pathname = normalizedPath;
+    return Response.redirect(target, 308);
+  }
+
   // Account, checkout, confirmation-token, and dashboard pages must remain
   // crawlable at the HTTP layer so search engines can observe this directive,
   // but they must never enter the public index.
@@ -231,7 +240,9 @@ export default async function middleware(request) {
   // truthful HTTP status for users and crawlers alike.
   if (!isKnownAppPath(url.pathname)) return unavailableResponse(404, 'page');
 
-  if (!isCrawlerRequest(request)) return next();
-  const renderUrl = crawlerRenderUrl({ pathname: url.pathname, storefrontSlug });
-  return renderUrl ? rewrite(new URL(renderUrl)) : next();
+  // Share-preview agents are not a stable, exhaustive list. Every public page
+  // receives its real metadata and public content in the first HTML response.
+  const renderUrl = publicPageFunctionUrl({ url, storefrontSlug });
+  if (renderUrl) return rewrite(renderUrl);
+  return nonIndexableQuery(url.searchParams) ? next({ headers: { 'X-Robots-Tag': 'noindex, follow' } }) : next();
 }

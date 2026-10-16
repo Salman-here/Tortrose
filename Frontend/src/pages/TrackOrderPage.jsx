@@ -30,9 +30,7 @@ export default function TrackOrderPage() {
   return (
     <>
       <SEOHead
-        title="Track Your Order - Order Status Lookup"
-        description="Track your Rozare order status. Enter your email and order ID to view order status, shipping updates when available, and seller-provided delivery details."
-        canonical="/track-order"
+        page="/track-order"
         keywords="track order, order tracking, rozare order tracking, track my order, order status, shipping status, delivery updates, where is my order, order updates, rozare tracking"
       />
       <TrackOrderContent />

@@ -3,6 +3,9 @@
   "installCommand": "npm install --legacy-peer-deps",
   "buildCommand": "npm run check:policy-publication && npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/public-page.js": { "includeFiles": "dist/index.html", "maxDuration": 15 }
+  },
   "redirects": [
     {
       "source": "/:path*",
@@ -56,6 +59,12 @@
     }
   ],
   "rewrites": [
+    { "source": "/about", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-about.html" },
+    { "source": "/contact", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-contact.html" },
+    { "source": "/faq", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-faq.html" },
+    { "source": "/become-seller", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-selling.html" },
+    { "source": "/track-order", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-tracking.html" },
+    { "source": "/account-deletion", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-deletion.html" },
     { "source": "/terms", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/policy-terms.html" },
     { "source": "/shipping-policy", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/policy-shipping.html" },
     { "source": "/refund-policy", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/policy-refunds.html" },

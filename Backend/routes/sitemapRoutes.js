@@ -33,7 +33,7 @@ const lastmodElement = value => {
 const publicHttpUrl = value => {
   try {
     const parsed = new URL(String(value || ''));
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    return ['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password ? parsed.href : '';
   } catch (_) {
     return '';
   }
@@ -53,18 +53,17 @@ router.get('/sitemap-products.xml', async (req, res) => {
       .map(store => store.seller);
     const products = await Product.find(applyActiveSellerProductFilter(
       publicProductFilter({
-        stock: { $gt: 0 },
         name: { $type: 'string', $ne: '' },
       }),
       publiclyIndexableSellerIds,
     ))
-      .select('_id updatedAt image name')
+      .select('_id updatedAt image images name')
       .sort({ updatedAt: -1, _id: -1 })
       .lean()
       .limit(50000);
 
     const urls = products.map((p) => {
-      const imageUrl = publicHttpUrl(p.image);
+      const imageUrl = [p.image, ...(Array.isArray(p.images) ? p.images.map(image => typeof image === 'string' ? image : image?.url) : [])].map(publicHttpUrl).find(Boolean);
       return `  <url>
     <loc>${escapeXml(`${BASE_URL}/single-product/${p._id}`)}</loc>${lastmodElement(p.updatedAt)}
     <changefreq>weekly</changefreq>
@@ -82,7 +81,8 @@ ${urls}
 </urlset>`;
 
     res.set('Content-Type', 'application/xml');
-    res.set('Cache-Control', 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600');
+    res.set('Cache-Control', 'no-store, max-age=0');
+    res.set('CDN-Cache-Control', 'no-store');
     res.set('X-Robots-Tag', 'noindex');
     res.send(xml);
   } catch (err) {
@@ -124,7 +124,8 @@ ${urls}
 </urlset>`;
 
     res.set('Content-Type', 'application/xml');
-    res.set('Cache-Control', 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600');
+    res.set('Cache-Control', 'no-store, max-age=0');
+    res.set('CDN-Cache-Control', 'no-store');
     res.set('X-Robots-Tag', 'noindex');
     res.send(xml);
   } catch (err) {

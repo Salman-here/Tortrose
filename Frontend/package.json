@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && vite build --ssr scripts/docs-ssr-entry.jsx --outDir dist-ssr-docs --ssrManifest false && vite build --ssr scripts/home-ssr-entry.jsx --outDir dist-ssr-home --ssrManifest false && vite build --ssr scripts/policies-ssr-entry.jsx --outDir dist-ssr-policies --ssrManifest false && node scripts/prerender-docs.mjs && node scripts/prerender-home.mjs && node scripts/prerender-policies.mjs",
+    "build": "vite build && vite build --ssr scripts/docs-ssr-entry.jsx --outDir dist-ssr-docs --ssrManifest false && vite build --ssr scripts/home-ssr-entry.jsx --outDir dist-ssr-home --ssrManifest false && vite build --ssr scripts/policies-ssr-entry.jsx --outDir dist-ssr-policies --ssrManifest false && vite build --ssr scripts/public-pages-ssr-entry.jsx --outDir dist-ssr-public --ssrManifest false && node scripts/prerender-docs.mjs && node scripts/prerender-home.mjs && node scripts/prerender-policies.mjs && node scripts/prerender-public.mjs",
     "check:policy-publication": "node scripts/validate-policy-publication.mjs",
     "lint": "eslint .",
     "test:seo": "node --test tests/seoRouting.test.mjs",

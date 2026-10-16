@@ -10,6 +10,7 @@ import ShoppingLocationPrompt from './components/common/ShoppingLocationPrompt'
 import { useLocation } from 'react-router-dom'
 import { useBuyerLocation } from './contexts/BuyerLocationContext'
 import SafepayCheckoutProvider from './components/common/SafepayCheckoutProvider'
+import PrivatePageSEO from './components/common/PrivatePageSEO'
  
 function App() {  
   const { pathname } = useLocation();
@@ -25,6 +26,7 @@ function App() {
 
   return (
     <HelmetProvider><SafepayCheckoutProvider>
+      <PrivatePageSEO />
       {!paymentReturn && <Analytics />}
       <ToastContainer
         position='bottom-right'

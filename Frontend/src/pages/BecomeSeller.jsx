@@ -502,9 +502,7 @@ export default function BecomeSeller() {
   return (
     <div className="min-h-screen py-12 px-4">
       <SEOHead
-        title="Become a Seller for Free — Start Selling Online"
-        description="Join Rozare as a seller for free. Create your online store, list products, manage orders, track sales analytics, and use a professional seller dashboard with powerful tools plus AI chat on the website and WhatsApp."
-        canonical="/become-seller"
+        page="/become-seller"
         keywords="become a seller, sell online, start selling online, open online store, online store free trial, rozare seller, sell products online, e-commerce seller, online business, start online business, vendor registration, seller signup, seller account, sell from home, side hustle, make money online, dropshipping, sell handmade products, sell crafts online, sell electronics online, sell fashion online, online shop owner"
         jsonLd={{
             '@context': 'https://schema.org',

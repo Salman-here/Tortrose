@@ -8,7 +8,7 @@ export default function AccountDeletionPage() {
   useEffect(() => { window.scrollTo(0, 0); }, []);
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <SEOHead title="Delete Your Rozare Account" description="Request deletion of your Rozare account and understand what data is deleted or retained." canonical="/account-deletion" />
+      <SEOHead page="/account-deletion" />
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
         <div className="text-center mb-9"><div className="mx-auto w-16 h-16 rounded-3xl text-white flex items-center justify-center mb-4" style={{ background: 'linear-gradient(135deg,#14B8A6,#0EA5E9,#6366F1)' }}><Trash2 size={28} /></div><h1 className="text-3xl sm:text-4xl font-extrabold" style={{ color: 'hsl(var(--foreground))' }}>Delete your Rozare account</h1><p className="text-sm mt-3 max-w-2xl mx-auto" style={{ color: 'hsl(var(--muted-foreground))' }}>This page applies to the Rozare app and marketplace operated by Rozare. Account deletion is permanent and cannot be undone.</p></div>
         <div className="grid md:grid-cols-2 gap-5">

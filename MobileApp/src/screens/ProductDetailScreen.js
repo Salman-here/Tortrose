@@ -45,6 +45,7 @@ import {
 } from '../utils/productOptions';
 import { findProductCartLine, resolveProductCartLine, getCartProductQuantity } from '../utils/cartProductSelection';
 import { getModalTokens } from '../styles/modalTheme';
+import { productShareContent } from '../utils/shareLinks';
 
 const PRODUCT_TOPBAR_SHEEN = [
   'rgba(14,165,233,0.12)',
@@ -146,7 +147,8 @@ export default function ProductDetailScreen({ route, navigation }) {
 
   const handleShare = async () => {
     if (!product) return;
-    try { await Share.share({ message: `Check out ${product.name} on Rozare! ${formatProductPrice(product, { field: productPriceField })}`, title: product.name }); } catch {}
+    const content = productShareContent(product, formatProductPrice(product, { field: productPriceField }));
+    if (content) { try { await Share.share(content); } catch {} }
   };
 
   const fetchProduct = async () => {

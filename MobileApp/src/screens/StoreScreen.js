@@ -34,6 +34,7 @@ import StoreReviews from '../components/common/StoreReviews';
 import SafetyActionsSheet from '../components/common/SafetyActionsSheet';
 import { spacing, fontSize, borderRadius, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { storeShareContent } from '../utils/shareLinks';
 
 const PRODUCTS_PER_PAGE = 12; // matches website
 
@@ -203,7 +204,8 @@ export default function StoreScreen({ route, navigation }) {
   const handleShare = useCallback(async () => {
     if (!store) return;
     try {
-      await Share.share({ message: `Check out ${storeName} on Rozare! https://${slug}.rozare.com`, title: storeName });
+      const content = storeShareContent({ ...store, storeSlug: slug, storeName });
+      if (content) await Share.share(content);
     } catch {}
   }, [store, storeName, slug]);
 

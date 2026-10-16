@@ -24,9 +24,7 @@ function AboutPage() {
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <SEOHead
-        title="About Rozare - AI Marketplace for Shopping & Selling"
-        description="Learn about Rozare, an AI-powered marketplace where shoppers discover products and sellers manage storefronts through dashboard tools, AI chat, and WhatsApp."
-        canonical="/about"
+        page="/about"
         keywords="about rozare, rozare story, rozare mission, rozare marketplace about, who is rozare, rozare company, rozare team, online marketplace mission, trusted marketplace, community marketplace, independent sellers platform, fair e-commerce, transparent shopping"
         jsonLd={{
             '@context': 'https://schema.org',

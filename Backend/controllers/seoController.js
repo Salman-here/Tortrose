@@ -39,7 +39,10 @@ const sendIndexableHtml = (res, html) => {
   setSharedHeaders(res);
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('X-Robots-Tag', 'index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1');
-  res.set('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=3600');
+  // A block or deletion must take effect on the next crawl, not after a stale
+  // positive HTML response has been served for another hour.
+  res.set('Cache-Control', 'no-store, max-age=0');
+  res.set('CDN-Cache-Control', 'no-store');
   return res.status(200).send(html);
 };
 
@@ -80,7 +83,6 @@ const publicSeoProducts = async ({ stores, limit = 24 } = {}) => {
   const sellerIds = publicStores.map(store => store.seller).filter(Boolean);
   const filter = applyActiveSellerProductFilter(
     publicProductFilter({
-      stock: { $gt: 0 },
       name: { $type: 'string', $ne: '' },
     }),
     sellerIds,
@@ -160,7 +162,6 @@ exports.renderStore = async (req, res) => {
 
     const products = await Product.find(publicProductFilter({
       seller: store.seller,
-      stock: { $gt: 0 },
       name: { $type: 'string', $ne: '' },
     }))
       .select('_id seller name description brand category price discountedPrice currency priceCurrency stock image images updatedAt')

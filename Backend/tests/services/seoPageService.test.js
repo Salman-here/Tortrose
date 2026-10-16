@@ -69,3 +69,20 @@ test('unavailable render is explicitly noindex', () => {
   expect(html).toContain('noindex, nofollow, noarchive, nosnippet');
   expect(html).toContain('Store unavailable');
 });
+
+test('seller-controlled text cannot break out of structured data or metadata', () => {
+  const name = 'Travel Mug </script><script>alert("unsafe")</script>';
+  const html = renderProductPage({ product: { ...product, name }, store });
+  expect(html).not.toContain('<script>alert("unsafe")</script>');
+  const data = [...html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs)].map(match => JSON.parse(match[1]));
+  expect(data.find(value => value['@type'] === 'Product').name).toBe(name);
+  expect(html).toContain('&lt;/script&gt;');
+});
+
+test('gallery strings and missing logos fall back safely without invalid image URLs', () => {
+  const html = renderProductPage({ product: { ...product, image: '', images: ['https://images.example.com/gallery.png'] }, store });
+  expect(html).toContain('<meta property="og:image" content="https://images.example.com/gallery.png">');
+  const storefront = renderStorePage({ store: { ...store, logo: ' ', banner: 'https://images.example.com/banner.png' } });
+  expect(storefront).toContain('<meta property="og:image" content="https://images.example.com/banner.png">');
+  expect(renderProductPage({ product: { ...product, image: { invalid: true }, images: [] }, store })).not.toContain('%5Bobject');
+});

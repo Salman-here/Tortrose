@@ -9,6 +9,8 @@ import Loader from '../components/common/Loader';
 import TrustButton from '../components/common/TrustButton';
 import VerifiedBadge from '../components/common/VerifiedBadge';
 import SEOHead from '../components/common/SEOHead';
+import { storeShareImage } from '../utils/seoImage';
+import PublicSeoPreview from '../components/common/PublicSeoPreview';
 import { navigateToMainDomainPath, isSubdomain } from '../utils/subdomainHelper';
 import { getAuthToken } from "../utils/cookieHelper";
 import { useCurrency } from '../contexts/CurrencyContext';
@@ -40,7 +42,7 @@ const StorePage = ({ slugOverride = null }) => {
     const slug = slugOverride || slugFromParams;
     const { currentUser } = useAuth();
     const { formatPrice, currency } = useCurrency();
-    const { appendLocationParams, locationQueryString, openLocationSelector } = useBuyerLocation();
+    const { appendLocationParams, locationQueryString, openLocationSelector, selectionRequired } = useBuyerLocation();
     const [store, setStore] = useState(null);
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -74,6 +76,7 @@ const StorePage = ({ slugOverride = null }) => {
     const totalProductPages = Math.max(1, productPagination.pages || 1);
 
     useEffect(() => {
+        if (selectionRequired) { setLoading(true); setNotFound(false); return; }
         // When slugOverride is provided we are already on the store's subdomain —
         // skip the path -> subdomain redirect.
         if (!slugOverride) {
@@ -96,12 +99,13 @@ const StorePage = ({ slugOverride = null }) => {
         // Slug and buyer location own this request lifecycle; including the
         // render-created fetch functions would re-run on every render.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slug, locationQueryString]);
+    }, [slug, locationQueryString, selectionRequired]);
 
     useEffect(() => { const timer = setTimeout(() => setDebouncedSearch(productSearch.trim()), 300); return () => clearTimeout(timer); }, [productSearch]);
     useEffect(() => { setSelectedCategory('all'); setProductSearch(''); setDebouncedSearch(''); setProductPage(1); setStoreCategories([]); setCatalogTotal(null); }, [slug]);
 
     useEffect(() => {
+        if (selectionRequired) return;
         const key = JSON.stringify([slug, locationQueryString, selectedCategory, debouncedSearch, currency]);
         if (key !== productQueryRef.current) {
             productQueryRef.current = key;
@@ -111,7 +115,7 @@ const StorePage = ({ slugOverride = null }) => {
         return () => { productRequestRef.current += 1; };
         // The explicit query state above is the authoritative request key.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [slug, locationQueryString, productPage, selectedCategory, debouncedSearch, currency]);
+    }, [slug, locationQueryString, productPage, selectedCategory, debouncedSearch, currency, selectionRequired]);
 
     useEffect(() => {
         if (store?._id) {
@@ -262,7 +266,7 @@ const StorePage = ({ slugOverride = null }) => {
     };
 
     const handleShare = () => {
-        const url = window.location.href;
+        const url = `https://${store.storeSlug}.rozare.com/`;
         if (navigator.share) {
             navigator.share({ title: store?.storeName, text: `Check out ${store?.storeName} on Rozare`, url });
         } else {
@@ -272,14 +276,7 @@ const StorePage = ({ slugOverride = null }) => {
     };
 
     if (loading) {
-        return (
-            <>
-                <SEOHead title="Loading store" description="Loading this Rozare store." noindex />
-                <div className="flex justify-center items-center min-h-screen">
-                    <Loader />
-                </div>
-            </>
-        );
+        return <PublicSeoPreview kind="store" canonical={`https://${slug}.rozare.com/`} onChooseLocation={openLocationSelector} selectionRequired={selectionRequired} />;
     }
 
     if (notFound) {
@@ -368,7 +365,7 @@ const StorePage = ({ slugOverride = null }) => {
                         ? `${store.description.slice(0, 120)} - Shop products from ${store?.storeName} on Rozare with secure checkout, trust signals, and seller-managed shipping.`
                         : `Shop products from ${store?.storeName} on Rozare. Browse this seller's products, reviews, trust count, and shipping options before checkout.`}
                     canonical={`https://${slug}.rozare.com/`}
-                    ogImage={store?.logo || undefined}
+                    ogImage={storeShareImage(store)}
                     ogImageAlt={`${store?.storeName} - Shop on Rozare Marketplace`}
                     keywords={`${store?.storeName}, ${store?.storeName} store, ${store?.storeName} products, ${store?.storeName} shop, buy from ${store?.storeName}, ${store?.storeName} online, rozare store, trusted store, online shop, independent seller`}
                     jsonLd={{

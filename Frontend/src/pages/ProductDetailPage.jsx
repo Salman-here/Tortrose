@@ -3,9 +3,10 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Heart, ShoppingCart, Star, ChevronRight, ChevronLeft, Zap, Sparkles, RotateCcw, Loader2, Home, Tag, Package, Ticket, Copy, Check, Calendar, Plus, Minus, X, CreditCard, Banknote, Flag, MoreHorizontal } from 'lucide-react';
-import Loader from '../components/common/Loader';
 import StoreInfo from '../components/common/StoreInfo';
 import SEOHead from '../components/common/SEOHead';
+import { productShareImage } from '../utils/seoImage';
+import PublicSeoPreview from '../components/common/PublicSeoPreview';
 import ProductCard from '../components/common/ProductCard';
 import { toast } from 'react-toastify';
 import { useGlobal } from '../contexts/GlobalContext';
@@ -307,14 +308,7 @@ function ProductDetailPage() {
         visible: { opacity: 1, scale: 1, transition: { duration: 0.4, ease: "easeOut" } }
     };
 
-    if (loading) return (
-        <>
-            <SEOHead title="Loading product" description="Loading this Rozare product." noindex />
-            <div className='h flex justify-center items-center'>
-                <Loader />
-            </div>
-        </>
-    );
+    if (loading) return <PublicSeoPreview kind="product" canonical={`https://rozare.com/single-product/${id}`} onChooseLocation={openLocationSelector} selectionRequired={selectionRequired} />;
 
     if (loadError || !product?._id || !product?.name) return (
         <>
@@ -342,7 +336,7 @@ function ProductDetailPage() {
                     description={product.description?.slice(0, 155) || `Buy ${product.name} online on Rozare marketplace. ${product.category ? `Category: ${product.category}.` : ''} ${product.brand ? `Brand: ${product.brand}.` : ''} Review price, stock, options, seller details, and shipping information before checkout.`}
                     canonical={`/single-product/${id}`}
                     ogType="product"
-                    ogImage={product.image}
+                    ogImage={productShareImage(product)}
                     ogImageAlt={`${product.name} - Buy on Rozare`}
                     keywords={`${product.name}, buy ${product.name}, ${product.name} online, ${product.name} price, ${product.brand || ''}, ${product.category || ''}, buy ${product.category || 'products'} online, shop ${product.category || 'products'}, rozare ${product.category || 'products'}, ${product.category || 'products'} deals`}
                     jsonLd={[

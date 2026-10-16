@@ -37,9 +37,7 @@ function ContactPage() {
   return (
     <div data-commerce-content className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <SEOHead
-        title="Contact Us — Customer Support & Help"
-        description="Contact the Rozare support team for help with orders, shipping, payments, seller inquiries, account questions, and marketplace feedback."
-        canonical="/contact"
+        page="/contact"
         keywords="contact rozare, rozare support, rozare help, rozare customer service, rozare email, support@rozare.com, rozare phone, rozare live chat, order help, shipping help, payment help, seller support, buyer support, complaint, feedback"
         jsonLd={{
           '@context': 'https://schema.org',

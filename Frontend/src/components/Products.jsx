@@ -315,7 +315,7 @@ function Products() {
           <div className='glass-inner p-1.5 rounded-xl'>
             <Filter size={16} style={{ color: 'hsl(var(--primary))' }} />
           </div>
-          <h1 className='text-lg font-bold'>Filters</h1>
+          <h2 className='text-lg font-bold'>Filters</h2>
           {activeFilterCount > 0 && (
             <span className='tag-pill text-xs font-bold'>{activeFilterCount}</span>
           )}
