@@ -1,10 +1,11 @@
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutPolicyNotice from '../../src/components/common/CheckoutPolicyNotice';
 import FAQScreen from '../../src/screens/FAQScreen';
 import DocsScreen from '../../src/screens/DocsScreen';
 import PrivacyPolicyScreen from '../../src/screens/PrivacyPolicyScreen';
-import { checkoutPolicyNotice } from '../../src/content/commercePolicies';
+import { checkoutPolicyNotice, commercePolicies } from '../../src/content/commercePolicies';
 import { commerceFaqById, commerceGuides } from '../../src/content/commerceHelpContent';
 import { privacySections, paymentPrivacyNotice } from '../../src/content/privacyContent';
 import { lightPalette, darkPalette } from '../../src/styles/palettes';
@@ -52,5 +53,10 @@ describe.each([['light', lightPalette], ['dark', darkPalette]])('%s commerce inf
     fireEvent.press(screen.getByText('Return and Refund Policy')); expect(navigation.navigate).toHaveBeenCalledWith('RefundPolicy');
     fireEvent.changeText(screen.getByPlaceholderText('Search documentation...'), 'no-topic-exists-qa');
     expect(screen.getByText('No matching topics')).toBeTruthy();
+    for (const document of Object.values(commercePolicies)) {
+      const link = screen.getByText(`${document.title} →`);
+      expect(StyleSheet.flatten(link.props.style).flex).toBe(0);
+      fireEvent.press(link); expect(navigation.navigate).toHaveBeenLastCalledWith(document.screen);
+    }
   });
 });

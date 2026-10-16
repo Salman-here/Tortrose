@@ -334,7 +334,7 @@ export default function DocsScreen({ navigation }) {
 
           <GlassPanel variant="card" style={styles.ctaCard}>
             <Text style={styles.ctaText}>Policies and processing times</Text>
-            {Object.entries(commercePolicies).map(([key, document]) => <TouchableOpacity key={key} accessibilityRole="link" onPress={() => navigation.navigate(document.screen)} style={{ paddingVertical: 10 }}><Text style={[styles.sectionTitle, { color: palette.colors.primary }]}>{document.title} →</Text></TouchableOpacity>)}
+            {Object.entries(commercePolicies).map(([key, document]) => <TouchableOpacity key={key} accessibilityRole="link" onPress={() => navigation.navigate(document.screen)} style={{ paddingVertical: 10 }}><Text style={[styles.sectionTitle, { flex: 0, color: palette.colors.primary }]}>{document.title} →</Text></TouchableOpacity>)}
             <Text style={styles.ctaText}>Need a hand?</Text>
             <TouchableOpacity style={styles.ctaBtn} onPress={() => navigation.navigate('Contact')} activeOpacity={0.7}>
               <Ionicons name="mail-outline" size={16} color={palette.colors.white} />
