@@ -1212,6 +1212,7 @@ export default function HomeScreen({ navigation }) {
     <GlassBackground>
       <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={isLoading ? [] : products}
         keyExtractor={(item) => item._id}
         numColumns={2}
