@@ -803,7 +803,9 @@ exports.getStoreSuggestions = async (req, res) => {
                 { description: { $regex: safeSearch, $options: 'i' } },
             ],
         }), buyerLocation, {
-            select: 'storeName storeSlug logo trustCount verification sellerType visibility',
+            // Visibility and buyer-block checks need the seller reference even
+            // though autocomplete does not populate the seller's private details.
+            select: 'seller storeName storeSlug logo trustCount verification sellerType visibility',
         });
 
         const visibleStores = await hideBlockedStores(req, stores);
