@@ -22,7 +22,7 @@ function FAQItem({ id, q, a, links }) {
 export default function FAQPage() {
   useEffect(() => { window.scrollTo(0, 0); }, []);
   const jsonLd = { '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: commerceFaqCategories.flatMap(category => category.questions.map(item => ({ '@type': 'Question', name: item.q, acceptedAnswer: { '@type': 'Answer', text: item.a } }))) };
-  return <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+  return <main data-commerce-content className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
     <SEOHead title="FAQ — Shopping, Payments and Seller Help" description="Answers about Rozare checkout, saved cards, Wallet refunds, returns, replacements, warranties, seller deductions and withdrawals." canonical="/faq" jsonLd={jsonLd} />
     <header className="text-center mb-10"><div className="inline-flex items-center gap-2 tag-pill mb-4"><HelpCircle size={14} /><span>Help Centre</span></div><h1 className="text-3xl sm:text-4xl font-bold mb-3">Frequently Asked Questions</h1><p className="text-muted-foreground">Clear answers for shopping and selling on Rozare.</p></header>
     <div className="space-y-6">{commerceFaqCategories.map(category => {

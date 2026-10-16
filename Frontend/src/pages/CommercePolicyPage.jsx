@@ -13,7 +13,7 @@ export default function CommercePolicyPage({ policy = 'terms' }) {
     if (target) target.scrollIntoView({ block: 'start' });
     else window.scrollTo(0, 0);
   }, [document, hash]);
-  return <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+  return <main data-commerce-content className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
     <SEOHead title={document.title} description={document.description} canonical={document.path} />
     <header className="text-center mb-8"><FileText className="mx-auto mb-4 text-primary" size={28} /><h1 className="text-3xl sm:text-4xl font-bold">{document.title}</h1><p className="text-sm text-muted-foreground mt-3">Last updated: {policyConfig.updatedAt}</p></header>
     {!policyPublicationReady && <p role="status" className="glass-panel p-4 mb-5 border border-amber-400">Draft policy update — business details and service timelines are awaiting merchant confirmation. This draft is not approved for publication.</p>}

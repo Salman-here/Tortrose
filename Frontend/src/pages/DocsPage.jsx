@@ -911,7 +911,7 @@ function CommerceGuide({ guide }) {
 
 function DocSection({ id, title, icon: Icon, children }) {
   return (
-    <section id={id} className="scroll-mt-24">
+    <section data-commerce-content id={id} className="scroll-mt-24">
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'hsl(220, 70%, 55%, 0.1)' }}>
           <Icon size={20} style={{ color: 'hsl(220, 70%, 65%)' }} />

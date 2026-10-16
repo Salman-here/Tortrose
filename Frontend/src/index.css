@@ -167,6 +167,18 @@ a {
     transition: color 0.3s ease;
 }
 
+/* Informational links must remain identifiable outside Tailwind's layers. */
+[data-commerce-content] a:not([class*="glass-button"]) {
+    color: hsl(var(--primary));
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+}
+[data-commerce-content] a:focus-visible {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 3px;
+    border-radius: 2px;
+}
+
 /* ====================
    Inputs & Forms
 ==================== */

@@ -35,7 +35,7 @@ function ContactPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+    <div data-commerce-content className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <SEOHead
         title="Contact Us — Customer Support & Help"
         description="Contact the Rozare support team for help with orders, shipping, payments, seller inquiries, account questions, and marketplace feedback."

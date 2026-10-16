@@ -1146,7 +1146,7 @@ export default function BecomeSeller() {
             )}
           </motion.div>
         )}
-        <p className="text-xs text-muted-foreground text-center mt-6 leading-relaxed">By activating a seller account, you agree to our <Link className="underline" to="/terms">Terms and Conditions</Link>. Read our <Link className="underline" to="/privacy">Privacy Policy</Link>.</p>
+        <p data-commerce-content className="text-xs text-muted-foreground text-center mt-6 leading-relaxed">By activating a seller account, you agree to our <Link className="underline" to="/terms">Terms and Conditions</Link>. Read our <Link className="underline" to="/privacy">Privacy Policy</Link>.</p>
       </div>
     </div>
   );

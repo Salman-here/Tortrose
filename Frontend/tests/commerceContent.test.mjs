@@ -69,6 +69,8 @@ test('checkout is one short notice plus working policy links, with detailed fees
   const web = source('../src/components/common/CheckoutPolicyLinks.jsx');
   const native = source('../../MobileApp/src/components/common/CheckoutPolicyNotice.js');
   assert.match(web, /checkoutPolicyNotice\.links\.map/); assert.match(native, /checkoutPolicyNotice\.links\.map/);
+  assert.match(web, /data-commerce-content/);
+  assert.match(source('../src/index.css'), /\[data-commerce-content\] a:not[^}]+text-decoration: underline/s);
   assert.match(source('../../MobileApp/src/screens/CheckoutScreen.js'), /<CheckoutPolicyNotice onOpenPolicy/);
 });
 
