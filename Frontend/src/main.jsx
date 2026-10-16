@@ -9,11 +9,13 @@ import { CurrencyProvider } from './contexts/CurrencyContext.jsx'
 import { BuyerLocationProvider } from './contexts/BuyerLocationContext.jsx'
 import { ThemeProvider } from './contexts/ThemeContext.jsx'
 import { installHttpResilience } from './utils/httpResilience.js'
+import { installCatalogViewerAuth } from './utils/catalogViewerAuth.js'
 import { captureTikTokClickId } from './utils/tiktokPixel.js'
 import AppErrorBoundary from './components/common/AppErrorBoundary.jsx'
 import { reloadOnceForStaleChunk } from './utils/chunkReload.js'
 
 installHttpResilience()
+installCatalogViewerAuth(import.meta.env.VITE_API_URL)
 captureTikTokClickId()
 
 // After a deploy, tabs opened on the previous version fail to lazy-load route
