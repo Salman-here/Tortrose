@@ -74,7 +74,7 @@ export async function publicPageResponse({ kind, value, appShell, fetchImpl = fe
     if (response.status === 404) return new Response(html, { status: 404, headers: { ...headers, 'X-Robots-Tag': NOINDEX } });
     return new Response(mergePublicPage(await appShell(), html, target.canonical), { status: 200, headers });
   } catch (error) {
-    console.error('[public-page] Render unavailable', ['SEO_ORIGIN_INVALID', 'SEO_CANONICAL_MISMATCH', 'SEO_METADATA_INCOMPLETE', 'SEO_DOCUMENT_INVALID', 'SEO_DOCUMENT_TOO_LARGE'].includes(error.message) ? error.message : 'SEO_UPSTREAM_UNAVAILABLE');
+    console.error('[public-page] Render unavailable', ['SEO_ORIGIN_INVALID', 'SEO_CANONICAL_MISMATCH', 'SEO_METADATA_INCOMPLETE', 'SEO_DOCUMENT_INVALID', 'SEO_DOCUMENT_TOO_LARGE', 'SEO_APP_SHELL_UNAVAILABLE'].includes(error.message) ? error.message : 'SEO_UPSTREAM_UNAVAILABLE');
     return new Response('<!doctype html><title>Temporarily unavailable | Rozare</title><meta name="robots" content="noindex"><h1>Temporarily unavailable</h1><p>Please try again shortly.</p>', { status: 503, headers: { ...headers, 'X-Robots-Tag': NOINDEX, 'Retry-After': '60' } });
   }
 }

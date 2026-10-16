@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
+import { readBuiltAppShell } from '../server/appShell.mjs';
 import { mergePublicPage, publicPageResponse, publicRenderTarget } from '../server/publicPageResponse.mjs';
 import middleware, { nonIndexableQuery, publicPageFunctionUrl } from '../middleware.js';
 import { DEFAULT_SHARE_IMAGE, productShareImage, storeShareImage } from '../src/utils/seoImage.js';
@@ -34,6 +35,16 @@ test('metadata is replaced once while the real app bundle, safe head tags and pu
   assert(html.includes('<h1>Travel Mug</h1>'));
   assert(html.includes('<script data-rh="true" type="application/ld+json">'));
   assert(html.includes('id="seo-public-fallback"'));
+});
+
+test('the built app shell is resolved relative to the packaged module, not a monorepo launcher directory', async () => {
+  // A deployment build supplies this file. Source-only test runs may not have it.
+  let html;
+  try { html = await readBuiltAppShell(); } catch (error) { assert.equal(error.message, 'SEO_APP_SHELL_UNAVAILABLE'); return; }
+  assert(html.includes('<div id="root"></div>'));
+  assert(html.includes('/assets/'));
+  const source = readFileSync(new URL('../server/appShell.mjs', import.meta.url), 'utf8');
+  assert(source.includes("new URL('../dist/index.html', import.meta.url)"));
 });
 
 test('the handler sends no cookies or account credentials upstream and never caches a positive listing', async () => {
