@@ -42,3 +42,9 @@ test('valid loading pages never overwrite server metadata with transient noindex
     assert(/SEOHead title="(Product|Store) unavailable"[\s\S]*?noindex/.test(source));
   }
 });
+
+test('a signed-in shopper never receives a public loading preview before personal seller blocks are checked', () => {
+  const component = readFileSync(new URL('../src/components/common/PublicSeoPreview.jsx', import.meta.url), 'utf8');
+  assert(component.includes('if (getAuthToken()) return'));
+  assert(component.indexOf('if (getAuthToken()) return') < component.indexOf('readPublicSeoPreview(kind,'));
+});

@@ -35,6 +35,7 @@ test('metadata is replaced once while the real app bundle, safe head tags and pu
   assert(html.includes('<h1>Travel Mug</h1>'));
   assert(html.includes('<script data-rh="true" type="application/ld+json">'));
   assert(html.includes('id="seo-public-fallback"'));
+  assert(html.includes('<div id="root"></div><noscript>'));
 });
 
 test('the built app shell is resolved relative to the packaged module, not a monorepo launcher directory', async () => {

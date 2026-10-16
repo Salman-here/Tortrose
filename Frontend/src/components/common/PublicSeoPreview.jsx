@@ -1,7 +1,11 @@
 import { readPublicSeoPreview } from '../../utils/publicSeoPreview';
 import Loader from './Loader';
+import { getAuthToken } from '../../utils/cookieHelper';
 
 export default function PublicSeoPreview({ kind, canonical, onChooseLocation, selectionRequired }) {
+  // Signed-in viewers must pass the ordinary API's personal seller-block and
+  // location checks before seeing content. Link metadata is public, not consent.
+  if (getAuthToken()) return <div className="min-h-[60vh] flex items-center justify-center"><Loader /></div>;
   const preview = readPublicSeoPreview(kind, canonical);
   if (!preview) return <div className="min-h-[60vh] flex items-center justify-center"><Loader /></div>;
   const price = preview.currency ? new Intl.NumberFormat('en', { style: 'currency', currency: preview.currency, currencyDisplay: 'code' }).format(preview.price) : '';

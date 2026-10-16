@@ -44,11 +44,12 @@ export function mergePublicPage(appShell, publicHtml, canonical) {
     } else if (attrs.type === 'application/ld+json') tags.push(managed(tag));
   }
   if (!foundCanonical || !foundImage || !foundTitle) throw Error('SEO_METADATA_INCOMPLETE');
-  // The first HTML contains real public content even without JavaScript. The
-  // regular app replaces this isolated fallback when it mounts, unchanged.
+  // No-JavaScript readers get real public content. With JavaScript enabled,
+  // the app checks account-specific blocks before displaying a signed-in
+  // shopper's details; public metadata must not flash blocked content first.
   return clearPrerenderSeoFallbacks(appShell)
     .replace('</head>', `${tags.join('\n')}\n</head>`)
-    .replace('<div id="root"></div>', `<div id="root"><div id="seo-public-fallback">${fallbackStyle}${body}</div></div>`);
+    .replace('<div id="root"></div>', `<div id="root"></div><noscript><div id="seo-public-fallback">${fallbackStyle}${body}</div></noscript>`);
 }
 
 export async function publicPageResponse({ kind, value, appShell, fetchImpl = fetch, apiOrigin = 'https://rozare.up.railway.app', noindex = false }) {
