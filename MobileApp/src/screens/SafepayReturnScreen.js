@@ -59,7 +59,7 @@ export default function SafepayReturnScreen({ route, navigation }) {
   const authorized = result.status === 'authorized' && result.purpose === 'card_setup';
   const closed = ['cancelled', 'failed', 'refunded', 'reversed'].includes(result.status);
   const title = result.status === 'reversed' ? 'Payment reversed' : result.status === 'refund_pending' ? 'Refund being verified' : result.status === 'refunded' ? 'Payment refunded' : authorized ? 'Card verification complete' : paid ? 'Payment confirmed' : result.status === 'manual_review' ? 'Payment needs review'
-    : closed ? 'Payment not completed' : 'Checking your payment';
+    : closed ? 'Payment not completed' : checking ? 'Checking your payment' : result.status === 'unavailable' ? 'Payment status unavailable' : 'Payment not confirmed';
   const message = result.status === 'reversed' ? 'A bank reversal was recorded after review of the final provider decision. Open your account for payment and balance details; do not resume this payment.' : result.status === 'refund_pending' ? `This payment could not complete the purchase. ${getOriginalPaymentRefundCopy(result, result.status)} Do not pay again for this attempt.`
     : result.status === 'refunded' ? getOriginalPaymentRefundCopy(result, result.status)
     : authorized ? 'Return to Saved Cards to review your card. Adding a card does not start a paid subscription.'

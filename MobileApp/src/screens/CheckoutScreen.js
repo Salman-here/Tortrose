@@ -290,6 +290,8 @@ export default function CheckoutScreen({ navigation }) {
   const taxUnavailable = taxStatus !== 'ready';
   const checkoutBlocked = !isCartReady || taxUnavailable || checkoutRatesUnavailable || !checkoutQuote.ready;
   const hasPendingSafepayPayment = !!(paymentNotice?.safepay && paymentNotice?.paymentId);
+  const paymentButtonLabel = hasPendingSafepayPayment ? 'Check or resume payment' : paymentMethod === 'card'
+    ? 'Pay with Safepay' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order';
   const paymentButtonDisabled = isProcessing || !hasPendingSafepayPayment
     && (summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error);
   const formatShippingOptionPrice = (method, sellerInfo = null) => {
@@ -1506,7 +1508,8 @@ export default function CheckoutScreen({ navigation }) {
           </View>
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityState={{ busy: isProcessing, disabled: paymentButtonDisabled }}
+            accessibilityLabel={isProcessing ? 'Processing payment' : paymentButtonLabel}
+            accessibilityState={{ disabled: paymentButtonDisabled, ...(isProcessing ? { busy: true } : {}) }}
             style={[styles.placeOrderBtn, paymentButtonDisabled && { opacity: 0.7 }]}
             onPress={handlePlaceOrder}
             disabled={paymentButtonDisabled}
@@ -1515,7 +1518,7 @@ export default function CheckoutScreen({ navigation }) {
             {isProcessing ? <><ActivityIndicator size="small" color="#fff" /><Text style={styles.placeOrderText}>Processing…</Text></> : (
               <>
                 <Ionicons name={paymentMethod === 'card' ? 'card-outline' : paymentMethod === 'wallet' ? 'wallet-outline' : 'bag-check-outline'} size={20} color="#fff" />
-                <Text style={styles.placeOrderText}>{hasPendingSafepayPayment ? 'Check or resume payment' : paymentMethod === 'card' ? 'Pay with Safepay' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order'}</Text>
+                <Text style={styles.placeOrderText}>{paymentButtonLabel}</Text>
               </>
             )}
           </TouchableOpacity>

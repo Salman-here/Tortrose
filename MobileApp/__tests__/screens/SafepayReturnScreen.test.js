@@ -29,6 +29,7 @@ beforeEach(() => {
 test('a dismissed pending payment can reopen only its original owned attempt', async () => {
   const screen = render(<SafepayReturnScreen route={{ params: { paymentId } }} navigation={{ navigate: jest.fn() }} />);
   await waitFor(() => expect(screen.getByText('Resume secure checkout')).toBeTruthy());
+  expect(screen.getByText('Payment not confirmed')).toBeTruthy();
   fireEvent.press(screen.getByText('Resume secure checkout'));
   await waitFor(() => expect(openSafepayCheckout).toHaveBeenCalledWith({ apiClient: api, response: { data: pending } }));
   expect(api.post).toHaveBeenCalledTimes(1);
