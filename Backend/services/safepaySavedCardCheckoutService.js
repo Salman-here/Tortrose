@@ -138,7 +138,9 @@ async function viewContext(paymentId, authorization, grant) {
     authenticationInProgress: operationBusy || !resetRecoverable,
     returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }),
     cardEntryRequired: newCard,
-    canUseHostedCheckout: newCard && payment.currency === 'PKR' && tracker.capabilities?.RAAST === true
+    // Reporter reads can omit capabilities. A generic hosted-options link
+    // delegates the available-method list to Safepay; it never initiates Raast.
+    canUseHostedCheckout: newCard && payment.currency === 'PKR' && tracker.capabilities?.RAAST !== false
       && canAuthenticate && freshSetup && !payment.checkoutCard?.approvalStartedAt && !hasAuthenticationIntent(authentication),
     cardEntryResetRequired: newCard && !freshSetup && resettable && canAuthenticate,
     ...(newCard && canAuthenticate ? { tracker: payment.tracker, cardCaptureAuthToken: await client.createAuthToken() } : {}),
@@ -249,7 +251,7 @@ async function hostedCheckout(paymentId, authorization, grant) {
   const tracker = await client.getTracker(payment.tracker, payment);
   const fresh = tracker.state === 'TRACKER_STARTED' && !tracker.charge
     && ['GENERATE_CAPTURE_CONTEXT', 'PAYER_AUTH_SETUP'].includes(tracker.next_actions?.CYBERSOURCE?.kind);
-  if (!fresh || tracker.capabilities?.RAAST !== true || !isOpenPayment(payment)
+  if (!fresh || tracker.capabilities?.RAAST === false || !isOpenPayment(payment)
     || payment.checkoutCard?.approvalStartedAt || hasAuthenticationIntent(payment.savedCardAuthentication)) throw inProgress();
   const at = new Date();
   const selected = await Payment.findOneAndUpdate({ ...openPaymentFilter(paymentId),

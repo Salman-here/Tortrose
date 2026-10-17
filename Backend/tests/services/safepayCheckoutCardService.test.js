@@ -59,6 +59,12 @@ test('the method switch still requires the original owned checkout grant',async(
  await expect(checkout.hostedCheckout(String(payment._id),'Bearer '+ticket,'forged')).rejects.toMatchObject({statusCode:401});
  expect((await stored()).checkoutCard.hostedCheckoutAt).toBeNull();
 });
+
+test('a reporter omitting capabilities delegates the method list to hosted Safepay instead of hiding it',async()=>{
+ expect(tracker.capabilities).toBeUndefined();expect((await view()).canUseHostedCheckout).toBe(true);
+ await expect(checkout.hostedCheckout(String(payment._id),'Bearer '+ticket,grant)).resolves.toMatchObject({paymentId:String(payment._id),checkoutPresentation:'embedded'});
+ expect((await stored()).capturedMinor).toBe(0);
+});
 test('PAN/CVV cannot be smuggled into billing data',async()=>{await expect(checkout.authenticate(String(payment._id),'Bearer '+ticket,{...billing,card_number:'not-a-real-card'},grant,{newCardEntry:true,saveCard:true})).rejects.toMatchObject({code:'SAFEPAY_BILLING_ADDRESS_REQUIRED'});expect(mockClient.createAuthToken).not.toHaveBeenCalled();});
 test('another approval is not automatically repeated after an uncertain browser result',async()=>{await approve(true);await expect(approve(true)).rejects.toMatchObject({code:'SAFEPAY_AUTHENTICATION_IN_PROGRESS'});expect(mockClient.createAuthToken).toHaveBeenCalledTimes(1);await approve(true,{restartAuthentication:true});expect(await Payment.countDocuments()).toBe(1);expect(mockClient.resetCheckoutCardAuthentication).not.toHaveBeenCalled();});
 test('explicit failed-bank retry resets the same tracker without collecting or charging a different order',async()=>{await approve(true);tracker={state:'TRACKER_ENROLLED',next_actions:{CYBERSOURCE:{kind:'PAYER_AUTH_VALIDATION'}}};expect(await view()).toMatchObject({canRestartAuthentication:true,cardEntryResetRequired:true});await approve(true,{restartAuthentication:true});expect(mockClient.resetCheckoutCardAuthentication).toHaveBeenCalledTimes(1);expect(await Payment.countDocuments()).toBe(1);expect((await stored()).capturedMinor).toBe(0);expect((await stored()).tracker).toBe(payment.tracker);});
