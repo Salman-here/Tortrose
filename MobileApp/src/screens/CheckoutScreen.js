@@ -1509,7 +1509,7 @@ export default function CheckoutScreen({ navigation }) {
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel={isProcessing ? 'Processing payment' : paymentButtonLabel}
-            accessibilityState={{ disabled: paymentButtonDisabled, ...(isProcessing ? { busy: true } : {}) }}
+            accessibilityState={{ disabled: paymentButtonDisabled }}
             style={[styles.placeOrderBtn, paymentButtonDisabled && { opacity: 0.7 }]}
             onPress={handlePlaceOrder}
             disabled={paymentButtonDisabled}
