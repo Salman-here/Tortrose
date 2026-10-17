@@ -12,7 +12,9 @@ const hasConfirmedRail = payment => payment?.status === 'paid' && payment.isPaid
 const requirePaymentRail = (payment, expected) => {
   const rail = payment.paymentRail ?? 'unknown';
   if (!['unknown', 'card', 'raast'].includes(rail) || rail === 'raast' && (payment.currency !== 'PKR'
-      || payment.purpose === 'card_setup' || payment.checkoutPresentation === 'saved-card' || expected?.checkoutPresentation === 'saved-card')
+      || payment.purpose === 'card_setup'
+      || payment.checkoutPresentation === 'saved-card' && payment.cardEntryRequired !== true
+      || expected?.checkoutPresentation === 'saved-card' && expected.cardEntryRequired !== true)
     || hasConfirmedRail(expected) && expected.paymentRail && expected.paymentRail !== 'unknown' && rail !== expected.paymentRail) {
     throw failure('The verified payment method is invalid. Check this same payment again.');
   }
@@ -60,13 +62,32 @@ export function normalizeSafepayStatus(response, expectedPaymentId, expected) {
   return { ...payment, status, isPaid: status === 'paid' };
 }
 
-export async function verifySafepayPayment({ apiClient, paymentId, expectedPayment, attempts = 4, delayMs = 1200,
+// Axios' normal timeout also covers unrelated requests and can be retried by
+// interceptors. Bound this read itself so a closed sheet can never trap a button.
+async function readPaymentStatus(apiClient, paymentId, timeoutMs) {
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => apiClient.get(`/api/safepay/payments/${paymentId}`, {
+        timeout: timeoutMs, signal: controller.signal,
+      })),
+      new Promise((_, reject) => { timer = setTimeout(() => {
+        controller.abort();
+        reject(Object.assign(new Error('Payment verification is pending.'), { code: 'SAFEPAY_STATUS_TIMEOUT' }));
+      }, timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+export async function verifySafepayPayment({ apiClient, paymentId, expectedPayment, attempts = 4, delayMs = 1200, requestTimeoutMs = 5000,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   if (!ID.test(String(paymentId || ''))) throw failure('A valid payment reference is required.');
   let last = { status: 'pending', paymentId, isPaid: false };
   for (let index = 0; index < Math.max(1, Math.min(attempts, 10)); index++) {
     try {
-      last = normalizeSafepayStatus(await apiClient.get(`/api/safepay/payments/${paymentId}`), paymentId, expectedPayment || last);
+      last = normalizeSafepayStatus(await readPaymentStatus(apiClient, paymentId,
+        Math.max(1, Math.min(requestTimeoutMs, 15000))), paymentId, expectedPayment || last);
       if (last.status !== 'pending') return last;
     } catch (error) {
       if (error.code === 'SAFEPAY_CHECKOUT_INVALID' || [401, 403, 404].includes(error.response?.status)) throw error;
@@ -87,6 +108,10 @@ export async function openSafepayCheckout({ apiClient, response, openSheet = pre
     try { returned = await (openBrowser ? openBrowser(payment.checkoutUrl) : openSheet(payment)); }
     catch (_) { /* Keep the same attempt and verify; never silently start again. */ }
   }
-  const verified = await verifySafepayPayment({ apiClient, paymentId: payment.paymentId, expectedPayment: payment });
+  // A single short authenticated check catches a success racing dismissal.
+  // Anything still uncertain belongs to the same attempt's check/resume screen,
+  // not a minute of blocking retries on the originating payment button.
+  const verified = await verifySafepayPayment({ apiClient, paymentId: payment.paymentId, expectedPayment: payment,
+    attempts: 1, requestTimeoutMs: 2000 });
   return { ...verified, browserDismissed: returned?.type === 'cancel' || returned?.type === 'dismiss' };
 }

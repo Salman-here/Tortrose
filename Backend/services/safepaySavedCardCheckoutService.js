@@ -125,7 +125,7 @@ async function viewContext(paymentId, authorization, grant) {
     && !tracker.charge && tracker.next_actions?.CYBERSOURCE?.kind === 'GENERATE_CAPTURE_CONTEXT';
   const resettable = canResetSavedCardAuthentication(tracker);
   const resetRecoverable = !authentication?.resetStartedAt || freshSetup || canExplicitlyRetryReset(authentication, tracker);
-  const canAuthenticate = isOpenPayment(payment) && !operationBusy
+  const canAuthenticate = isOpenPayment(payment) && !payment.checkoutCard?.hostedCheckoutAt && !operationBusy
     && resetRecoverable && (freshSetup || canResetSavedCardAuthentication(tracker));
   return { paymentId: String(payment._id), amountMinor: payment.amountMinor, currency: payment.currency,
     environment: config.environment, providerState: tracker.state,
@@ -138,6 +138,8 @@ async function viewContext(paymentId, authorization, grant) {
     authenticationInProgress: operationBusy || !resetRecoverable,
     returnUrl: buildReturnUrl({ backendOrigin: origin(), attempt: String(payment._id), purpose: payment.purpose, surface: claims.surface, outcome: 'return' }),
     cardEntryRequired: newCard,
+    canUseHostedCheckout: newCard && payment.currency === 'PKR' && tracker.capabilities?.RAAST === true
+      && canAuthenticate && freshSetup && !payment.checkoutCard?.approvalStartedAt && !hasAuthenticationIntent(authentication),
     cardEntryResetRequired: newCard && !freshSetup && resettable && canAuthenticate,
     ...(newCard && canAuthenticate ? { tracker: payment.tracker, cardCaptureAuthToken: await client.createAuthToken() } : {}),
     card: newCard ? null : { brand: card.cybersource?.scheme === 1 ? 'Visa' : card.cybersource?.scheme === 2 ? 'Mastercard' : 'Card', last4: card.cybersource.last_four },
@@ -147,6 +149,7 @@ async function authenticate(paymentId, authorization, suppliedBilling, grant, { 
   let { payment, config, client, claims } = await ownedContext(paymentId, authorization, grant);
   const billing = validateBilling(suppliedBilling);
   if (newCardEntry !== isCheckoutCard(payment)) throw fail('Choose the correct secure card flow.', 'SAFEPAY_CARD_SELECTION_INVALID');
+  if (payment.checkoutCard?.hostedCheckoutAt) throw fail('Continue this same payment in Safepay checkout.', 'SAFEPAY_CHECKOUT_CLOSED');
   if (!newCardEntry) await require('./safepayCustomerService').requireOwnedReusableCard(payment.user, payment.cardId);
   payment = await require('./safepayPaymentService').reconcilePayment(payment._id);
   if (!isOpenPayment(payment)) throw fail('This payment has advanced. Close this screen to verify its current status.', 'SAFEPAY_CHECKOUT_CLOSED');
@@ -238,4 +241,25 @@ async function authenticate(paymentId, authorization, suppliedBilling, grant, { 
     { $set: { 'savedCardAuthentication.operationToken': '', 'savedCardAuthentication.operationLeaseUntil': null } });
   }
 }
-module.exports = { buildCheckoutUrl, buildCheckoutContext, verifySessionGrant, ownedContext, viewContext, authenticate, validateBilling, sealContext, unsealContext };
+async function hostedCheckout(paymentId, authorization, grant) {
+  const { payment, client, claims } = await ownedContext(paymentId, authorization, grant);
+  if (!isCheckoutCard(payment) || payment.currency !== 'PKR') throw fail('This payment cannot switch payment methods.', 'SAFEPAY_CARD_SELECTION_INVALID');
+  // Read the same provider tracker before changing presentation. Never reset
+  // bank verification or create another payment to switch methods.
+  const tracker = await client.getTracker(payment.tracker, payment);
+  const fresh = tracker.state === 'TRACKER_STARTED' && !tracker.charge
+    && ['GENERATE_CAPTURE_CONTEXT', 'PAYER_AUTH_SETUP'].includes(tracker.next_actions?.CYBERSOURCE?.kind);
+  if (!fresh || tracker.capabilities?.RAAST !== true || !isOpenPayment(payment)
+    || payment.checkoutCard?.approvalStartedAt || hasAuthenticationIntent(payment.savedCardAuthentication)) throw inProgress();
+  const at = new Date();
+  const selected = await Payment.findOneAndUpdate({ ...openPaymentFilter(paymentId),
+    'checkoutCard.approvalStartedAt': null,
+    'savedCardAuthentication.setupStartedAt': null, 'savedCardAuthentication.resetStartedAt': null,
+    $or: [{ 'savedCardAuthentication.operationLeaseUntil': null }, { 'savedCardAuthentication.operationLeaseUntil': { $lte: at } }] },
+  { $set: { 'checkoutCard.hostedCheckoutAt': at } }, { new: true });
+  if (!selected) throw inProgress();
+  // prepareCheckout revalidates order availability and reconciles this exact
+  // payment again. Only its presentation changes; ownership and money do not.
+  return require('./safepayPaymentService').prepareCheckout(paymentId, { clientSurface: claims.surface });
+}
+module.exports = { buildCheckoutUrl, buildCheckoutContext, verifySessionGrant, ownedContext, viewContext, authenticate, hostedCheckout, validateBilling, sealContext, unsealContext };

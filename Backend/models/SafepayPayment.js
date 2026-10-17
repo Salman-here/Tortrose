@@ -38,6 +38,8 @@ const schema = new mongoose.Schema({
     defaultAppliedAt: { type: Date, default: null },
   },
   checkoutCard: {
+    // Presentation choice only; never evidence that a payment was made.
+    hostedCheckoutAt: { type: Date, default: null },
     consentToSave: { type: Boolean, default: false },
     consentRecordedAt: { type: Date, default: null },
     approvalStartedAt: { type: Date, default: null },

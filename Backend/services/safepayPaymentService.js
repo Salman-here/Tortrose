@@ -184,7 +184,7 @@ function createSafepayPaymentService({
       await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
     }
 
-    if (payment.providerEntryMode === 'tms' || isCheckoutCard(payment)) {
+    if (payment.providerEntryMode === 'tms' || isCheckoutCard(payment) && !payment.checkoutCard?.hostedCheckoutAt) {
       const saved = savedCheckoutFor(payment, clientSurface);
       const checkoutUrl = typeof saved === 'string' ? saved : saved.checkoutUrl;
       return { ...paymentResponse(payment), ...(typeof saved === 'object' ? saved : {}), checkoutPresentation: 'saved-card',

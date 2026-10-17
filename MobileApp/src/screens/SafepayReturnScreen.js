@@ -6,7 +6,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
-import { verifySafepayPayment } from '../utils/safepayCheckout';
+import { openSafepayCheckout, verifySafepayPayment } from '../utils/safepayCheckout';
 import { getOriginalPaymentRefundCopy } from '../utils/paymentPresentation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearCheckoutAttempt } from '../utils/checkout';
@@ -19,24 +19,41 @@ export default function SafepayReturnScreen({ route, navigation }) {
   const [checking, setChecking] = useState(false);
   const mounted = useRef(true);
   const completed = useRef('');
+  const busy = useRef(false);
   const attempt = route.params || {};
+  const applyResult = useCallback(async next => {
+    if (!mounted.current) return;
+    setResult(next);
+    if (next.status === 'paid' && next.purpose === 'order' && completed.current !== paymentId) {
+      completed.current = paymentId;
+      await fetchCart();
+      if (attempt.checkoutAttemptStorageKey && attempt.checkoutAttemptFingerprint && attempt.checkoutAttemptKey) {
+        await clearCheckoutAttempt(AsyncStorage, attempt.checkoutAttemptStorageKey, attempt.checkoutAttemptFingerprint, attempt.checkoutAttemptKey);
+      }
+    }
+  }, [paymentId, fetchCart, attempt.checkoutAttemptStorageKey, attempt.checkoutAttemptFingerprint, attempt.checkoutAttemptKey]);
   const check = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true;
     setChecking(true);
     try {
-      const next = await verifySafepayPayment({ apiClient: api, paymentId, attempts: 6 });
-      if (!mounted.current) return;
-      setResult(next);
-      if (next.status === 'paid' && next.purpose === 'order' && completed.current !== paymentId) {
-        completed.current = paymentId;
-        await fetchCart();
-        if (attempt.checkoutAttemptStorageKey && attempt.checkoutAttemptFingerprint && attempt.checkoutAttemptKey) {
-          await clearCheckoutAttempt(AsyncStorage, attempt.checkoutAttemptStorageKey, attempt.checkoutAttemptFingerprint, attempt.checkoutAttemptKey);
-        }
-      }
+      await applyResult(await verifySafepayPayment({ apiClient: api, paymentId, attempts: 1 }));
     } catch (error) {
       if (mounted.current) setResult({ status: 'unavailable', message: error.response?.data?.msg || error.message });
-    } finally { if (mounted.current) setChecking(false); }
-  }, [paymentId, fetchCart, attempt.checkoutAttemptStorageKey, attempt.checkoutAttemptFingerprint, attempt.checkoutAttemptKey]);
+    } finally { busy.current = false; if (mounted.current) setChecking(false); }
+  }, [paymentId, applyResult]);
+  const resume = async () => {
+    if (busy.current) return;
+    busy.current = true;
+    setChecking(true);
+    try {
+      const response = await api.post(`/api/safepay/payments/${paymentId}/reopen`, { clientSurface: 'mobile' });
+      if (response.data?.paymentId !== paymentId) throw new Error('The original payment could not be verified.');
+      if (mounted.current) await applyResult(await openSafepayCheckout({ apiClient: api, response }));
+    } catch (error) {
+      if (mounted.current) setResult({ status: 'unavailable', message: error.response?.data?.msg || 'This payment could not be reopened. Check its status before paying again.' });
+    } finally { busy.current = false; if (mounted.current) setChecking(false); }
+  };
   useEffect(() => { mounted.current = true; check(); return () => { mounted.current = false; }; }, [check]);
   const paid = result.status === 'paid';
   const authorized = result.status === 'authorized' && result.purpose === 'card_setup';
@@ -56,6 +73,7 @@ export default function SafepayReturnScreen({ route, navigation }) {
     <Text style={[styles.body, { color: palette.colors.textSecondary }]}>{message}</Text>
     {result.environment === 'sandbox' && <Text style={[styles.body, { color: palette.colors.textSecondary }]}>Safepay sandbox · Test payment</Text>}
     {checking ? <ActivityIndicator /> : !paid && !authorized && !closed && <TouchableOpacity onPress={check} style={styles.button} accessibilityRole="button"><Text style={styles.buttonText}>Check payment</Text></TouchableOpacity>}
+    {!checking && result.status === 'pending' && <TouchableOpacity onPress={resume} style={styles.button} accessibilityRole="button"><Text style={styles.buttonText}>Resume secure checkout</Text></TouchableOpacity>}
     <TouchableOpacity onPress={() => navigation.navigate('MainTabs')} style={styles.button} accessibilityRole="button"><Text style={styles.buttonText}>Return to Rozare</Text></TouchableOpacity>
   </GlassPanel></View></GlassBackground>;
 }

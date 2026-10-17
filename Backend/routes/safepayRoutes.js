@@ -11,6 +11,7 @@ router.get('/saved-checkout/:paymentId', savedCheckout.page);
 router.post('/saved-checkout/:paymentId/context', paymentStatusPollingLimiter, savedCheckout.context);
 router.post('/saved-checkout/:paymentId/authenticate', orderPaymentCreationLimiter, savedCheckout.authenticate);
 router.post('/saved-checkout/:paymentId/card-entry', orderPaymentCreationLimiter, savedCheckout.cardEntry);
+router.post('/saved-checkout/:paymentId/hosted', orderPaymentCreationLimiter, savedCheckout.hostedCheckout);
 router.get('/return', controller.returnToApp);
 router.get('/return/:surface/:purpose/:attempt/:outcome', controller.returnToApp);
 router.get('/config', auth, controller.getConfig);

@@ -45,3 +45,9 @@ exports.cardEntry = async (req, res) => {
       restartAuthentication: req.body.restartAuthentication === true })); }
   catch (error) { return errorResponse(res, error); }
 };
+exports.hostedCheckout = async (req, res) => {
+  res.set('Cache-Control', 'no-store, private');
+  if (req.body && Object.keys(req.body).length) return res.status(400).json({ code: 'SAFEPAY_CARD_SELECTION_INVALID', msg: 'Continue the existing payment without changing its details.' });
+  try { return res.json(await service.hostedCheckout(req.params.paymentId, req.get('Authorization'), req.get('X-Rozare-Checkout-Grant'))); }
+  catch (error) { return errorResponse(res, error); }
+};

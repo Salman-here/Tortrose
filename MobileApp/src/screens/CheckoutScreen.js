@@ -289,6 +289,9 @@ export default function CheckoutScreen({ navigation }) {
   };
   const taxUnavailable = taxStatus !== 'ready';
   const checkoutBlocked = !isCartReady || taxUnavailable || checkoutRatesUnavailable || !checkoutQuote.ready;
+  const hasPendingSafepayPayment = !!(paymentNotice?.safepay && paymentNotice?.paymentId);
+  const paymentButtonDisabled = isProcessing || !hasPendingSafepayPayment
+    && (summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error);
   const formatShippingOptionPrice = (method, sellerInfo = null) => {
     if (method?.type === 'free') return 'Free';
     const sourceAmount = method?.cost ?? 0;
@@ -728,6 +731,15 @@ export default function CheckoutScreen({ navigation }) {
 
   const handlePlaceOrder = async () => {
     if (submittingRef.current || isProcessing) return;
+    if (hasPendingSafepayPayment) {
+      navigation.navigate('SafepayReturn', {
+        paymentId: paymentNotice.paymentId, orderId: paymentNotice.orderId,
+        checkoutAttemptStorageKey: paymentNotice.checkoutAttemptStorageKey,
+        checkoutAttemptFingerprint: paymentNotice.checkoutAttemptFingerprint,
+        checkoutAttemptKey: paymentNotice.checkoutAttemptKey,
+      });
+      return;
+    }
     trackCheckoutStep('place_order_clicked', { paymentMethod, items: cartItems?.cart?.length, total: totalAmount });
     setPaymentNotice(null);
     if (!isCartReady) {
@@ -836,8 +848,7 @@ export default function CheckoutScreen({ navigation }) {
     try {
       const draftOrder = buildOrder('');
       if (paymentMethod === 'card') {
-        if (savedCards.selectedCardId === 'raast') draftOrder.safepayCheckout = 'hosted';
-        else if (savedCards.selectedCardId) draftOrder.savedCardId = savedCards.selectedCardId;
+        if (savedCards.selectedCardId && savedCards.selectedCardId !== 'raast') draftOrder.savedCardId = savedCards.selectedCardId;
         else draftOrder.safepayCheckout = 'card';
       }
       const actorId = String(currentUser?._id || currentUser?.id || 'guest');
@@ -875,13 +886,12 @@ export default function CheckoutScreen({ navigation }) {
             checkoutAttemptStorageKey, checkoutAttemptFingerprint: fingerprint, checkoutAttemptKey: checkoutAttempt.key });
           return;
         }
-        const verified = await openSafepayCheckout({ apiClient: api, response: res });
         if (!savedShippingInfo?.fullName || hasShippingInfoChanged()) {
-          try {
-            await api.patch('/api/user/shipping-info', { shippingInfo: formData });
-            setSavedShippingInfo(formData);
-          } catch {}
+          // Saving an address must not keep a closed payment button spinning.
+          api.patch('/api/user/shipping-info', { shippingInfo: formData })
+            .then(() => setSavedShippingInfo(formData)).catch(() => {});
         }
+        const verified = await openSafepayCheckout({ apiClient: api, response: res });
         if (verified.status === 'paid') {
           await resetCheckoutAttempt();
           navigation.replace('PaymentSuccess', { orderId,
@@ -1421,7 +1431,7 @@ export default function CheckoutScreen({ navigation }) {
               </View>
               <Ionicons name="shield-checkmark-outline" size={16} color={palette.colors.success} />
             </TouchableOpacity>
-            {paymentMethod === 'card' && <SavedSafepayCardPicker {...savedCards} currency={currency} disabled={isProcessing} merchantCheckout />}
+            {paymentMethod === 'card' && <SavedSafepayCardPicker {...savedCards} currency={currency} disabled={isProcessing} />}
             <View style={{ height: 10 }} />
             <TouchableOpacity
               style={[
@@ -1495,15 +1505,17 @@ export default function CheckoutScreen({ navigation }) {
             <Text style={styles.footerValue}>{checkoutMoney(totalAmount)}</Text>
           </View>
           <TouchableOpacity
-            style={[styles.placeOrderBtn, (isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error) && { opacity: 0.55 }]}
+            accessibilityRole="button"
+            accessibilityState={{ busy: isProcessing, disabled: paymentButtonDisabled }}
+            style={[styles.placeOrderBtn, paymentButtonDisabled && { opacity: 0.7 }]}
             onPress={handlePlaceOrder}
-            disabled={isProcessing || summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error}
+            disabled={paymentButtonDisabled}
           >
             <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-            {isProcessing ? <InlineLoader size="small" color="#fff" /> : (
+            {isProcessing ? <><ActivityIndicator size="small" color="#fff" /><Text style={styles.placeOrderText}>Processing…</Text></> : (
               <>
                 <Ionicons name={paymentMethod === 'card' ? 'card-outline' : paymentMethod === 'wallet' ? 'wallet-outline' : 'bag-check-outline'} size={20} color="#fff" />
-                <Text style={styles.placeOrderText}>{paymentMethod === 'card' ? savedCards.selectedCardId === 'raast' ? 'Pay with Raast' : 'Pay with Card' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order'}</Text>
+                <Text style={styles.placeOrderText}>{hasPendingSafepayPayment ? 'Check or resume payment' : paymentMethod === 'card' ? 'Pay with Safepay' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order'}</Text>
               </>
             )}
           </TouchableOpacity>

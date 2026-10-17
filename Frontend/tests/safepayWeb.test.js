@@ -79,6 +79,7 @@ test('pending hosted card selection may switch to Raast while captured or saved-
   // A raw review/status marker without captured evidence does not freeze a pre-payment selection.
   assert.equal(validateSafepayPayment(paidRaast, payment({ paymentRail: 'card', status: 'manual_review' })).paymentRail, 'raast');
   assert.throws(() => validateSafepayPayment({ ...paidRaast, checkoutPresentation: 'saved-card' }));
+  assert.equal(validateSafepayPayment(paidRaast, payment({ paymentRail: 'card', checkoutPresentation: 'saved-card', cardEntryRequired: true })).status, 'paid');
   assert.equal(validateSafepayPayment({ ...paidRaast, webhookProcessed: false }, pendingCard).status, 'pending');
 });
 test('policy pages are public and payment return is private/noindex', () => {

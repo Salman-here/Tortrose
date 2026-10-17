@@ -2,11 +2,11 @@
 const vm=require('node:vm');
 const {renderSavedCardCheckout}=require('../../services/safepaySavedCardCheckoutHtml');
 const response=data=>({ok:true,json:async()=>data});
-const context=extra=>({currency:'PKR',amountMinor:1200,environment:'sandbox',tracker:'track_browser-card-fixture',card:null,cardEntryRequired:true,cardCaptureAuthToken:'temporary-private-capture-token',billing:{street_1:'QA billing street',city:'Lahore',state:'Punjab',country:'PK',postal_code:'54000'},canAuthenticate:true,canRestartAuthentication:false,cardEntryResetRequired:false,returnUrl:'https://rozare.com/safepay/return',...extra});
+const context=extra=>({paymentId:'a'.repeat(24),currency:'PKR',amountMinor:1200,environment:'sandbox',tracker:'track_browser-card-fixture',card:null,cardEntryRequired:true,cardCaptureAuthToken:'temporary-private-capture-token',billing:{street_1:'QA billing street',city:'Lahore',state:'Punjab',country:'PK',postal_code:'54000'},canAuthenticate:true,canRestartAuthentication:false,cardEntryResetRequired:false,returnUrl:'https://rozare.com/safepay/return',...extra});
 const approval=saveCard=>({environment:'sandbox',tracker:'track_browser-card-fixture',authToken:'temporary-private-payer-token',billing:{country:'PK'},saveCard,returnUrl:'https://rozare.com/safepay/return'});
 const settled=()=>new Promise(r=>setImmediate(r));
 function screen(fetchImpl){
- const elements=new Map(),created=[];const el=id=>{if(!elements.has(id))elements.set(id,{value:'',checked:false,hidden:true,disabled:false,textContent:'',replaceChildren:jest.fn()});return elements.get(id);};
+ const elements=new Map(),created=[];const el=id=>{if(!elements.has(id))elements.set(id,{value:'',checked:false,hidden:true,disabled:false,textContent:'',replaceChildren:jest.fn(),insertAdjacentElement:jest.fn()});return elements.get(id);};
  const window={addEventListener:jest.fn()};window.parent=window;const location={hash:'#ticket=private-fixture',pathname:'/api/safepay/saved-checkout/fixture',replace:jest.fn()};
  const script=renderSavedCardCheckout({nonce:'abcdefghijklmnopqrstuvwx',initialGrant:'private-fixture-grant'}).match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/)[1];
  vm.runInNewContext(script,{document:{getElementById:el,createElement:tag=>{const o={tag,fetchValidity:jest.fn(async()=>true),submit:jest.fn()};created.push(o);return o;}},window,location,fetch:fetchImpl,customElements:{get:()=>true},URLSearchParams,URL,Intl,setTimeout:()=>0});
@@ -23,3 +23,17 @@ test('payer authentication uses server-recorded consent, not a later checkbox ch
 test('duplicate provider setup callbacks cannot mount authentication twice',async()=>{const f=jest.fn().mockResolvedValueOnce(response(context())).mockResolvedValueOnce(response(approval(true)));const s=screen(f);await settled();const c=s.created[0];c.onReady();await s.el('form').onsubmit({preventDefault(){}});const setup={accessToken:'private-ddc',deviceDataCollectionURL:'https://cas.client.cardinaltrusted.com/collect'};await c.onProceedToAuthentication(setup);await c.onProceedToAuthentication(setup);expect(s.created.filter(x=>x.tag==='safepay-payer-auth-atom')).toHaveLength(1);});
 test('invalid card fields do not record approval or start a financial journey',async()=>{const f=jest.fn().mockResolvedValue(response(context()));const s=screen(f);await settled();const c=s.created[0];c.onReady();c.fetchValidity.mockResolvedValue(false);await s.el('form').onsubmit({preventDefault(){}});expect(f.mock.calls.every(([url])=>url.endsWith('/context'))).toBe(true);expect(c.submit).not.toHaveBeenCalled();expect(s.location.replace).not.toHaveBeenCalled();});
 test('an advanced bank flow offers explicit restart before recreating card entry',async()=>{const f=jest.fn().mockResolvedValueOnce(response(context({canRestartAuthentication:true,cardEntryResetRequired:true}))).mockResolvedValueOnce(response(approval(true))).mockResolvedValueOnce(response(context({canRestartAuthentication:true})));const s=screen(f);await settled();expect(s.created).toHaveLength(0);s.el('save-card').checked=true;await s.el('form').onsubmit({preventDefault(){}});expect(JSON.parse(f.mock.calls[1][1].body)).toMatchObject({restartAuthentication:true,saveCard:true});expect(s.created).toHaveLength(1);expect(s.created[0].submit).not.toHaveBeenCalled();expect(s.location.replace).not.toHaveBeenCalled();});
+
+test('Raast is chosen inside secure checkout without submitting any card details',async()=>{
+ const c=context({canUseHostedCheckout:true});const next={paymentId:c.paymentId,environment:c.environment,currency:c.currency,amountMinor:c.amountMinor,checkoutUrl:'https://sandbox.api.getsafepay.com/embedded/?environment=sandbox&tracker=track_browser-card-fixture'};
+ const f=jest.fn().mockResolvedValueOnce(response(c)).mockResolvedValueOnce(response(next));const s=screen(f);await settled();
+ expect(s.el('raast').hidden).toBe(false);expect(s.el('form').insertAdjacentElement).toHaveBeenCalledWith('beforebegin',s.el('raast'));
+ await s.el('raast').onclick();expect(f.mock.calls[1][0]).toMatch(/\/hosted$/);expect(JSON.parse(f.mock.calls[1][1].body)).toEqual({});
+ expect(s.location.replace).toHaveBeenCalledWith(next.checkoutUrl);expect(s.created[0].submit).not.toHaveBeenCalled();
+});
+
+test.each(['different-payment','different-amount','wrong-host'])('a %s method-switch reply cannot replace this payment screen',async scenario=>{
+ const c=context({canUseHostedCheckout:true});const next={paymentId:c.paymentId,environment:c.environment,currency:c.currency,amountMinor:c.amountMinor,checkoutUrl:'https://sandbox.api.getsafepay.com/embedded/'};
+ if(scenario==='different-payment')next.paymentId='b'.repeat(24);if(scenario==='different-amount')next.amountMinor++;if(scenario==='wrong-host')next.checkoutUrl='https://evil.example/embedded/';
+ const s=screen(jest.fn().mockResolvedValueOnce(response(c)).mockResolvedValueOnce(response(next)));await settled();await s.el('raast').onclick();expect(s.location.replace).not.toHaveBeenCalled();expect(s.el('check').hidden).toBe(false);
+});

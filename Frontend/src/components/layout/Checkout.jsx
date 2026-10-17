@@ -186,7 +186,7 @@ function OwnedCheckout({ owner }) {
     refreshExchangeRates,
   } = useCurrency();
   useEffect(() => {
-    if (currency !== 'PKR' && selectedCheckoutCard === 'raast') selectCheckoutCard('');
+    if (selectedCheckoutCard === 'raast') selectCheckoutCard('');
   }, [currency, selectedCheckoutCard, selectCheckoutCard]);
 
   const { cartItems, handleQtyInc, handleQtyDec, handleRemoveCartItem, isCartLoading,
@@ -1114,8 +1114,7 @@ function OwnedCheckout({ owner }) {
           : data.paymentMethod === "safepay"
             ? "safepay"
             : "cash_on_delivery",
-      ...(data.paymentMethod === 'safepay' ? savedCards.selectedCardId === 'raast'
-        ? { safepayCheckout: 'hosted' } : savedCards.selectedCardId ? { savedCardId: savedCards.selectedCardId }
+      ...(data.paymentMethod === 'safepay' ? savedCards.selectedCardId && savedCards.selectedCardId !== 'raast' ? { savedCardId: savedCards.selectedCardId }
           : { safepayCheckout: 'card' } : {}),
 
       tracking: {
@@ -2083,7 +2082,7 @@ function OwnedCheckout({ owner }) {
                               Continue to Safepay's secure checkout.
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                              Enter a new card securely with Safepay and choose whether to save it to Rozare, or use a saved card.
+                              {currency === 'PKR' ? 'Choose card or Raast inside secure checkout, or pay with a saved card.' : 'Enter your card securely in Safepay, or pay with a saved card.'}
                             </p>
                           </div>
                           {currentUser && (
@@ -2096,14 +2095,13 @@ function OwnedCheckout({ owner }) {
                             </button>
                           )}
                         </div>
-                        <label className="block text-sm mt-4">Payment option
+                        {savedCards.cards.length > 0 && <label className="block text-sm mt-4">Saved card or secure checkout
                           <select aria-label="Payment card" value={savedCards.selectedCardId} disabled={isProcessing}
                             onChange={event => savedCards.setSelectedCardId(event.target.value)} className="glass-input w-full mt-2">
-                            <option value="">Use a new card</option>
+                            <option value="">{currency === 'PKR' ? 'Choose card or Raast in Safepay' : 'Continue with Safepay'}</option>
                             {savedCards.cards.map(card => <option key={card.id} value={card.id}>{String(card.brand || 'Card').toUpperCase()} ending {card.last4}</option>)}
-                            {currency === 'PKR' && <option value="raast">Pay with Raast</option>}
                           </select>
-                        </label>
+                        </label>}
                       </motion.div>
                     )}
 

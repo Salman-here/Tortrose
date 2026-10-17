@@ -4,7 +4,7 @@ const {MongoMemoryReplSet}=require('mongodb-memory-server');
 const Payment=require('../../models/SafepayPayment'),Customer=require('../../models/SafepayCustomer'),User=require('../../models/User');
 const mockClient={getTracker:jest.fn(),createAuthToken:jest.fn(),resetCheckoutCardAuthentication:jest.fn(),listCards:jest.fn(),getCard:jest.fn()};
 jest.mock('../../services/safepayClient',()=>({...jest.requireActual('../../services/safepayClient'),createSafepayClient:()=>mockClient}));
-jest.mock('../../services/safepayPaymentService',()=>({reconcilePayment:async id=>require('../../models/SafepayPayment').findById(id)}));
+jest.mock('../../services/safepayPaymentService',()=>({reconcilePayment:async id=>require('../../models/SafepayPayment').findById(id),prepareCheckout:jest.fn(async(id,options)=>({paymentId:String(id),clientSurface:options.clientSurface,checkoutPresentation:'embedded'}))}));
 const {POLICY,synchronizeCheckoutCard}=require('../../services/safepayCheckoutCardService');
 const checkout=require('../../services/safepaySavedCardCheckoutService');
 const testEnv={SAFEPAY_ENV:'sandbox',SAFEPAY_SANDBOX_PUBLIC_KEY:'sec_checkout-card-fixture',SAFEPAY_SANDBOX_SECRET_KEY:'private-card-checkout-test-secret',SAFEPAY_SANDBOX_WEBHOOK_SECRET:'private-card-checkout-webhook',SAFEPAY_SANDBOX_WEBHOOK_SCHEME:'sha512-data'};
@@ -30,6 +30,35 @@ test.each([undefined,null,1,'true',[]])('invalid consent %j cannot start card en
 test('a copied URL or a different signed-in checkout grant cannot reveal card-entry configuration',async()=>{await expect(checkout.viewContext(String(payment._id),'Bearer '+ticket)).rejects.toMatchObject({statusCode:401});const other=checkout.buildCheckoutContext(payment,'web');await expect(checkout.viewContext(String(payment._id),'Bearer '+ticket,other.checkoutSessionGrant)).rejects.toMatchObject({statusCode:401});expect(mockClient.createAuthToken).not.toHaveBeenCalled();});
 test('a replaced customer link and a blocked buyer cannot authorize card entry',async()=>{await Customer.updateOne({_id:link._id},{$set:{status:'deleted'}});await expect(view()).rejects.toMatchObject({code:'SAFEPAY_CUSTOMER_MISMATCH'});await expect(approve(true)).rejects.toMatchObject({code:'SAFEPAY_CUSTOMER_MISMATCH'});await User.updateOne({_id:payment.user},{$set:{status:'blocked'}});await expect(view()).rejects.toMatchObject({code:'SAFEPAY_ACCOUNT_UNAVAILABLE'});});
 test('new-card and saved-card approval endpoints cannot be substituted',async()=>{await expect(checkout.authenticate(String(payment._id),'Bearer '+ticket,billing,grant)).rejects.toMatchObject({code:'SAFEPAY_CARD_SELECTION_INVALID'});});
+
+test('Raast-capable new-card checkout switches inside the secure screen and resumes the same frozen payment',async()=>{
+ tracker.capabilities={RAAST:true};
+ expect((await view()).canUseHostedCheckout).toBe(true);
+ const result=await checkout.hostedCheckout(String(payment._id),'Bearer '+ticket,grant);
+ expect(result).toMatchObject({paymentId:String(payment._id),clientSurface:'web',checkoutPresentation:'embedded'});
+ const current=await stored();expect(current.checkoutCard.hostedCheckoutAt).toBeInstanceOf(Date);
+ expect(current).toMatchObject({amountMinor:1200,currency:'PKR',tracker:payment.tracker,status:'ready',capturedMinor:0});
+ expect(current.checkoutCard.consentToSave).toBe(false);expect(await Payment.countDocuments()).toBe(1);
+ expect((await view()).canAuthenticate).toBe(false);
+ await expect(approve(true)).rejects.toMatchObject({code:'SAFEPAY_CHECKOUT_CLOSED'});
+});
+
+test.each(['no-capability','advanced-tracker','card-approved','busy','closed'])('switching methods cannot bypass %s',async scenario=>{
+ tracker.capabilities={RAAST:true};
+ if(scenario==='no-capability')tracker.capabilities.RAAST=false;
+ if(scenario==='advanced-tracker')tracker.state='TRACKER_ENROLLED';
+ if(scenario==='card-approved')await approve(false);
+ if(scenario==='busy')await Payment.updateOne({_id:payment._id},{$set:{'savedCardAuthentication.operationLeaseUntil':new Date(Date.now()+60000)}});
+ if(scenario==='closed')await Payment.updateOne({_id:payment._id},{$set:{status:'cancelled'}});
+ await expect(checkout.hostedCheckout(String(payment._id),'Bearer '+ticket,grant)).rejects.toMatchObject({code:'SAFEPAY_AUTHENTICATION_IN_PROGRESS'});
+ expect((await stored()).checkoutCard.hostedCheckoutAt).toBeNull();
+});
+
+test('the method switch still requires the original owned checkout grant',async()=>{
+ tracker.capabilities={RAAST:true};
+ await expect(checkout.hostedCheckout(String(payment._id),'Bearer '+ticket,'forged')).rejects.toMatchObject({statusCode:401});
+ expect((await stored()).checkoutCard.hostedCheckoutAt).toBeNull();
+});
 test('PAN/CVV cannot be smuggled into billing data',async()=>{await expect(checkout.authenticate(String(payment._id),'Bearer '+ticket,{...billing,card_number:'not-a-real-card'},grant,{newCardEntry:true,saveCard:true})).rejects.toMatchObject({code:'SAFEPAY_BILLING_ADDRESS_REQUIRED'});expect(mockClient.createAuthToken).not.toHaveBeenCalled();});
 test('another approval is not automatically repeated after an uncertain browser result',async()=>{await approve(true);await expect(approve(true)).rejects.toMatchObject({code:'SAFEPAY_AUTHENTICATION_IN_PROGRESS'});expect(mockClient.createAuthToken).toHaveBeenCalledTimes(1);await approve(true,{restartAuthentication:true});expect(await Payment.countDocuments()).toBe(1);expect(mockClient.resetCheckoutCardAuthentication).not.toHaveBeenCalled();});
 test('explicit failed-bank retry resets the same tracker without collecting or charging a different order',async()=>{await approve(true);tracker={state:'TRACKER_ENROLLED',next_actions:{CYBERSOURCE:{kind:'PAYER_AUTH_VALIDATION'}}};expect(await view()).toMatchObject({canRestartAuthentication:true,cardEntryResetRequired:true});await approve(true,{restartAuthentication:true});expect(mockClient.resetCheckoutCardAuthentication).toHaveBeenCalledTimes(1);expect(await Payment.countDocuments()).toBe(1);expect((await stored()).capturedMinor).toBe(0);expect((await stored()).tracker).toBe(payment.tracker);});

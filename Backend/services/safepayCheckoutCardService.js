@@ -40,7 +40,7 @@ async function synchronizeCheckoutCard(payment, tracker, config, client, at = ne
 }
 
 async function prepareCardEntry({ payment, client, billing, saveCard, restartAuthentication, operationToken }) {
-  if (!isCheckoutCard(payment) || typeof saveCard !== 'boolean') throw fail('Choose whether to save this card for future Rozare purchases.', 'SAFEPAY_CARD_CONSENT_INVALID', 400);
+  if (!isCheckoutCard(payment) || payment.checkoutCard?.hostedCheckoutAt || typeof saveCard !== 'boolean') throw fail('Choose whether to save this card for future Rozare purchases.', 'SAFEPAY_CARD_CONSENT_INVALID', 400);
   const link = await Customer.findOne({ user: payment.user, environment: payment.environment, customerId: payment.customerId, status: 'ready' });
   if (!link) throw fail('This checkout profile does not belong to your account.', 'SAFEPAY_CUSTOMER_MISMATCH');
   const tracker = await client.getTracker(payment.tracker, payment);
@@ -75,7 +75,7 @@ async function prepareCardEntry({ payment, client, billing, saveCard, restartAut
   }
   const started = new Date();
   const updated = await Payment.findOneAndUpdate({ _id: payment._id, status: 'ready', appliedAt: null,
-    localCancelledAt: null, riskPending: false, capturedMinor: 0,
+    localCancelledAt: null, riskPending: false, capturedMinor: 0, 'checkoutCard.hostedCheckoutAt': null,
     'savedCardAuthentication.operationToken': operationToken, 'savedCardAuthentication.operationLeaseUntil': { $gt: started } },
   { $set: { 'checkoutCard.consentToSave': saveCard, 'checkoutCard.consentRecordedAt': saveCard ? started : null,
     'checkoutCard.approvalStartedAt': started, 'checkoutCard.syncStatus': saveCard ? 'pending' : 'not_requested',

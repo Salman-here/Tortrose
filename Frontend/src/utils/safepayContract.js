@@ -15,7 +15,9 @@ export const validateSafepayPayment = (payment, expected) => {
   if (expected && ['paymentId', 'environment', 'purpose', 'currency', 'amountMinor'].some(key => payment[key] !== expected[key])) throw fail();
   const paymentRail = payment.paymentRail ?? 'unknown';
   if (!['unknown', 'card', 'raast'].includes(paymentRail) || paymentRail === 'raast' && (payment.currency !== 'PKR'
-      || payment.purpose === 'card_setup' || payment.checkoutPresentation === 'saved-card' || expected?.checkoutPresentation === 'saved-card')
+      || payment.purpose === 'card_setup'
+      || payment.checkoutPresentation === 'saved-card' && payment.cardEntryRequired !== true
+      || expected?.checkoutPresentation === 'saved-card' && expected.cardEntryRequired !== true)
     || hasConfirmedRail(expected) && expected.paymentRail && expected.paymentRail !== 'unknown' && paymentRail !== expected.paymentRail) throw fail();
   const status = payment.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true ? 'paid'
     : payment.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true ? 'authorized'

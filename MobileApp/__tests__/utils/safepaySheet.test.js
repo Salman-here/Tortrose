@@ -11,6 +11,12 @@ test('permits HTTPS bank authentication and empty provider frames', () => {
   expect(safepayNavigationAction('https://issuer.example/3ds', 'sandbox')).toBe('allow');
   expect(safepayNavigationAction('about:blank', 'sandbox')).toBe('allow');
 });
+
+test('both owned callback formats close the sheet without claiming a payment outcome', () => {
+  for (const outcome of ['return', 'cancel']) expect(safepayNavigationAction(
+    `https://rozare.up.railway.app/api/safepay/return/mobile/order/${'a'.repeat(24)}/${outcome}`, 'production')).toBe('complete');
+  expect(safepayNavigationAction(`https://evil.example/api/safepay/return/mobile/order/${'a'.repeat(24)}/cancel`, 'production')).toBe('allow');
+});
 test('presenter is in-memory and cannot be reused after unmount', async () => {
   const show = jest.fn(async () => ({ type: 'dismiss' }));
   const stop = registerSafepayPresenter(show);

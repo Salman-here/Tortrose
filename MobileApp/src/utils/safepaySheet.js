@@ -16,7 +16,8 @@ export function safepayNavigationAction(raw, environment) {
   if (url.protocol !== 'https:' || url.username || url.password) return 'block';
   const host = environment === 'sandbox' ? 'sandbox.api.getsafepay.com' : 'getsafepay.com';
   if (url.hostname === host && /^\/(?:embedded\/)?external\/(?:complete|error)\/?$/.test(url.pathname)) return 'complete';
-  if (url.hostname === 'rozare.up.railway.app' && url.pathname === '/api/safepay/return') return 'complete';
+  if (url.hostname === 'rozare.up.railway.app' && (url.pathname === '/api/safepay/return'
+    || /^\/api\/safepay\/return\/(?:web|mobile)\/(?:order|wallet_top_up|subdomain|return_settlement|card_setup)\/[a-f0-9]{24}\/(?:return|cancel)$/.test(url.pathname))) return 'complete';
   // HTTPS issuer/3DS redirects may be necessary. No URL or page message is
   // financial proof; the authenticated backend verifies the owned payment.
   return 'allow';

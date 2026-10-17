@@ -48,6 +48,7 @@ test('native pending card selection may switch to Raast, but captured and saved-
     expect(() => normalizeSafepayStatus(paid, paymentId, expected)).toThrow();
   }
   expect(normalizeSafepayStatus({ ...paid, webhookProcessed: false }, paymentId, pending).status).toBe('pending');
+  expect(normalizeSafepayStatus(paid, paymentId, { ...pending, checkoutPresentation: 'saved-card', cardEntryRequired: true }).status).toBe('paid');
   expect(() => validateSafepayCheckout({ ...paid, checkoutPresentation: 'saved-card' })).toThrow();
   const apiClient = { get: jest.fn(async () => ({ data: paid })) };
   const result = await openSafepayCheckout({ apiClient, response: pending, openBrowser: async () => ({ type: 'dismiss' }) });
@@ -60,7 +61,8 @@ test('browser cancellation can race success: trust only authenticated backend ve
   const result = await openSafepayCheckout({ apiClient, response: payment, openBrowser });
   expect(result.status).toBe('paid');
   expect(result.browserDismissed).toBe(true);
-  expect(apiClient.get).toHaveBeenCalledWith(`/api/safepay/payments/${paymentId}`);
+  expect(apiClient.get).toHaveBeenCalledWith(`/api/safepay/payments/${paymentId}`,
+    expect.objectContaining({ timeout: 2000, signal: expect.any(Object) }));
 });
 test('an interrupted browser still checks backend state without creating another payment', async () => {
   const apiClient = { get: jest.fn(async () => ({ data: { ...payment, status: 'cancelled' } })) };
@@ -79,4 +81,29 @@ test('another owner or an invalid reference fails closed', async () => {
   const apiClient = { get: jest.fn() };
   await expect(verifySafepayPayment({ apiClient, paymentId: '../someone' })).rejects.toThrow();
   expect(apiClient.get).not.toHaveBeenCalled();
+});
+
+test.each(['dismiss', 'cancel', 'return'])('a closed sheet (%s) performs one quick check, not blocking polling', async type => {
+  const apiClient = { get: jest.fn(async () => ({ data: payment })) };
+  const result = await openSafepayCheckout({ apiClient, response: payment, openSheet: async () => ({ type }) });
+  expect(result.status).toBe('pending');
+  expect(result.paymentId).toBe(paymentId);
+  expect(apiClient.get).toHaveBeenCalledTimes(1);
+});
+
+test('a stalled status request cannot keep a closed payment button busy or report cancellation', async () => {
+  jest.useFakeTimers();
+  try {
+    let complete;
+    const apiClient = { get: jest.fn(() => new Promise(resolve => { complete = resolve; })) };
+    const result = openSafepayCheckout({ apiClient, response: payment, openSheet: async () => ({ type: 'cancel' }) });
+    await jest.advanceTimersByTimeAsync(2000);
+    await expect(result).resolves.toMatchObject({ status: 'pending', paymentId, isPaid: false, browserDismissed: true });
+    expect(apiClient.get.mock.calls[0][1].signal.aborted).toBe(true);
+    // A late response cannot mutate the already-returned result or create a retry.
+    complete({ data: { ...payment, status: 'paid', isPaid: true, webhookProcessed: true } });
+    await jest.runAllTimersAsync();
+    expect(apiClient.get).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  } finally { jest.useRealTimers(); }
 });
