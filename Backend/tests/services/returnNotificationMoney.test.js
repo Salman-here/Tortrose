@@ -29,7 +29,7 @@ describe('return notification money formatting', () => {
     ['picked_up', 'Return picked up', 'marked as picked up'],
     ['in_transit_to_seller', 'Your return is on its way', 'on their way to the seller'],
     ['received_by_seller', 'Return received by seller', 'as received'],
-    ['under_review', 'Your return is being reviewed', 'items are being reviewed'],
+    ['under_review', 'Return inspection in progress', 'inspecting the received items'],
     ['accepted_pending_payment', 'Return accepted — refund pending', 'has not been credited yet'],
     ['replacement_approved', 'Replacement approved', 'replacement was approved'],
     ['rejected', 'Return request declined', 'was declined'],
