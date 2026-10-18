@@ -170,7 +170,7 @@ const daysUntil = (value) => {
 
 export const getSubscriptionViewModel = (subscription, eliteMetaAds = false) => {
   const safe = subscription || {};
-  const isSubscribed = ['active', 'free_period'].includes(safe.status);
+  const isSubscribed = safe.hasActiveAccess !== false && ['active', 'free_period'].includes(safe.status);
   const isElite = safe.plan === 'elite';
   const founderRateActive = Boolean(safe.founderOffer?.active);
   const pricing = normalizeSubscriptionPricing(safe.pricing);
@@ -185,8 +185,8 @@ export const getSubscriptionViewModel = (subscription, eliteMetaAds = false) => 
     isSubscribed,
     isElite,
     isStarter: isSubscribed && !isElite,
-    isTrial: safe.status === 'trial',
-    isBlocked: safe.status === 'blocked',
+    isTrial: safe.hasActiveAccess !== false && safe.status === 'trial',
+    isBlocked: safe.isBlocked === true || ['blocked', 'cancelled', 'past_due', 'expired'].includes(safe.status),
     isPastDue: safe.status === 'past_due',
     isEnding: Boolean(safe.cancelledAt && !safe.pendingDowngrade && isSubscribed),
     hasPendingDowngrade: safe.pendingDowngrade === 'starter',
@@ -983,7 +983,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
             </GlassPanel>
           )}
 
-          {subscription?.plan === 'starter' && subscription?.bonusFeaturesActive && starterBonusDays > 0 && (
+          {model.isSubscribed && subscription?.plan === 'starter' && subscription?.bonusFeaturesActive && starterBonusDays > 0 && (
             <GlassPanel variant="card" style={bonusAboutToExpire ? styles.warningBanner : styles.bonusCard}>
               <View style={styles.bonusIcon}>
                 <Ionicons name={bonusAboutToExpire ? 'alert-circle-outline' : 'gift-outline'} size={19} color={bonusAboutToExpire ? palette.colors.warning : palette.colors.secondary} />

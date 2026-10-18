@@ -4,6 +4,7 @@ const { buildPlanPricing, getPricingCatalog } = require('./subscriptionPricingSe
 const { FEATURED_LIMITS, TRIAL_PRODUCT_LIMIT } = require('./sellerProductQuotaService');
 const { FOUNDER_PROMOTION } = require('./founderPromotionService');
 const renewalPolicy = require('./safepayRenewalPolicy');
+const { hasSellerPlanAccess, hasSellerBonusAccess } = require('./sellerSubscriptionAccess');
 
 const TRIAL_DAYS = 15;
 const STARTER_BONUS_MONTHS = 6;
@@ -135,7 +136,9 @@ function buildSubscriptionStatusPresentation(subscription, {
     ? remainingCalendarDays(trialEndDate, now)
     : 0;
   const bonusGraceDeadline = validDate(subscription.bonusGraceDeadline);
-  const hasGracePeriod = status === 'blocked'
+  const hasActiveAccess = hasSellerPlanAccess(subscription, { now });
+  const isBlocked = ['blocked', 'cancelled', 'past_due', 'expired'].includes(status) || !hasActiveAccess;
+  const hasGracePeriod = isBlocked
     && bonusGraceDeadline
     && bonusGraceDeadline > now
     && !subscription.bonusFeaturesExpiredPermanently;
@@ -159,7 +162,9 @@ function buildSubscriptionStatusPresentation(subscription, {
     trialEndDate,
     trialDaysRemaining,
     isTrialExpiringSoon: status === 'trial' && trialDaysRemaining > 0 && trialDaysRemaining <= 3,
-    isBlocked: status === 'blocked',
+    isBlocked,
+    hasActiveAccess,
+    hasBonusAccess: hasSellerBonusAccess(subscription, { now }),
     subscribedAt: subscription.subscribedAt || null,
     freePeriodEndDate: subscription.freePeriodEndDate || null,
     currentPeriodStart: subscription.currentPeriodStart || null,
@@ -186,7 +191,7 @@ function buildSubscriptionStatusPresentation(subscription, {
     starterBonusPeriodUsed: Boolean(subscription.starterBonusPeriodUsed),
     bonusGraceDeadline: bonusGraceDeadline || null,
     bonusGraceDaysRemaining: hasGracePeriod
-      ? remainingCalendarDays(bonusGraceDeadline, now)
+      ? Math.min(BONUS_GRACE_DAYS, remainingCalendarDays(bonusGraceDeadline, now))
       : 0,
     pendingDowngrade: subscription.pendingDowngrade?.toPlan || null,
     hasUsedFreePeriod: Boolean(subscription.hasUsedFreePeriod),
@@ -229,7 +234,9 @@ function buildSubscriptionStatusMessage(subscription) {
       : `Current recurring price: ${amount}${subscription.metaAdsIncluded ? ', including the Meta ads add-on' : ''}.`);
     parts.push(`Meta ads add-on: ${subscription.metaAdsIncluded ? 'included' : 'not included'}.`);
   }
-  if (subscription.cancelledAt) {
+  if (subscription.status === 'cancelled') {
+    parts.push('The subscription has ended. The seller dashboard and saved data remain available, but paid store features are unavailable until re-subscription.');
+  } else if (subscription.cancelledAt) {
     parts.push(`Cancellation is scheduled for the end of the current period${isoDate(subscription.currentPeriodEnd) ? ` on ${isoDate(subscription.currentPeriodEnd)}` : ''}.`);
   } else if (isoDate(subscription.currentPeriodEnd)) {
     parts.push(`The current billing period ends on ${isoDate(subscription.currentPeriodEnd)}.`);

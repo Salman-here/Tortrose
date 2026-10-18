@@ -1,5 +1,6 @@
 const SellerSubscription = require('../models/SellerSubscription');
 const { buildPlanPricing } = require('../services/subscriptionPricingService');
+const { hasSellerPlanAccess, hasSellerBonusAccess } = require('../services/sellerSubscriptionAccess');
 
 // Middleware to restrict access to bonus features after 6-month expiry
 const bonusFeatureCheck = (featureName) => async (req, res, next) => {
@@ -12,11 +13,13 @@ const bonusFeatureCheck = (featureName) => async (req, res, next) => {
         // No subscription = new seller on trial, allow access during trial
         if (!sub) return next();
 
-        // Trial users get all features during trial
-        if (sub.status === 'trial') return next();
-
-        // Elite plan subscribers always have bonus features
-        if (sub.plan === 'elite' && ['active', 'free_period'].includes(sub.status)) return next();
+        if (!hasSellerPlanAccess(sub)) {
+            return res.status(403).json({
+                msg: `An active subscription is required to use ${featureName}. Your saved bonus time does not provide access while your plan is inactive.`,
+                code: 'SUBSCRIPTION_ACCESS_REQUIRED', featureName,
+            });
+        }
+        if (hasSellerBonusAccess(sub)) return next();
 
         const elitePrice = buildPlanPricing('elite', false, Boolean(sub.founderOffer?.active));
         const elitePriceLabel = `$${(elitePrice.unitAmount / 100).toFixed(2)}/month`;
@@ -50,8 +53,10 @@ const bonusFeatureCheck = (featureName) => async (req, res, next) => {
             });
         }
 
-        // Bonus still active or subscribed — allow
-        next();
+        return res.status(403).json({
+            msg: `${featureName} requires an active bonus period or the Rozare Elite plan.`,
+            code: 'BONUS_ACCESS_REQUIRED', featureName, upgradePlan: 'elite',
+        });
     } catch (error) {
         console.error('Bonus feature check error:', error);
         if (req.user?.role === 'seller') {

@@ -67,6 +67,16 @@ const productData = (sellerId, index, isFeatured = false) => ({
 });
 
 describe('seller product quota serialization', () => {
+  test('preserved bonus time on a cancelled plan does not reserve featured slots', async () => {
+    const seller = await fixture({ status: 'cancelled', plan: 'starter' });
+    await SellerSubscription.updateOne({ seller: seller._id }, { $set: {
+      bonusFeaturesActive: true, bonusExpiryDate: new Date(Date.now() + 90 * 86400000),
+    } });
+    await expect(assertSellerCanFeatureProduct(seller._id)).rejects.toMatchObject({
+      code: 'FEATURED_PRODUCT_LIMIT_REACHED', quota: { reason: 'not_entitled', max: 0 },
+    });
+    expect((await SellerSubscription.findOne({ seller: seller._id })).bonusFeaturesActive).toBe(true);
+  });
   test('two concurrent trial inserts cannot create a sixteenth product', async () => {
     const seller = await fixture();
     await Product.insertMany(Array.from({ length: 14 }, (_, index) => productData(seller._id, index)));

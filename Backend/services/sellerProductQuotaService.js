@@ -2,6 +2,7 @@
 
 const Product = require('../models/Product');
 const SellerSubscription = require('../models/SellerSubscription');
+const { hasSellerPlanAccess } = require('./sellerSubscriptionAccess');
 
 const FEATURED_LIMITS = Object.freeze({ free_trial: 6, starter: 6, elite: 12 });
 const TRIAL_PRODUCT_LIMIT = 15;
@@ -50,24 +51,11 @@ async function getSellerFeaturedProductQuota(sellerId, {
   );
   let plan = 'free_trial';
   let entitled = false;
-  const now = new Date();
-
-  if (!subscription || subscription.status === 'trial') {
-    entitled = true;
-  } else if (subscription.plan === 'elite' && ['active', 'free_period'].includes(subscription.status)) {
-    plan = 'elite';
-    entitled = true;
-  } else if (['active', 'free_period'].includes(subscription.status)) {
-    plan = subscription.plan || 'starter';
-    entitled = true;
-  } else if (
-    subscription.bonusFeaturesActive
-    && (!subscription.bonusExpiryDate || now < subscription.bonusExpiryDate)
-  ) {
-    plan = subscription.plan || 'starter';
+  if (!subscription) {
     entitled = true;
   } else {
-    plan = subscription.plan || 'free_trial';
+    plan = subscription.status === 'trial' ? 'free_trial' : subscription.plan || 'starter';
+    entitled = hasSellerPlanAccess(subscription);
   }
 
   if (!entitled) {

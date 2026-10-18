@@ -295,11 +295,11 @@ const SellerSubscription = () => {
         );
     }
 
-    const isBlocked = subscription?.status === 'blocked';
-    const isTrial = subscription?.status === 'trial';
+    const isBlocked = subscription?.isBlocked === true || ['blocked', 'cancelled', 'past_due', 'expired'].includes(subscription?.status);
+    const isTrial = subscription?.hasActiveAccess !== false && subscription?.status === 'trial';
     const isPastDue = subscription?.status === 'past_due';
     const recoveryNotice = subscriptionRecoveryNotice(subscription);
-    const isSubscribed = ['active', 'free_period'].includes(subscription?.status);
+    const isSubscribed = subscription?.hasActiveAccess !== false && ['active', 'free_period'].includes(subscription?.status);
     const isElite = subscription?.plan === 'elite';
     const hasPendingDowngrade = isSubscribed && isElite && subscription?.pendingDowngrade === 'starter';
     const bonusExpiredPermanently = subscription?.bonusFeaturesExpiredPermanently && !isElite;

@@ -1,4 +1,5 @@
 const SellerSubscription = require('../models/SellerSubscription');
+const { hasSellerPlanAccess, hasSellerBonusAccess } = require('../services/sellerSubscriptionAccess');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Store = require('../models/Store');
@@ -6111,39 +6112,11 @@ exports.getAllSubscriptionsForAdmin = async (req, res) => {
     }
 };
 
-// Returns true if a seller is entitled to bonus features (Trial OR active bonusFeaturesActive OR Elite plan).
-// Used by feature-gating helpers like sellerHasFeaturedProducts (bonus-only features).
-const isEntitledToBonus = (sub) => {
-    if (!sub) return false;
-    if (sub.status === 'trial') {
-        return sub.trialEndDate ? new Date() < sub.trialEndDate : true;
-    }
-    // Elite plan always has bonus features
-    if (sub.plan === 'elite' && ['active', 'free_period'].includes(sub.status)) {
-        return true;
-    }
-    // Check permanent expiry for non-elite
-    if (sub.bonusFeaturesExpiredPermanently) {
-        return false;
-    }
-    if (sub.bonusFeaturesActive) {
-        return sub.bonusExpiryDate ? new Date() < sub.bonusExpiryDate : true;
-    }
-    return false;
-};
+// Bonus time is preserved separately from an active access entitlement.
+const isEntitledToBonus = sub => hasSellerBonusAccess(sub);
 
 // Check if seller has an active subscription or trial (for starter-level features like WhatsApp)
-const isSellerActive = (sub) => {
-    if (!sub) return false;
-    if (sub.status === 'trial') {
-        return sub.trialEndDate ? new Date() < sub.trialEndDate : true;
-    }
-    // Any active subscription status means they have starter features
-    if (['free_period', 'active', 'past_due'].includes(sub.status)) {
-        return true;
-    }
-    return false;
-};
+const isSellerActive = sub => hasSellerPlanAccess(sub, { allowLegacyPastDue: true });
 
 // Gating helper: WhatsApp order auto-verification — included in Starter plan (and trial)
 exports.sellerHasWhatsAppVerify = async (sellerId) => {

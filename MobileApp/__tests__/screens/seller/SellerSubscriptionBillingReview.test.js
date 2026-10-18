@@ -41,6 +41,19 @@ beforeEach(async () => {
 });
 afterEach(() => jest.restoreAllMocks());
 
+test('cancelled Starter preserves bonus time but never shows an active bonus-tools banner', async () => {
+  const ended = { ...subscription, status: 'cancelled', plan: 'starter', isBlocked: true,
+    hasActiveAccess: false, hasBonusAccess: false, hasUsedFreePeriod: true,
+    bonusFeaturesActive: true, bonusExpiryDate: new Date(Date.now() + 90 * 86400000).toISOString(),
+    bonusGraceDaysRemaining: 3, bonusGraceDeadline: new Date(Date.now() + 3 * 86400000).toISOString() };
+  api.get.mockImplementation(async path => ({ data: path === '/api/subscription/status' ? { subscription: ended }
+    : path === '/api/safepay/cards' ? { cards } : { completed: true } }));
+  const screen = render(<SellerSubscriptionScreen navigation={navigation} route={{ params: {} }} />);
+  await waitFor(() => expect(screen.getByText('No active plan')).toBeTruthy());
+  expect(screen.queryByText('Starter bonus tools active')).toBeNull();
+  expect(screen.getByText(/remaining to re-subscribe and keep the unused part/)).toBeTruthy();
+});
+
 const openReview = async screen => {
   await waitFor(() => expect(screen.getByLabelText('Start with 30 days free')).toBeTruthy());
   fireEvent.press(screen.getByLabelText('Start with 30 days free'));

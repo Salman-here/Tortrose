@@ -5,6 +5,17 @@ const {
 } = require('../../services/subscriptionPresentationService');
 
 describe('subscription presentation source of truth', () => {
+  test('cancelled plans preserve unused bonus time without advertising usable features', () => {
+    const saved = { status: 'cancelled', plan: 'starter', billingProvider: 'safepay',
+      cancelledAt: '2026-10-18T19:00:00Z', bonusFeaturesActive: true,
+      bonusExpiryDate: '2027-04-18T19:00:00Z', bonusGraceDeadline: '2026-10-21T19:00:00Z' };
+    const view = buildSubscriptionStatusPresentation(saved, { now: new Date('2026-10-18T19:00:00Z') });
+    expect(view).toMatchObject({ isBlocked: true, hasActiveAccess: false, hasBonusAccess: false,
+      bonusFeaturesActive: true, bonusGraceDaysRemaining: 3 });
+    expect(buildSubscriptionStatusMessage(view)).toContain('subscription has ended');
+    expect(buildSubscriptionStatusMessage(view)).toContain('unavailable until the seller re-subscribes');
+    expect(buildSubscriptionStatusMessage(view)).not.toContain('Cancellation is scheduled');
+  });
   test('publishes exact pricing, limits, features, and lifecycle rules', () => {
     const catalog = getSubscriptionCatalog();
 
