@@ -3,7 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import PaymentMethodsScreen from '../../src/screens/PaymentMethodsScreen';
 import api from '../../src/config/api';
-import { openSafepayCheckout } from '../../src/utils/safepayCheckout';
+import { openSafepayCheckout, verifySafepayPayment } from '../../src/utils/safepayCheckout';
 
 const mockUser = { _id: 'buyer-test', username: 'Test Buyer', role: 'user' };
 jest.mock('../../src/config/api', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn(), patch: jest.fn(), delete: jest.fn() } }));
@@ -23,16 +23,18 @@ jest.mock('../../src/components/common/PremiumBackHeader', () => 'Header');
 jest.mock('../../src/components/common/LocationAutocomplete', () => 'LocationAutocomplete');
 jest.mock('../../src/components/common/PhoneNumberInput', () => 'PhoneNumberInput');
 jest.mock('../../src/utils/breadcrumbs', () => ({ trackError: jest.fn(), trackPaymentEvent: jest.fn() }));
-jest.mock('../../src/utils/safepayCheckout', () => ({ openSafepayCheckout: jest.fn() }));
+jest.mock('../../src/utils/safepayCheckout', () => ({ openSafepayCheckout: jest.fn(), verifySafepayPayment: jest.fn() }));
 const navigation = { addListener: jest.fn(() => jest.fn()), canGoBack: () => true, goBack: jest.fn(), navigate: jest.fn() };
 
 beforeEach(async () => {
   jest.clearAllMocks();
   await AsyncStorage.clear();
   mockUser.role = 'user';
+  mockUser._id = 'buyer-test';
   api.post.mockReset();
   api.get.mockResolvedValue({ data: { provider: 'safepay', cards: [], defaultPaymentMethodId: null, billingProfileReady: true } });
   openSafepayCheckout.mockReset().mockResolvedValue({ status: 'authorized' });
+  verifySafepayPayment.mockReset();
 });
 afterEach(() => jest.useRealTimers());
 
@@ -152,6 +154,66 @@ test('existing provider profiles do not force users to re-enter contact details'
 });
 
 const savedCard = { id: 'pm_new-card', brand: 'visa', last4: '1111', expMonth: 12, expYear: 2030, usable: true };
+
+const pendingPayment = { paymentId: 'aaaaaaaaaaaaaaaaaaaaaaaa', environment: 'sandbox', purpose: 'card_setup',
+  currency: 'PKR', amountMinor: 0, status: 'pending' };
+const openPendingSetup = async () => {
+  api.post.mockResolvedValue({ data: pendingPayment });
+  openSafepayCheckout.mockResolvedValue({ ...pendingPayment });
+  const screen = render(<PaymentMethodsScreen navigation={navigation} />);
+  await waitFor(() => expect(screen.getByText('No card saved yet')).toBeTruthy());
+  consent(screen); add(screen);
+  await waitFor(() => expect(screen.getByText('Card setup is being verified')).toBeTruthy());
+  return screen;
+};
+const refreshFocusedScreen = async () => act(async () => { await navigation.addListener.mock.calls.at(-1)[1](); });
+
+test('refresh settles the exact pending setup and clears its stale notice without another form or setup', async () => {
+  const screen = await openPendingSetup();
+  api.get.mockResolvedValue({ data: { cards: [savedCard], defaultPaymentMethodId: savedCard.id, billingProfileReady: true } });
+  verifySafepayPayment.mockResolvedValue({ ...pendingPayment, status: 'authorized', savedPaymentMethodId: savedCard.id });
+  await refreshFocusedScreen();
+  expect(verifySafepayPayment).toHaveBeenCalledWith(expect.objectContaining({
+    paymentId: pendingPayment.paymentId, expectedPayment: expect.objectContaining({ purpose: 'card_setup', amountMinor: 0, environment: 'sandbox' }), attempts: 1,
+  }));
+  expect(screen.getByText('Card saved securely')).toBeTruthy();
+  expect(screen.queryByText('Card setup is being verified')).toBeNull();
+  expect(screen.getByLabelText('Save this card for future payments').props.accessibilityState.checked).toBe(false);
+  expect(api.post).toHaveBeenCalledTimes(1);
+  expect(openSafepayCheckout).toHaveBeenCalledTimes(1);
+  await refreshFocusedScreen();
+  expect(verifySafepayPayment).toHaveBeenCalledTimes(1);
+});
+
+test('an unrelated saved card never settles an unconfirmed setup or retires its retry key', async () => {
+  const screen = await openPendingSetup();
+  api.get.mockResolvedValue({ data: { cards: [savedCard], defaultPaymentMethodId: savedCard.id, billingProfileReady: true } });
+  verifySafepayPayment.mockResolvedValue(pendingPayment);
+  await refreshFocusedScreen();
+  expect(screen.getByText('Card setup is being verified')).toBeTruthy();
+  expect(screen.queryByText('Card saved securely')).toBeNull();
+  add(screen);
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+  expect(api.post.mock.calls[1][1].requestKey).toBe(api.post.mock.calls[0][1].requestKey);
+});
+
+test('a definitively failed setup is closed on refresh, not reported as a saved card', async () => {
+  const screen = await openPendingSetup();
+  verifySafepayPayment.mockResolvedValue({ ...pendingPayment, status: 'failed' });
+  await refreshFocusedScreen();
+  expect(screen.getByText('Card setup closed')).toBeTruthy();
+  expect(screen.queryByText('Card saved securely')).toBeNull();
+  expect(api.post).toHaveBeenCalledTimes(1);
+});
+
+test('changing account discards the old in-memory setup reference before a refresh', async () => {
+  const screen = await openPendingSetup();
+  mockUser._id = 'different-account';
+  screen.rerender(<PaymentMethodsScreen navigation={navigation} />);
+  await refreshFocusedScreen();
+  expect(verifySafepayPayment).not.toHaveBeenCalled();
+  expect(screen.queryByText('Card setup is being verified')).toBeNull();
+});
 test('new saved card shows the server-selected default without another client-side selection', async () => {
   api.get.mockResolvedValueOnce({ data: { cards: [], defaultPaymentMethodId: null, billingProfileReady: true } })
     .mockResolvedValue({ data: { cards: [savedCard], defaultPaymentMethodId: savedCard.id, billingProfileReady: true } });

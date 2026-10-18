@@ -21,7 +21,7 @@ import GlassPanel from '../components/common/GlassPanel';
 import KeyboardAwareFormScrollView from '../components/common/KeyboardAwareFormScrollView';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { useAuth } from '../contexts/AuthContext';
-import { openSafepayCheckout } from '../utils/safepayCheckout';
+import { openSafepayCheckout, verifySafepayPayment } from '../utils/safepayCheckout';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../utils/persistedMutationAttempt';
 import LocationAutocomplete from '../components/common/LocationAutocomplete';
 import PhoneNumberInput from '../components/common/PhoneNumberInput';
@@ -72,6 +72,16 @@ const billingContactProblem = contact => {
   return '';
 };
 
+const savedCardNotice = (result, refreshed) => {
+  const saved = result.savedPaymentMethodId && refreshed.cards.find(card => card.id === result.savedPaymentMethodId && card.usable === true);
+  return saved
+    ? { type: 'success', title: 'Card saved securely', text: refreshed.defaultPaymentMethodId === saved.id
+      ? 'Your card is saved and set as your default for checkout.' : 'Your card is saved. Your current default card is unchanged.' }
+    : { type: 'info', title: 'Check your saved cards', text: !result.savedPaymentMethodId && refreshed.cards.some(card => card.usable === true)
+      ? 'Card verification completed. Your saved cards are listed below.'
+      : 'Your saved card is not available yet. Refresh your cards to check before starting another setup.' };
+};
+
 function SkeletonCard({ palette }) {
   const opacity = useRef(new Animated.Value(0.38)).current;
 
@@ -100,7 +110,11 @@ export default function PaymentMethodsScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
+  const actorId = String(currentUser?._id || currentUser?.id || '');
+  const activeOwnerRef = useRef(actorId);
+  activeOwnerRef.current = actorId;
   const addingRef = useRef(false);
+  const pendingSetupRef = useRef(null);
   const billingContactEditedRef = useRef(false);
   const [needsBillingContact, setNeedsBillingContact] = useState(false);
   const [billingContact, setBillingContact] = useState(() => initialBillingContact(currentUser));
@@ -115,7 +129,7 @@ export default function PaymentMethodsScreen({ navigation }) {
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState(null);
   const waitingForRetry = retrySeconds > 0;
-  const addDisabled = adding || !!busyId || !consentToSave || loading || !!loadError || waitingForRetry;
+  const addDisabled = adding || refreshing || !!busyId || !consentToSave || loading || !!loadError || waitingForRetry;
   const updateBillingContact = patch => {
     billingContactEditedRef.current = true;
     setBillingContact(previous => ({ ...previous, ...patch }));
@@ -130,7 +144,16 @@ export default function PaymentMethodsScreen({ navigation }) {
   const loadCards = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
     try {
+      const pending = pendingSetupRef.current;
+      // A card appearing in the list is not proof that this setup completed.
+      // Recheck the exact authenticated zero-amount attempt without opening a
+      // form, creating another setup, or changing a subscription's billing card.
+      const verified = pending?.ownerId === actorId && !addingRef.current
+        ? await verifySafepayPayment({ apiClient: api, paymentId: pending.payment.paymentId,
+          expectedPayment: pending.payment, attempts: 1, requestTimeoutMs: 2000 }) : null;
+      if (activeOwnerRef.current !== actorId) return null;
       const response = await api.get('/api/safepay/cards');
+      if (activeOwnerRef.current !== actorId) return null;
       const normalized = normalizeSavedCards(response);
       setCards(normalized.cards);
       setDefaultPaymentMethodId(normalized.defaultPaymentMethodId);
@@ -143,25 +166,40 @@ export default function PaymentMethodsScreen({ navigation }) {
           country: clean(draft.country), countryCode: clean(draft.countryCode).toUpperCase() });
       }
       setLoadError('');
+      if (pending && pendingSetupRef.current === pending && ['authorized', 'failed', 'cancelled'].includes(verified?.status)) {
+        await clearPersistedMutationAttemptFromLedger(AsyncStorage, pending.storageKey, 'safepay-card-storage-v1', pending.attempt.key);
+        if (activeOwnerRef.current !== actorId || pendingSetupRef.current !== pending) return normalized;
+        pendingSetupRef.current = null;
+        setConsentToSave(false);
+        setNotice(verified.status === 'authorized' ? savedCardNotice(verified, normalized)
+          : { type: 'info', title: 'Card setup closed', text: 'Safepay confirmed that this card setup did not complete. You can start a new secure setup.' });
+      }
       return normalized;
     } catch (error) {
+      if (activeOwnerRef.current !== actorId) return null;
       const message = error.response?.data?.msg || 'Your saved cards could not be loaded.';
       setLoadError(message);
       throw error;
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (activeOwnerRef.current === actorId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, []);
+  }, [actorId]);
 
   useEffect(() => {
+    pendingSetupRef.current = null;
+    setCards([]);
+    setNotice(null);
+    setConsentToSave(false);
     loadCards().catch(() => {});
     const unsubscribe = navigation.addListener('focus', () => loadCards({ quiet: true }).catch(() => {}));
     return unsubscribe;
   }, [loadCards, navigation]);
 
   const addCard = async () => {
-    if (addingRef.current || adding || waitingForRetry || loading || loadError) return;
+    if (addingRef.current || adding || refreshing || waitingForRetry || loading || loadError) return;
     if (!consentToSave) {
       setNotice({ type: 'info', title: 'Your permission is required',
         text: 'Please agree to save this card for future payments.' });
@@ -183,26 +221,29 @@ export default function PaymentMethodsScreen({ navigation }) {
       const response = await api.post('/api/safepay/cards/setup', { clientSurface: 'mobile', consentToSave: true,
         requestKey: attempt.key, ...(needsBillingContact ? { billingContact } : {}) });
       const result = await openSafepayCheckout({ apiClient: api, response });
+      if (activeOwnerRef.current !== actorId) return;
       if (result.status === 'authorized') {
         const refreshed = await loadCards({ quiet: true });
+        if (activeOwnerRef.current !== actorId || !refreshed) return;
         await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
+        pendingSetupRef.current = null;
         setConsentToSave(false);
-        const saved = result.savedPaymentMethodId && refreshed.cards.find(card => card.id === result.savedPaymentMethodId && card.usable === true);
-        setNotice(saved
-          ? { type: 'success', title: 'Card saved securely', text: refreshed.defaultPaymentMethodId === saved.id
-            ? 'Your card is saved and set as your default for checkout.' : 'Your card is saved. Your current default card is unchanged.' }
-          : { type: 'info', title: 'Check your saved cards', text: !result.savedPaymentMethodId && refreshed.cards.some(card => card.usable === true)
-            ? 'Card verification completed. Your saved cards are listed below.'
-            : 'Your saved card is not available yet. Refresh your cards to check before starting another setup.' });
+        setNotice(savedCardNotice(result, refreshed));
       } else if (['cancelled', 'failed'].includes(result.status)) {
         await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
+        pendingSetupRef.current = null;
         setNotice({ type: 'info', title: 'Card setup closed', text: result.failureCode === 'SAFEPAY_CARD_SETUP_NOT_REUSABLE'
           ? 'Safepay verified the card but did not save it for future payments. Please start a new secure card setup.'
           : 'Safepay confirmed that this card setup did not complete. You can start a new secure setup.' });
       } else {
+        const payment = response.data || response;
+        pendingSetupRef.current = { ownerId: actorId, attempt, storageKey,
+          payment: { paymentId: payment.paymentId, environment: payment.environment, purpose: 'card_setup',
+            currency: payment.currency, amountMinor: 0, paymentRail: result.paymentRail || 'unknown' } };
         setNotice({ type: 'info', title: 'Card setup is being verified', text: 'The same setup is retained. Refresh your cards or retry to resume it.' });
       }
     } catch (error) {
+      if (activeOwnerRef.current !== actorId) return;
       trackError('saved_card_setup', error);
       const failure = error.response?.data || {};
       if (failure.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED') setNeedsBillingContact(true);
