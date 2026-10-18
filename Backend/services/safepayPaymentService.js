@@ -178,6 +178,8 @@ function createSafepayPaymentService({
     if (!PAID_PURPOSES.has(payment.purpose) && payment.purpose !== 'card_setup') throw fail('Unsupported hosted checkout purpose.', 'SAFEPAY_PURPOSE_INVALID');
     payment = await prepareTracker(payment, { clientSurface });
     if (payment.tracker) payment = await reconcilePayment(payment._id);
+    if (payment.purpose === 'card_setup' && payment.status === 'failed'
+      && payment.lastErrorCode === 'SAFEPAY_CARD_SETUP_NOT_REUSABLE') return paymentResponse(payment);
     if (['paid', 'authorized'].includes(payment.status) && payment.appliedAt) return paymentResponse(payment);
     if (!['ready'].includes(payment.status)) throw fail('This checkout can no longer accept payment. Check its current status.', 'SAFEPAY_CHECKOUT_CLOSED');
     if (payment.purpose === 'order' && payment.terms?.settlementPolicy === 'revalidate-on-payment-v1') {
@@ -197,6 +199,11 @@ function createSafepayPaymentService({
     const cancelUrl = buildReturnUrl({ ...returnContext, outcome: 'cancel' });
     const checkoutUrl = client.buildPaymentCheckoutUrl({ tracker: payment.tracker, authToken, reference: payment.reference,
       redirectUrl, cancelUrl, customerId: payment.customerId,
+      // The user has already explicitly consented in Rozare's saved-card
+      // screen. Safepay's supported instrument flag requests a reusable token
+      // (use_once=false) instead of silently creating a one-use credential.
+      ...(payment.purpose === 'card_setup' && payment.terms?.reusableRequired === true
+        && payment.terms?.consentVersion === 'safepay-card-storage-v1' ? { implicitCardSave: true } : {}),
       source: clientSurface === 'web' ? 'hosted' : 'mobile' });
     // The URL is returned only to the authenticated owner; it is neither
     // logged nor included in order serializers/notification payloads.
@@ -275,10 +282,23 @@ function createSafepayPaymentService({
       const observed = await Payment.updateOne({ _id: payment._id, processingToken: lease }, { $set: observation });
       if (observed.matchedCount !== 1) throw fail('Payment reconciliation lease changed.', 'SAFEPAY_RECONCILE_CONFLICT');
       const facts = safepayPaymentFacts(tracker);
-      const savedSetupCard = facts.outcome === 'paid' && payment.purpose === 'card_setup' && !payment.appliedAt
+      if (payment.purpose === 'card_setup' && payment.status === 'failed'
+        && payment.lastErrorCode === 'SAFEPAY_CARD_SETUP_NOT_REUSABLE') return payment;
+      let savedSetupCard = null;
+      if (facts.outcome === 'paid' && payment.purpose === 'card_setup' && !payment.appliedAt
         && ['new', 'creating', 'ready', 'authorized'].includes(payment.status)
-        && payment.cardSetup?.selectionPolicy === CARD_SETUP_POLICY
-        ? await verifySavedSetupCard(payment, tracker, config, client, at) : null;
+        && payment.cardSetup?.selectionPolicy === CARD_SETUP_POLICY) {
+        try { savedSetupCard = await verifySavedSetupCard(payment, tracker, config, client, at); }
+        catch (error) {
+          if (error.code !== 'SAFEPAY_CARD_SETUP_NOT_REUSABLE' || payment.amountMinor !== 0 || payment.providerMode !== 'instrument') throw error;
+          // Only exact, verified zero-amount card setup can end this way.
+          // No purchase is failed/refunded and no reusable card is inferred.
+          await Payment.updateOne({ _id: payment._id, processingToken: lease, appliedAt: null,
+            purpose: 'card_setup', amountMinor: 0 }, { $set: { status: 'failed', providerState: facts.state,
+            lastErrorCode: error.code, lastReconciledAt: at, nextReconcileAt: null } });
+          return await Payment.findById(payment._id);
+        }
+      }
       await mongoose.connection.transaction(async session => {
         const current = await Payment.findOne({ _id: payment._id, processingToken: lease }).session(session);
         if (!current) throw fail('Payment reconciliation lease changed.', 'SAFEPAY_RECONCILE_CONFLICT');
@@ -329,9 +349,19 @@ function createSafepayPaymentService({
             }
           }
         } else if (facts.outcome === 'closed' && !current.appliedAt) {
-          await close(current, session);
-          current.status = 'cancelled';
-          current.cancelledAt = current.cancelledAt || at;
+          if (current.purpose === 'subscription' && current.status !== 'cancelled') {
+            // A verified terminal unpaid tracker is safe to replace. Leaving
+            // its invoice pending forever would block card changes/recovery.
+            await require('./safepayBillingService').failBillingPayment(current, session,
+              { failureCode: 'SAFEPAY_RECURRING_PAYMENT_CLOSED' });
+            current.status = 'failed'; current.chargeOutcome = 'declined';
+            current.chargeCompletedAt = current.chargeCompletedAt || at;
+            current.lastErrorCode = 'SAFEPAY_RECURRING_PAYMENT_CLOSED';
+          } else {
+            await close(current, session);
+            current.status = 'cancelled';
+            current.cancelledAt = current.cancelledAt || at;
+          }
         } else if (facts.state === 'TRACKER_STARTED' && current.purpose === 'subscription' && current.chargeOutcome === 'declined' && !current.appliedAt) {
           await require('./safepayBillingService').failBillingPayment(current, session);
           current.status = 'failed';

@@ -14,8 +14,8 @@ const one = (name, channel = 'email') => {
 beforeAll(async () => { entries = await buildRuntimeNotificationGalleryEntries(); });
 
 test('inventory contains source-exact active descriptors and no fabricated historical versions', () => {
-  expect(entries.filter(item => item.channel === 'email' && item.activity === 'active')).toHaveLength(145);
-  expect(entries.filter(item => item.channel === 'whatsapp' && item.activity === 'active')).toHaveLength(137);
+  expect(entries.filter(item => item.channel === 'email' && item.activity === 'active')).toHaveLength(150);
+  expect(entries.filter(item => item.channel === 'whatsapp' && item.activity === 'active')).toHaveLength(142);
   expect(new Set(entries.map(item => `${item.channel}:${item.name}`)).size).toBe(entries.length);
   for (const entry of entries) {
     expect(['active', 'legacy', 'review-required', 'exception']).toContain(entry.activity);
@@ -115,9 +115,19 @@ test('retained billing helpers remain visible without claiming active Safepay el
   expect(one('Retained invoice payment failed').after.html).toContain('was unsuccessful');
   expect(one('Safepay subscription ending soon — standard')).toMatchObject({ activity: 'active' });
   expect(one('Retained downgrade scheduled — founder / bonus available').after.html).toContain('30% founder discount');
-  expect(runtimeGalleryCounts(entries)).toEqual({ active: { email: 145, whatsapp: 137 }, legacy: { email: 16, whatsapp: 16 },
+  expect(runtimeGalleryCounts(entries)).toEqual({ active: { email: 150, whatsapp: 142 }, legacy: { email: 16, whatsapp: 16 },
     exception: { email: 4, whatsapp: 4 }, reviewRequired: { email: 0, whatsapp: 0 }, sourceCallSites: 54 });
   expect(notificationCallSiteInventory()).toHaveLength(54);
+});
+
+test('renewal failure previews include all four retry days and the final day-7 cancellation warning', () => {
+  for (const day of [1, 3, 5, 7]) for (const channel of ['email', 'whatsapp']) {
+    const entry = one(`Safepay renewal failure — day ${day}`, channel);
+    expect(JSON.stringify(entry.after)).toContain('Pakistan time');
+    expect(JSON.stringify(entry.after)).toContain('Subscription');
+  }
+  expect(one('Safepay renewal failure — day 7').after.subject).toContain('cancels today');
+  expect(one('Safepay ended — unpaid renewal').after.html).toContain('seven-day recovery period');
 });
 
 test('active previews use professional flow-accurate copy and exclude original-Raast refund exceptions', async () => {

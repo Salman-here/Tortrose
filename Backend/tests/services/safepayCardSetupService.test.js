@@ -110,7 +110,13 @@ test.each(['no-new-card', 'single-use', 'expired', 'deleted', 'other-owner', 'ot
   if (kind === 'wrong-attempt') tracker.attempts[0].payment_method.attempt = 'unrelated';
   if (kind === 'no-attempt') tracker.attempts = [];
   client.getTracker.mockResolvedValue(tracker);
-  await expect(service.reconcilePayment(payment._id)).rejects.toMatchObject({ code: expect.stringMatching(/^SAFEPAY_(SAVED_CARD_PENDING|CARD_MISMATCH)$/) });
+  if (kind === 'single-use') {
+    const finished = await service.reconcilePayment(payment._id);
+    expect(paymentResponse(finished)).toMatchObject({ status: 'failed', completed: false, cardSaved: false,
+      failureCode: 'SAFEPAY_CARD_SETUP_NOT_REUSABLE' });
+    expect(await service.prepareCheckout(payment._id)).toMatchObject({ status: 'failed', completed: false, cardSaved: false });
+    expect(paymentResponse(await service.reconcilePayment(payment._id))).toMatchObject({ status: 'failed', cardSaved: false });
+  } else await expect(service.reconcilePayment(payment._id)).rejects.toMatchObject({ code: expect.stringMatching(/^SAFEPAY_(SAVED_CARD_PENDING|CARD_MISMATCH)$/) });
   const unfinished = await Payment.findById(payment._id);
   expect(unfinished.appliedAt).toBeNull(); expect(paymentResponse(unfinished).cardSaved).toBe(false);
   expect(await currentDefault()).toBe('pm_existing-card');
@@ -120,6 +126,18 @@ test('eventual wallet visibility can finish the same setup without a duplicate t
   await expect(service.reconcilePayment(payment._id)).rejects.toMatchObject({ code: 'SAFEPAY_SAVED_CARD_PENDING' });
   wallet.push(card('pm_new-card')); await service.reconcilePayment(payment._id);
   expect(await currentDefault()).toBe('pm_new-card'); expect(await Payment.countDocuments()).toBe(1);
+});
+
+test('an explicitly consented instrument setup requests the supported reusable-save option on both surfaces', async () => {
+  const payment = await setup();
+  client.getTracker.mockResolvedValue(trackerFor(payment, '1111', { state: 'TRACKER_STARTED', attempts: [] }));
+  client.createAuthToken = jest.fn(async () => 'private-fixture-temporary-auth');
+  client.buildPaymentCheckoutUrl = jest.fn(() => 'https://sandbox.api.getsafepay.com/embedded/?environment=sandbox');
+  for (const clientSurface of ['web', 'mobile']) {
+    await service.prepareCheckout(payment._id, { clientSurface });
+    expect(client.buildPaymentCheckoutUrl).toHaveBeenLastCalledWith(expect.objectContaining({
+      implicitCardSave: true, customerId, source: clientSurface === 'web' ? 'hosted' : 'mobile' }));
+  }
 });
 test.each(['deleting', 'closed', 'changed-customer'])('completion cannot select a card in a %s profile', async reason => {
   const payment = await setup(); wallet.push(card('pm_new-card'));

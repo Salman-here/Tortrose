@@ -15,6 +15,10 @@ const { createSafepayClient } = require('../../services/safepayClient');
 const { readSafepayConfig } = require('../../config/safepay');
 let replica, seller, sub, customer, submit, http, mode, trackers, captures, beforeCharge, declineHttpStatus;
 const previous = { ...process.env };
+const realDateNow = Date.now.bind(Date);
+const useBillingClock = () => jest.useFakeTimers({ doNotFake: ['hrtime', 'nextTick', 'performance', 'queueMicrotask',
+  'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+afterEach(() => jest.useRealTimers());
 beforeAll(async () => {
   Object.assign(process.env, { SAFEPAY_ENV: 'sandbox', SAFEPAY_WEB_ENABLED: 'true', SAFEPAY_MOBILE_ENABLED: 'true',
     SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_paid-engine', SAFEPAY_SANDBOX_SECRET_KEY: 'private-paid-engine-secret',
@@ -47,7 +51,7 @@ beforeEach(async () => {
     if (path.startsWith('/reporter/api/v1/payments/') && options.method === 'GET') return ok({ tracker: trackers.get(path.split('/').pop()) });
     if (path.includes('/wallet/')) return ok({ token: 'pm_paid-engine-owned', customer: customer.customerId,
       merchant_api_key: 'sec_paid-engine', is_deleted: false, max_usage: -1,
-      expires_at: { seconds: Math.floor(Date.now() / 1000) + 86400000 }, cybersource: { token: 'qa-network-token', last_four: '1111' } });
+      expires_at: { seconds: Math.floor(Date.now() / 1000) + 90 * 86400 }, cybersource: { token: 'qa-network-token', last_four: '1111' } });
     if (path.startsWith('/order/payments/v3/') && options.method === 'POST') {
       if (beforeCharge) await beforeCharge();
       if (mode === 'declined') return { ok: false, status: declineHttpStatus, json: async () => ({ status: { errors: ['Declined'] } }) };
@@ -90,14 +94,16 @@ test('accepted recurring work and a due renewal drain once during a two-surface 
     expect((await Sub.findById(sub._id)).status).toBe('active');
   } finally { process.env.SAFEPAY_WEB_ENABLED = 'true'; process.env.SAFEPAY_MOBILE_ENABLED = 'true'; }
 });
-test.each([400, 402, 403, 422])('processor-declined renewal HTTP%s blocks access and only a fresh consented exact-invoice retry restores the original period', async httpStatus => {
+test.each([400, 402, 403, 422])('processor-declined renewal HTTP%s grants bounded recovery access and a consented retry funds the original period', async httpStatus => {
   declineHttpStatus = httpStatus;
   await accept((await quote()).quoteId); await makeDue(); mode = 'declined';
   await lifecycle.runBillingWorker();
   const failed = await Operation.findOne({ kind: 'renewal' });
   expect(failed.status).toBe('failed'); expect(captures).toHaveLength(1);
   let current = await Sub.findById(sub._id);
-  expect(current.status).toBe('past_due'); expect(current.safepayBilling.nextChargeAt).toBeNull();
+  expect(current.status).toBe('active'); expect(current.safepayBilling.nextChargeAt).toBeNull();
+  expect(current.safepayBilling.recovery.attempts).toBe(1);
+  expect(current.safepayBilling.recovery.nextRetryAt).toBeInstanceOf(Date);
   const q = await recovery.retryQuote(seller._id, { requestKey: 'paid-engine-explicit-retry', failedOperation: String(failed._id) });
   expect(q).toMatchObject({ dueNowMinor: 999, freePeriodDays: 0 });
   await expect(billing.acceptQuote(seller._id, { quoteId: q.quoteId, cardId: 'pm_paid-engine-owned' })).rejects.toMatchObject({ code: 'SUBSCRIPTION_CONSENT_REQUIRED' });
@@ -197,4 +203,189 @@ test('a new Meta-inclusive monthly invoice starts a fresh full-month funded allo
   const current = await Sub.findById(sub._id);
   expect(await require('../../services/safepayMetaCreditService').currentMetaFunding(current, 'sandbox')).toMatchObject({
     operationId: String(renewal._id), allowanceMinor: 400 });
+});
+
+async function startRecovery(plan = 'starter', selectedMode = 'declined') {
+  await accept((await quote({ plan })).quoteId);
+  await makeDue();
+  useBillingClock(); jest.setSystemTime(new Date(realDateNow()));
+  mode = selectedMode;
+  await lifecycle.runBillingWorker();
+  return Sub.findById(sub._id);
+}
+
+test.each(['starter', 'elite'])('%s: four declined scheduled attempts notify all channels once, preserve grace, then cancel only at end of day 7', async plan => {
+  let current = await startRecovery(plan);
+  const first = await Operation.findById(current.safepayBilling.lastFailedOperation);
+  const invoice = { amount: first.terms.dueMinor, start: first.terms.periodStart, end: first.terms.periodEnd };
+  const authority = require('../../services/safepayNotificationAuthority').verifySafepayNotificationAuthority;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    current = await Sub.findById(sub._id);
+    expect(current.status).toBe('active');
+    expect(current.safepayBilling.recovery.attempts).toBe(attempt);
+    expect((await Store.findOne({ seller: seller._id })).isActive).toBe(true);
+    const failed = await Operation.findById(current.safepayBilling.lastFailedOperation);
+    expect(failed.terms.dueMinor).toBe(invoice.amount);
+    expect(new Date(failed.terms.periodStart)).toEqual(new Date(invoice.start));
+    expect(new Date(failed.terms.periodEnd)).toEqual(new Date(invoice.end));
+    const notices = await Outbox.find({ aggregateId: String(failed._id), eventType: 'subscription.payment_failed' }).lean();
+    expect(notices.map(n => n.channel).sort()).toEqual(['email', 'inapp', 'push', 'whatsapp']);
+    for (const notice of notices) expect(await authority(notice)).toBeNull();
+    expect(failed.recoveryNotice.finalDay).toBe(attempt === 4);
+    const count = await Payment.countDocuments({ purpose: 'subscription' });
+    await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
+    expect(await Payment.countDocuments({ purpose: 'subscription' })).toBe(count);
+    if (attempt < 4) {
+      const next = current.safepayBilling.recovery.nextRetryAt;
+      jest.setSystemTime(new Date(next.getTime() - 1)); await lifecycle.runBillingWorker();
+      expect(await Payment.countDocuments({ purpose: 'subscription' })).toBe(count);
+      jest.setSystemTime(next); await lifecycle.runBillingWorker();
+    }
+  }
+  current = await Sub.findById(sub._id);
+  expect(current.safepayBilling.recovery.nextRetryAt).toBeNull();
+  expect(await Operation.countDocuments({ kind: 'renewal', status: 'failed' })).toBe(4);
+  expect(captures).toHaveLength(1); // The original funded invoice only.
+  const deadline = current.safepayBilling.recovery.cancelAt;
+  jest.setSystemTime(new Date(deadline.getTime() - 1));
+  expect((await lifecycle.refreshStatus(sub._id)).status).toBe('active');
+  jest.setSystemTime(deadline); await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
+  current = await Sub.findById(sub._id);
+  expect(current.status).toBe('cancelled'); expect(current.safepayBilling.autoRenew).toBe(false);
+  expect(current.safepayBilling.endedAt).toEqual(deadline);
+  expect((await Store.findOne({ seller: seller._id })).isActive).toBe(false);
+  const ended = await Outbox.find({ aggregateType: 'SellerSubscription', eventType: 'subscription.cancelled' }).lean();
+  expect(ended).toHaveLength(4);
+  for (const notice of ended) expect(await authority(notice)).toBeNull();
+  const oldFailure = await Outbox.findOne({ aggregateId: String(current.safepayBilling.lastFailedOperation), channel: 'email' }).lean();
+  expect(await authority(oldFailure)).toMatchObject({ outcome: 'skipped' });
+});
+
+test('a successful automatic retry funds the frozen renewal once and stops every remaining reminder/attempt', async () => {
+  let current = await startRecovery();
+  const original = await Operation.findById(current.safepayBilling.lastFailedOperation);
+  const at = current.safepayBilling.recovery.nextRetryAt;
+  mode = 'success'; jest.setSystemTime(at); await lifecycle.runBillingWorker();
+  current = await Sub.findById(sub._id);
+  expect(current.status).toBe('active'); expect(current.safepayBilling.recovery.rootOperation).toBeNull();
+  expect(current.safepayBilling.lastFailedOperation).toBeNull();
+  expect(current.currentPeriodEnd).toEqual(new Date(original.terms.periodEnd));
+  expect(captures).toHaveLength(2);
+  jest.setSystemTime(new Date(at.getTime() + 6 * 86400000)); await lifecycle.runBillingWorker();
+  expect(captures).toHaveLength(2); expect(await Operation.countDocuments({ kind: 'renewal' })).toBe(2);
+});
+
+test('a card change and explicit retry recover during grace without waiting for the scheduled attempt', async () => {
+  let current = await startRecovery();
+  await recovery.changeCard(seller._id, { cardId: 'pm_paid-engine-owned', billingVersion: current.safepayBilling.version,
+    consentAccepted: true, consentVersion: billing.CONSENT_VERSION });
+  const q = await recovery.retryQuote(seller._id, { requestKey: 'grace-explicit-card-recovery', failedOperation: String(current.safepayBilling.lastFailedOperation) });
+  mode = 'success'; await accept(q.quoteId);
+  current = await Sub.findById(sub._id);
+  expect(current.safepayBilling.recovery.rootOperation).toBeNull(); expect(current.safepayBilling.lastFailedOperation).toBeNull();
+  expect(captures).toHaveLength(2);
+  await lifecycle.runBillingWorker(); expect(captures).toHaveLength(2);
+});
+
+test('unknown payment results never create a replacement charge or a false final cancellation', async () => {
+  let current = await startRecovery('starter', 'unknown_pending');
+  expect(current.safepayBilling.pendingOperation).toBeTruthy();
+  const deadline = current.safepayBilling.recovery.cancelAt;
+  jest.setSystemTime(new Date(deadline.getTime() + 1));
+  await lifecycle.runBillingWorker(); await lifecycle.refreshStatus(sub._id);
+  current = await Sub.findById(sub._id);
+  expect(current.status).toBe('past_due'); expect(current.safepayBilling.autoRenew).toBe(true);
+  expect(current.safepayBilling.endedAt).toBeNull();
+  expect(await Operation.countDocuments({ kind: 'renewal' })).toBe(1);
+  expect((await Store.findOne({ seller: seller._id })).isActive).toBe(false);
+  const posts = http.mock.calls.filter(([url, options]) => /\/order\/payments\/v3\/track_/.test(url) && options.method === 'POST');
+  expect(posts).toHaveLength(2); // Enrollment + exactly one unknown renewal.
+  expect(await Outbox.countDocuments({ eventType: 'subscription.payment_failed' })).toBe(0);
+});
+
+test('manual cancellation during recovery stops every automatic retry', async () => {
+  const current = await startRecovery();
+  await lifecycle.cancel(seller._id);
+  jest.setSystemTime(current.safepayBilling.recovery.nextRetryAt); await lifecycle.runBillingWorker();
+  expect(await Operation.countDocuments({ kind: 'renewal' })).toBe(1);
+  expect((await Sub.findById(sub._id)).safepayBilling.autoRenew).toBe(false);
+});
+
+test('a day-7 retry quote cannot be accepted after the recovery deadline', async () => {
+  const current = await startRecovery();
+  jest.setSystemTime(new Date(current.safepayBilling.recovery.cancelAt.getTime() - 60000));
+  const q = await recovery.retryQuote(seller._id, { requestKey: 'grace-expiring-review', failedOperation: String(current.safepayBilling.lastFailedOperation) });
+  jest.setSystemTime(current.safepayBilling.recovery.cancelAt);
+  await expect(accept(q.quoteId)).rejects.toMatchObject({ code: 'SUBSCRIPTION_RECOVERY_EXPIRED' });
+  expect(captures).toHaveLength(1);
+});
+
+test('two processes cannot prepare two payments for the same scheduled retry', async () => {
+  const current = await startRecovery();
+  jest.setSystemTime(current.safepayBilling.recovery.nextRetryAt);
+  const [a, b] = await Promise.all([lifecycle.queueRenewal(sub._id), lifecycle.queueRenewal(sub._id)]);
+  expect(String(a._id)).toBe(String(b._id));
+  const submissions = await Promise.allSettled([payments.submitRecurringPayment(a.payment), payments.submitRecurringPayment(b.payment)]);
+  for (const result of submissions) if (result.status === 'rejected') expect(result.reason.code).toBe('CHECKOUT_IN_PROGRESS');
+  await payments.submitRecurringPayment(a.payment);
+  expect(await Operation.countDocuments({ kind: 'renewal' })).toBe(2);
+  expect((await Sub.findById(sub._id)).safepayBilling.recovery.attempts).toBe(2);
+  expect(captures).toHaveLength(1);
+});
+
+test('a replacement card is used by the next scheduled retry, not the previous/default card', async () => {
+  let current = await startRecovery();
+  const replacement = 'pm_paid-engine-replacement';
+  mockOwnedCard.mockResolvedValue({ link: customer, card: { token: replacement }, config: readSafepayConfig() });
+  await recovery.changeCard(seller._id, { cardId: replacement, billingVersion: current.safepayBilling.version,
+    consentAccepted: true, consentVersion: billing.CONSENT_VERSION });
+  const originalHttp = http;
+  http = async (url, options) => {
+    if (new URL(url).pathname.includes('/wallet/')) return { ok: true, status: 200, json: async () => ({ data: {
+      token: replacement, customer: customer.customerId, merchant_api_key: 'sec_paid-engine', is_deleted: false,
+      max_usage: -1, expires_at: { seconds: Math.floor(Date.now() / 1000) + 90 * 86400 },
+      cybersource: { token: 'qa-replacement-network-token', last_four: '1005' } } }) };
+    return originalHttp(url, options);
+  };
+  mode = 'success'; jest.setSystemTime(current.safepayBilling.recovery.nextRetryAt); await lifecycle.runBillingWorker();
+  current = await Sub.findById(sub._id).select('+safepayBilling.cardId');
+  expect(current.safepayBilling.cardId).toBe(replacement);
+  const op = await Operation.findOne({ kind: 'renewal', status: 'applied' }).select('+cardId');
+  const paid = await Payment.findById(op.payment).select('+cardId');
+  expect(op.cardId).toBe(replacement); expect(paid.cardId).toBe(replacement);
+  expect(captures).toHaveLength(2);
+});
+
+test('an initial enrollment decline never grants a recovery week or schedules unapproved enrollment charges', async () => {
+  mode = 'declined'; await accept((await quote()).quoteId);
+  const current = await Sub.findById(sub._id);
+  expect(current.safepayBilling.autoRenew).toBe(false);
+  expect(current.safepayBilling.recovery.rootOperation).toBeNull();
+  await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
+  expect(await Payment.countDocuments({ purpose: 'subscription' })).toBe(1);
+  expect(captures).toHaveLength(0);
+});
+
+test('a verified expired unpaid tracker releases its invoice for recovery instead of blocking the subscription forever', async () => {
+  await accept((await quote()).quoteId); await makeDue();
+  const originalHttp = http;
+  http = async (url, options) => {
+    const result = await originalHttp(url, options);
+    if (new URL(url).pathname.startsWith('/reporter/api/v1/payments/')) {
+      const body = await result.json();
+      if (body.data.tracker.state === 'TRACKER_STARTED') body.data.tracker.state = 'TRACKER_EXPIRED';
+      return { ok: true, status: 200, json: async () => body };
+    }
+    return result;
+  };
+  await lifecycle.runBillingWorker();
+  const current = await Sub.findById(sub._id);
+  expect(current.safepayBilling.pendingOperation).toBeNull();
+  expect(current.safepayBilling.lastFailedOperation).toBeTruthy();
+  expect(current.safepayBilling.recovery.nextRetryAt).toBeInstanceOf(Date);
+  const op = await Operation.findById(current.safepayBilling.lastFailedOperation);
+  const payment = await Payment.findById(op.payment);
+  expect(op.failureCode).toBe('SAFEPAY_RECURRING_PAYMENT_CLOSED');
+  expect(payment.status).toBe('failed'); expect(payment.capturedMinor).toBe(0);
+  expect(captures).toHaveLength(1);
 });

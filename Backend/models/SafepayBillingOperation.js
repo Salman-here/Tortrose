@@ -17,6 +17,8 @@ const schema = new mongoose.Schema({
   cardId: { type: String, default: null, select: false },
   payment: { type: mongoose.Schema.Types.ObjectId, ref: 'SafepayPayment', default: null },
   failureCode: { type: String, default: '' },
+  failedAt: { type: Date, default: null },
+  recoveryNotice: { type: mongoose.Schema.Types.Mixed, default: null },
   // Polling state is separate from immutable invoices and capture fences.
   // Missing fields on previously accepted invoices are eligible immediately.
   workerNextAttemptAt: { type: Date, default: null },

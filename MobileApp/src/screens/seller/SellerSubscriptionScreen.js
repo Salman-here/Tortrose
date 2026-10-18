@@ -29,6 +29,7 @@ import {
 } from '../../components/seller/SellerUI';
 import { useAuth } from '../../contexts/AuthContext';
 import { selectSubscriptionBillingCard } from '../../utils/subscriptionBillingCard';
+import { subscriptionRecoveryNotice } from '../../utils/subscriptionRecovery';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../../utils/persistedMutationAttempt';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
@@ -516,11 +517,11 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
       : '';
     Alert.alert(
       'Cancel subscription?',
-      `Your plan stays active until the current billing period ends. Your public store will then be hidden.${founderWarning}${bonusWarning}`,
+      `${subscription?.renewalRecovery?.graceActive ? 'This renewal is unpaid. Cancelling now stops the remaining automatic attempts and ends recovery access; your public store will be hidden.' : 'Your plan stays active until the current billing period ends. Your public store will then be hidden.'}${founderWarning}${bonusWarning}`,
       [
         { text: 'Keep plan', style: 'cancel' },
         {
-          text: 'Cancel at period end',
+          text: subscription?.renewalRecovery?.graceActive ? 'Cancel now' : 'Cancel at period end',
           style: 'destructive',
           onPress: () => runMutation('cancel', () => api.post('/api/subscription/cancel'), 'Cancellation scheduled.'),
         },
@@ -638,7 +639,8 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
       : 'No active plan';
   // The introductory end remains historical after the first paid renewal.
   // Only an actual free-period state may use it as the access boundary.
-  const planEndDate = formatDate(subscription?.status === 'free_period'
+  const recoveryNotice = subscriptionRecoveryNotice(subscription);
+  const planEndDate = formatDate(subscription?.renewalRecovery?.graceActive ? subscription.renewalRecovery.cancelAt : subscription?.status === 'free_period'
     ? subscription?.freePeriodEndDate || subscription?.currentPeriodEnd
     : subscription?.currentPeriodEnd);
   const trialEndDate = formatDate(subscription?.trialEndDate);
@@ -760,15 +762,15 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
             </GlassPanel>
           )}
 
-          {model.isPastDue && (
+          {(model.isPastDue || recoveryNotice) && (
             <GlassPanel variant="card" style={styles.warningBanner}>
               <View style={styles.bannerIconWarning}>
                 <Ionicons name="alert-circle" size={21} color={palette.colors.warning} />
               </View>
               <View style={styles.bannerCopy}>
-                <Text style={styles.bannerTitle}>Payment needs attention</Text>
-                <Text style={styles.bannerText}>
-                  Your renewal is not confirmed. Review your saved card and the billing status before starting another payment, or contact support.
+                <Text style={styles.bannerTitle}>{recoveryNotice?.title || 'Payment needs attention'}</Text>
+                <Text style={styles.bannerText} accessibilityLiveRegion="polite">
+                  {recoveryNotice?.body || 'Your renewal is not confirmed. Review your saved card and the billing status before starting another payment, or contact support.'}
                 </Text>
               </View>
             </GlassPanel>

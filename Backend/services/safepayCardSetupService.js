@@ -38,13 +38,18 @@ function successfulCardDetails(payment, tracker, mode = 'instrument') {
 async function verifySavedSetupCard(payment, tracker, config, client, at, mode = 'instrument') {
   const details = successfulCardDetails(payment, tracker, mode);
   const cards = await client.listCards(payment.customerId);
-  const matches = cards.filter(card => {
+  const detailMatches = cards.filter(card => {
     requireOwnedCard(card, payment.customerId, config);
-    try { requireReusableCard(card, at); } catch (_) { return false; }
-    return card.cybersource.bin === details.bin && card.cybersource.last_four === details.last_four
+    return card.cybersource?.bin === details.bin && card.cybersource.last_four === details.last_four
       && Number(card.cybersource.expiry_month) === Number(details.expiration_month)
       && Number(card.cybersource.expiry_year) === Number(details.expiration_year);
   });
+  const matches = detailMatches.filter(card => { try { requireReusableCard(card, at); return true; } catch (_) { return false; } });
+  const newLimited = detailMatches.filter(card => !payment.cardSetup.existingCardIds.includes(card.token));
+  if (mode === 'instrument' && !matches.length && newLimited.length
+    && newLimited.every(card => Number.isSafeInteger(card.max_usage) && card.max_usage >= 0)) {
+    throw fail('Safepay verified the card but did not save a reusable payment method. Start a new secure card setup.', 'SAFEPAY_CARD_SETUP_NOT_REUSABLE');
+  }
   const newCards = matches.filter(card => !payment.cardSetup.existingCardIds.includes(card.token));
   // Safepay may reuse an existing token when the same card is added again.
   // Never pick an unrelated card or guess between duplicate matching tokens.

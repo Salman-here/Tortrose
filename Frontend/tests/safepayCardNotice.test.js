@@ -32,3 +32,10 @@ test('web form uses short consent and refreshes before showing the saved-card re
   assert.doesNotMatch(source + provider, /adding a card does not start a subscription/i);
   assert.doesNotMatch(safepayCardSetupNotice({ status: 'pending' }, null), /adding a card does not start a subscription/i);
 });
+
+test('a verified non-reusable setup offers a fresh setup without claiming that the card was saved', () => {
+  const notice = safepayCardSetupNotice({ status: 'failed', failureCode: 'SAFEPAY_CARD_SETUP_NOT_REUSABLE' }, { cards: [] });
+  assert.match(notice, /did not save it for future payments/);
+  assert.match(notice, /start a new secure card setup/);
+  assert.doesNotMatch(notice, /set as your default/);
+});

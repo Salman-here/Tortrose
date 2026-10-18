@@ -12,6 +12,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { formatUsdCents, getSubscriptionPricing } from '../../utils/subscriptionPricing';
 import { notifySubscriptionStatusChanged } from '../../utils/subscriptionStatusRefresh';
+import { subscriptionRecoveryNotice } from '../../utils/subscriptionRecovery';
 import { useAuth } from '../../contexts/AuthContext';
 import {
     calendarMonthsRemaining,
@@ -297,6 +298,7 @@ const SellerSubscription = () => {
     const isBlocked = subscription?.status === 'blocked';
     const isTrial = subscription?.status === 'trial';
     const isPastDue = subscription?.status === 'past_due';
+    const recoveryNotice = subscriptionRecoveryNotice(subscription);
     const isSubscribed = ['active', 'free_period'].includes(subscription?.status);
     const isElite = subscription?.plan === 'elite';
     const hasPendingDowngrade = isSubscribed && isElite && subscription?.pendingDowngrade === 'starter';
@@ -400,13 +402,20 @@ const SellerSubscription = () => {
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 sm:p-6 max-w-4xl mx-auto">
             {safepayBilling.review}
+            {recoveryNotice && <section className="glass-card p-4 mb-6 border border-amber-500/30" role="status">
+                <div className="flex items-start gap-3">
+                    <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5" aria-hidden="true" />
+                    <div><h2 className="font-semibold">{recoveryNotice.title}</h2>
+                        <p className="text-sm text-muted-foreground mt-1">{recoveryNotice.body}</p></div>
+                </div>
+            </section>}
             {subscription?.billingProvider === 'safepay' && <section className="glass-card p-4 mb-6 space-y-3">
                 <h2 className="font-semibold">Safepay subscription billing</h2>
                 <p className="text-sm text-muted-foreground">Manage the card used for automatic renewals. Updating your default shopping card does not change your subscription card.</p>
                 <div className="flex flex-wrap gap-3">
-                    <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={safepayBilling.changeCard}>Change billing card</button>
+                    {subscription.automaticRenewal && !subscription.pendingBillingOperation && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={safepayBilling.changeCard}>Change billing card</button>}
                     {subscription.pendingBillingOperation && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={safepayBilling.checkPending}>Check pending payment</button>}
-                    {subscription.failedBillingOperation && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={() => safepayBilling.open({ kind: 'retry', plan: subscription.plan })}>Retry payment</button>}
+                    {!subscription.pendingBillingOperation && subscription.failedBillingOperation && subscription.automaticRenewal && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={() => safepayBilling.open({ kind: 'retry', plan: subscription.plan })}>Retry payment</button>}
                 </div>
             </section>}
 
@@ -1340,7 +1349,9 @@ const SellerSubscription = () => {
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Cancel Subscription?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Your store and products will be hidden from customers after the current period ends. You can re-subscribe anytime.
+                                    {subscription?.renewalRecovery?.graceActive
+                                        ? 'This renewal is unpaid. Cancelling now stops the remaining automatic attempts and ends recovery access; your store and products will be hidden. You can re-subscribe anytime.'
+                                        : 'Your store and products will be hidden from customers after the current period ends. You can re-subscribe anytime.'}
                                 </p>
                             </div>
 

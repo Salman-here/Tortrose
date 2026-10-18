@@ -35,13 +35,22 @@ async function billingOperation(record) {
     || !sellerRecipient(record, op.seller) || record.payload?.data?.type !== 'subscription_updated'
     || id(record.payload.data.operationId) !== id(op)
     || record.eventKey !== `safepay-billing:${op._id}:${record.eventType}:v1`
-    || !sameTime(record.occurredAt, op.appliedAt || op.acceptedAt)
+    || !sameTime(record.occurredAt, op.appliedAt || op.failedAt || op.acceptedAt)
     || !moneyMatches(record, 'charged', op.terms.dueMinor, 'USD', 'SafepayBillingOperation', op, 'terms.dueMinor')) return rejected();
   if (failure) {
     const sub = await Subscription.findById(op.subscription).lean();
     if (!sub || id(sub.seller) !== id(op.seller) || sub.billingProvider !== 'safepay'
       || sub.safepayBilling?.environment !== op.environment || id(sub.safepayBilling.lastFailedOperation) !== id(op)
-      || !sub.safepayBilling.lastFailureCode) return rejected();
+      || !sub.safepayBilling.lastFailureCode || sub.safepayBilling.endedAt) return rejected();
+    if (op.recoveryNotice) {
+      const notice = record.payload?.data?.renewalRecovery;
+      if (!notice || notice.policyVersion !== op.recoveryNotice.policyVersion
+        || notice.rootOperation !== op.recoveryNotice.rootOperation || notice.attempt !== op.recoveryNotice.attempt
+        || notice.maxAttempts !== op.recoveryNotice.maxAttempts || notice.timeZone !== op.recoveryNotice.timeZone
+        || notice.finalDay !== op.recoveryNotice.finalDay || !sameTime(notice.cancelAt, op.recoveryNotice.cancelAt)
+        || (notice.nextRetryAt || op.recoveryNotice.nextRetryAt)
+          && !sameTime(notice.nextRetryAt, op.recoveryNotice.nextRetryAt)) return rejected();
+    }
   }
   return null;
 }

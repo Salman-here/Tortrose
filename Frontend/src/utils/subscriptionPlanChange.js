@@ -35,6 +35,8 @@ export const canRetryPlanChangeAfterStripeAction = (result) => {
 
 export const subscriptionStatusConfirmsEntitlement = (subscription) => (
   ['active', 'free_period'].includes(String(subscription?.status || '').toLowerCase())
+  && !subscription?.pendingBillingOperation
+  && !(subscription?.renewalRecovery?.active && subscription?.renewalRecovery?.failedAt)
 );
 
 const addUtcMonthsClamped = (value, months) => {

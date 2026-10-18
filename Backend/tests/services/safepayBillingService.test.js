@@ -181,7 +181,7 @@ test('cancellation after charge started is preserved when the funded period acti
   expect(current.status).toBe('active'); expect(current.cancelledAt).toBeTruthy();
   expect(current.safepayBilling.autoRenew).toBe(false); expect(current.safepayBilling.nextChargeAt).toBeNull();
 });
-test('one renewal operation is created per anchored cycle, and no new access is granted before payment', async () => {
+test('one renewal operation is created per anchored cycle with bounded recovery access but no funded period before payment', async () => {
   await accept((await quote()).quoteId);
   const anchor = new Date(Date.now() - 60000);
   await Subscription.updateOne({ _id: sub._id }, { $set: { 'safepayBilling.anchorAt': anchor, 'safepayBilling.nextChargeAt': anchor, currentPeriodEnd: anchor } });
@@ -189,7 +189,8 @@ test('one renewal operation is created per anchored cycle, and no new access is 
   const second = await lifecycle.queueRenewal(sub._id);
   expect(String(second._id)).toBe(String(first._id));
   expect(await Operation.countDocuments({ kind: 'renewal' })).toBe(1);
-  expect((await Subscription.findById(sub._id)).status).toBe('past_due');
+  expect((await Subscription.findById(sub._id)).status).toBe('active');
+  expect((await Subscription.findById(sub._id)).safepayBilling.recovery.attempts).toBe(1);
   const payment = await Payment.findById(first.payment);
   await mongoose.connection.transaction(session => billing.settleBillingPayment(payment, { state: 'TRACKER_ENDED' }, session));
   expect((await Subscription.findById(sub._id)).status).toBe('active');
@@ -263,11 +264,11 @@ test('a customer deletion fence prevents concurrently selecting the card for ren
     consentAccepted: true, consentVersion: billing.CONSENT_VERSION })).rejects.toMatchObject({ code: 'CARD_REMOVAL_PENDING' });
 });
 
-test('a read of expired access hides the store without charging a card', async () => {
+test('a read at renewal starts bounded grace without charging a card', async () => {
   await accept((await quote()).quoteId);
   await Subscription.updateOne({ _id: sub._id }, { $set: { currentPeriodEnd: new Date(Date.now() - 60000) } });
-  expect((await lifecycle.refreshStatus(sub._id)).status).toBe('past_due');
-  expect((await Store.findOne({ seller: seller._id })).isActive).toBe(false);
+  expect((await lifecycle.refreshStatus(sub._id)).status).toBe('active');
+  expect((await Store.findOne({ seller: seller._id })).isActive).toBe(true);
   expect(submit).not.toHaveBeenCalled();
 });
 
@@ -316,7 +317,7 @@ test('checkout pause continues a due consented renewal exactly once and cancella
     expect(await Payment.countDocuments()).toBe(1);
     expect(submit).toHaveBeenCalled();
     const current = await Subscription.findById(sub._id);
-    expect(current.status).toBe('past_due');
+    expect(current.status).toBe('active');
     await lifecycle.cancel(seller._id);
     submit.mockClear(); await lifecycle.runBillingWorker();
     expect(submit).not.toHaveBeenCalled();

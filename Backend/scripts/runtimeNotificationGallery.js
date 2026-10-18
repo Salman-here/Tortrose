@@ -38,12 +38,12 @@ function source(relative) {
 }
 function pureSourceModule(relative) {
   if (!SOURCE_REVISION) return require(path.resolve(ROOT, relative));
-  if (!['services/whatsapp/messageBuilder.js', 'services/whatsapp/sellerMessageTemplates.js'].includes(relative)) {
+  if (!['services/whatsapp/messageBuilder.js', 'services/whatsapp/sellerMessageTemplates.js', 'services/safepayRenewalPolicy.js'].includes(relative)) {
     throw new Error('Historical preview module is not an audited pure builder.');
   }
   const localRequire = createRequire(path.resolve(ROOT, relative));
   const module = { exports: {} };
-  const context = vm.createContext({ module, exports: module.exports, Date, URL, Object, String, Number, Array, Map, Set, Math, JSON,
+  const context = vm.createContext({ module, exports: module.exports, Date, URL, Object, String, Number, Array, Map, Set, Math, JSON, Intl,
     require: name => ['../../utils/orderPresentation', '../moneyMath'].includes(name) ? localRequire(name) : blocked(name) });
   new vm.Script(source(relative).text, { filename: `historical:${relative}` }).runInContext(context, { timeout: 1000 });
   return module.exports;
@@ -126,7 +126,7 @@ const COVERAGE = Object.freeze([
   { sourcePath: 'Backend/services/safepayRefundService.js', scope: 'Buyer/seller verified card refund', activity: 'active' },
   { sourcePath: 'Backend/services/safepaySafetyRefundService.js', scope: 'Admin refund not-submitted / reconciliation', activity: 'active' },
   { sourcePath: 'Backend/services/cancellationRefundService.js', scope: 'Admin cancellation refund review', activity: 'active' },
-  { sourcePath: 'Backend/services/safepayBillingService.js', scope: 'Trial/active/failed operation', activity: 'active' },
+  { sourcePath: 'Backend/services/safepayBillingService.js', scope: 'Trial/active/failed operation and renewal failures on days 1, 3, 5 and 7', activity: 'active' },
   { sourcePath: 'Backend/services/safepayBillingLifecycleService.js', scope: 'Cancel/resume/downgrade/cancel downgrade/ended and in-flight cancellation', activity: 'active' },
   { sourcePath: 'Backend/services/subscriptionLifecycleNotificationService.js', scope: 'Shared trial/bonus and Safepay ending warnings, plus retained Stripe-only plan/invoice activation labelled separately', activity: 'active' },
   { sourcePath: 'Backend/services/returnNotificationService.js', scope: 'New request, buyer cancellation, all non-settlement status labels', activity: 'active' },
@@ -163,7 +163,9 @@ const CALL_SITE_MATRIX = Object.freeze({
   'services/safepaySafetyRefundService.js': { notifyRefundReview: 1 },
   'services/cancellationRefundService.js': { processCancellationRefund: 1 },
   'services/safepayBillingService.js': { notifyOperation: 1, applyOperation: 1, failBillingPayment: 1 },
-  'services/safepayBillingLifecycleService.js': { notify: 1, cancel: 1, resume: 1, scheduleDowngrade: 1, cancelDowngrade: 1, closeEndedSubscription: 1 },
+  'services/safepayBillingLifecycleService.js': { notify: 1, cancel: 1, resume: 1, scheduleDowngrade: 1, cancelDowngrade: 1,
+    [source('services/safepayBillingLifecycleService.js').ast.program.body.some(node => node.type === 'FunctionDeclaration'
+      && node.id.name === 'finishSubscription') ? 'finishSubscription' : 'closeEndedSubscription']: 1 },
   'services/subscriptionLifecycleNotificationService.js': { enqueueTrialExpiringNotification: 1,
     enqueueTrialBlockedNotification: 1, enqueueSubscriptionEndingNotification: 1, enqueueBonusLifecycleNotification: 1,
     enqueuePlanChangeNotification: 1, enqueueSubscriptionPaymentFailureNotification: 1,
@@ -476,17 +478,33 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   for (const trialDays of [0, 45]) await run(billingPath, trialDays ? 'Safepay subscription trial started' : 'Safepay subscription updated', operationCalls[0].line,
     () => evaluateCall(billingPath, operationCalls[0], { notifyOperation: billing.result.notifyOperation, operation: { ...op, terms: { dueMinor: trialDays ? 0 : 2565 } },
       terms: { trialDays, planName: 'Rozare Elite + Meta Ads' }, sub: { status: trialDays ? 'free_period' : 'active' }, session: null }));
-  await run(billingPath, 'Safepay subscription payment failed', operationCalls[1].line, () => evaluateCall(billingPath, operationCalls[1],
-    { notifyOperation: billing.result.notifyOperation, op, session: null }));
+  const failureFunction = source(billingPath).ast.program.body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'failBillingPayment');
+  let noticeExpression = null;
+  visit(failureFunction, node => { if (node.type === 'VariableDeclarator' && node.id.name === 'notice') noticeExpression = source(billingPath).text.slice(node.init.start, node.init.end); });
+  const renewalPolicy = noticeExpression ? pureSourceModule('services/safepayRenewalPolicy.js') : null;
+  const failureBindings = (operation, subscription = {}, at = NOW) => ({ notifyOperation: billing.result.notifyOperation,
+    op: operation, sub: subscription, at, session: null,
+    ...(noticeExpression ? { notice: new vm.Script(`(${noticeExpression})`).runInNewContext({ op: operation, sub: subscription, at, renewalPolicy }) } : {}) });
+  await run(billingPath, 'Safepay subscription payment failed', operationCalls[1].line, () => evaluateCall(billingPath, operationCalls[1], failureBindings(op)));
+  if (renewalPolicy) for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const at = attempt === 1 ? NOW : new Date(NOW.getTime() + (attempt - 1) * 2 * 86400000 - 6 * 3600000);
+    const recovery = { rootOperation: IDS.request, startedAt: NOW, cancelAt: renewalPolicy.cancellationDeadline(NOW), attempts: attempt };
+    recovery.nextRetryAt = renewalPolicy.nextRetry(recovery, at);
+    const subscription = { safepayBilling: { recovery } };
+    const operation = { ...op, appliedAt: null, failedAt: at, terms: { ...op.terms, planName: 'Rozare Elite + Meta Ads' }, recoveryNotice: true };
+    operation.recoveryNotice = renewalPolicy.failureNotice(subscription, operation, at).snapshot;
+    await run(billingPath, `Safepay renewal failure — day ${[1, 3, 5, 7][attempt - 1]}`, operationCalls[1].line,
+      () => evaluateCall(billingPath, operationCalls[1], failureBindings(operation, subscription, at)));
+  }
   const billingLifecyclePath = 'services/safepayBillingLifecycleService.js';
   const billingLifecycle = declarations(billingLifecyclePath, ['notify'], { ...deps, minor: value => value, date: value => new Date(value) });
   const lifecycleCalls = callExpressions(billingLifecyclePath, 'notify');
   const sub = { _id: IDS.request, seller: IDS.seller, status: 'active', currentPeriodEnd: new Date('2026-10-15T10:00:00.000Z'),
     safepayBilling: { monthlyMinor: 2565, contractId: 'preview-contract', version: 1 }, save: async () => {} };
-  for (const call of lifecycleCalls) for (const currentPaymentMayComplete of call.code.includes('currentPaymentMayComplete') ? [false, true] : [false]) {
-    await run(billingLifecyclePath, `Safepay ${call.code.match(/, '([^']+)',/)[1].replace(/_/g, ' ')}${currentPaymentMayComplete ? ' — payment already in progress' : ''}`, call.line,
+  for (const call of lifecycleCalls) for (const currentPaymentMayComplete of call.code.includes('currentPaymentMayComplete') ? [false, true] : [false]) for (const unpaid of call.code.includes('unpaid') ? [false, true] : [false]) {
+    await run(billingLifecyclePath, `Safepay ${call.code.match(/, '([^']+)',/)[1].replace(/_/g, ' ')}${currentPaymentMayComplete ? ' — payment already in progress' : ''}${unpaid ? ' — unpaid renewal' : ''}`, call.line,
       () => evaluateCall(billingLifecyclePath, call, { notify: billingLifecycle.result.notify, sub, at: NOW, endedAt: NOW,
-        date: value => new Date(value), currentPaymentMayComplete, session: null }));
+        date: value => new Date(value), currentPaymentMayComplete, unpaid, session: null }));
   }
 
   const subdomainPath = 'services/safepaySubdomainService.js';

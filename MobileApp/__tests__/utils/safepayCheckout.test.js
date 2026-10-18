@@ -3,6 +3,15 @@ import { validateSafepayCheckout, normalizeSafepayStatus, openSafepayCheckout, v
 const paymentId = 'a'.repeat(24);
 const payment = { paymentId, paymentMethod: 'safepay', paymentFlow: 'safepay_hosted', environment: 'sandbox',
   checkoutUrl: 'https://sandbox.api.getsafepay.com/embedded/?tracker=track_fixture', status: 'pending', isPaid: false };
+test('a verified zero-amount non-reusable card setup closes without reopening the completed provider form', async () => {
+  const failed = { paymentId, paymentMethod: 'safepay', paymentFlow: 'safepay_hosted', environment: 'sandbox',
+    purpose: 'card_setup', currency: 'PKR', amountMinor: 0, status: 'failed', isPaid: false, completed: false, cardSaved: false,
+    failureCode: 'SAFEPAY_CARD_SETUP_NOT_REUSABLE' };
+  const openSheet = jest.fn(), apiClient = { get: jest.fn(async () => ({ data: failed })) };
+  await expect(openSafepayCheckout({ apiClient, response: failed, openSheet })).resolves.toMatchObject({ status: 'failed', cardSaved: false });
+  expect(openSheet).not.toHaveBeenCalled(); expect(apiClient.get).toHaveBeenCalledTimes(1);
+  expect(() => validateSafepayCheckout({ ...failed, purpose: 'order' })).toThrow();
+});
 test('accepts only the exact configured provider host and HTTPS checkout path', () => {
   expect(validateSafepayCheckout({ data: payment }).paymentId).toBe(paymentId);
   for (const checkoutUrl of ['http://sandbox.api.getsafepay.com/embedded/', 'https://sandbox.api.getsafepay.com.evil.example/embedded/',

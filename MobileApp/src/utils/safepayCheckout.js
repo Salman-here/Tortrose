@@ -29,6 +29,8 @@ export function validateSafepayCheckout(response) {
   }
   if ((payment.isPaid === true && payment.status === 'paid')
     || (payment.purpose === 'card_setup' && payment.completed === true && payment.status === 'authorized')) return payment;
+  if (payment.purpose === 'card_setup' && payment.amountMinor === 0 && payment.isPaid === false
+    && payment.completed === false && payment.cardSaved === false && ['failed', 'cancelled'].includes(payment.status)) return payment;
   let url;
   try { url = new URL(payment.checkoutUrl || payment.url); } catch (_) { throw failure('The secure payment link is unavailable.'); }
   if (payment.checkoutPresentation === 'saved-card') {
@@ -101,7 +103,7 @@ export async function verifySafepayPayment({ apiClient, paymentId, expectedPayme
 export async function openSafepayCheckout({ apiClient, response, openSheet = presentSafepaySheet, openBrowser }) {
   const payment = validateSafepayCheckout(response);
   let returned = null;
-  if (!payment.isPaid && !(payment.purpose === 'card_setup' && payment.status === 'authorized')) {
+  if (!payment.isPaid && !(payment.purpose === 'card_setup' && ['authorized', 'failed', 'cancelled'].includes(payment.status))) {
     // The return URL is just navigation. Even cancel/dismiss may race a
     // successful charge, so always ask our authenticated backend afterwards.
     // openBrowser is an injected test adapter; production uses the app sheet.

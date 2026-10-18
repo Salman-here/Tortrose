@@ -196,7 +196,9 @@ export default function PaymentMethodsScreen({ navigation }) {
             : 'Your saved card is not available yet. Refresh your cards to check before starting another setup.' });
       } else if (['cancelled', 'failed'].includes(result.status)) {
         await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
-        setNotice({ type: 'info', title: 'Card setup closed', text: 'Safepay confirmed that this card setup did not complete.' });
+        setNotice({ type: 'info', title: 'Card setup closed', text: result.failureCode === 'SAFEPAY_CARD_SETUP_NOT_REUSABLE'
+          ? 'Safepay verified the card but did not save it for future payments. Please start a new secure card setup.'
+          : 'Safepay confirmed that this card setup did not complete. You can start a new secure setup.' });
       } else {
         setNotice({ type: 'info', title: 'Card setup is being verified', text: 'The same setup is retained. Refresh your cards or retry to resume it.' });
       }

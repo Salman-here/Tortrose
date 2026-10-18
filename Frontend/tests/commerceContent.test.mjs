@@ -15,7 +15,7 @@ const { privacySections, paymentPrivacyNotice } = await shared('privacyContent.j
 const content = (policy, id) => commercePolicies[policy].sections.find(section => section.id === id).content;
 
 test('policy sections have unique stable anchors and complete published content', () => {
-  assert.equal(policyConfig.updatedAt, 'October 16, 2026');
+  assert.equal(policyConfig.updatedAt, 'October 18, 2026');
   for (const document of Object.values(commercePolicies)) {
     assert.equal(new Set(document.sections.map(section => section.id)).size, document.sections.length);
     for (const section of document.sections) { assert.match(section.id, /^[a-z][a-z-]+$/); assert(section.content.length > 80); assert(!/undefined|TODO|lorem ipsum/i.test(section.content)); }

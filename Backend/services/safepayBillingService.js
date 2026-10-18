@@ -19,6 +19,7 @@ const { FOUNDER_PROMOTION, reserveFounderSlot } = require('./founderPromotionSer
 const { claimSellerCheckout, releaseSellerCheckoutClaim } = require('./sellerCheckoutClaimService');
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
+const renewalPolicy = require('./safepayRenewalPolicy');
 
 const CONSENT_VERSION = 'rozare-safepay-recurring-v1';
 const id = value => String(value?._id || value || '');
@@ -60,7 +61,7 @@ function presentQuote(operation) {
     monthlyAmountMinor: t.monthlyMinor, dueNowMinor: t.dueMinor, creditMinor: t.creditMinor || 0,
     freePeriodDays: t.trialDays || 0, founderRate: t.founderRate === true,
     consentVersion: CONSENT_VERSION, requiresSafepayAccount: false,
-    terms: `Authorize Rozare to charge ${t.monthlyMinor / 100} USD each month using your selected Safepay-saved card${t.trialDays ? ` after ${t.trialDays} free days` : ''}. Cancel renewal in your subscription settings before the next billing date.` };
+    terms: `Authorize Rozare to charge ${t.monthlyMinor / 100} USD each month using your selected Safepay-saved card${t.trialDays ? ` after ${t.trialDays} free days` : ''}. If a renewal fails, Rozare may make four scheduled attempts in total on days 1, 3, 5 and 7. Your plan stays active until the end of day 7 (Pakistan time) and is cancelled if the renewal remains unpaid. Cancel renewal in your subscription settings before the next billing date.` };
 }
 
 async function createQuote(sellerId, body) {
@@ -195,13 +196,14 @@ async function claimFounder(operation, session) {
 async function notifyOperation(operation, { session, type = 'subscription.payment_received', title = 'Subscription updated', body } = {}) {
   const amountMinor = minor(operation.terms.dueMinor);
   return enqueueNotificationEvent({ eventKey: `safepay-billing:${operation._id}:${type}:v1`, eventType: type,
-    aggregateType: 'SafepayBillingOperation', aggregateId: operation._id, occurredAt: operation.appliedAt || operation.acceptedAt,
+    aggregateType: 'SafepayBillingOperation', aggregateId: operation._id, occurredAt: operation.appliedAt || operation.failedAt || operation.acceptedAt,
     financial: true, recipient: { kind: 'user', audienceRole: 'seller', user: operation.seller, destinationPolicy: 'current_user', allowBlocked: true },
     channels: ['inapp', 'push', 'email', 'whatsapp'],
     templates: { inapp: { title, body }, push: { title, body }, email: { subject: title, text: body }, whatsapp: { message: `*${title}*\n\n${body}` } },
     money: [snapshotMinorMoney({ key: 'charged', amountMinor, currency: 'USD', sourceModel: 'SafepayBillingOperation', sourceDocumentId: operation._id, sourcePath: 'terms.dueMinor', label: 'Subscription charge' })],
     metadata: { category: 'subscription', channelId: 'seller', whatsappCategory: type === 'subscription.payment_failed' ? 'payment_failed' : 'subscription_activated',
-      linkTo: '/seller-dashboard/subscription', data: { type: 'subscription_updated', operationId: id(operation) } }, session });
+      linkTo: '/seller-dashboard/subscription', data: { type: 'subscription_updated', operationId: id(operation),
+        ...(operation.recoveryNotice ? { renewalRecovery: operation.recoveryNotice } : {}) } }, session });
 }
 
 async function applyOperation(operation, sub, session) {
@@ -241,6 +243,8 @@ async function applyOperation(operation, sub, session) {
   sub.safepayBilling.lastFailedOperation = null;
   sub.safepayBilling.version += 1;
   sub.safepayBilling.lastFailureCode = '';
+  sub.safepayBilling.recovery = { rootOperation: null, contractId: null, cycle: null, policyVersion: null,
+    startedAt: null, cancelAt: null, attempts: 0, nextRetryAt: null, lastFailureAt: null, cancelledAt: null };
   sub.safepayBilling.nextChargeAt = sub.safepayBilling.autoRenew ? sub.currentPeriodEnd : null;
   sub.warningEmailSent = false; sub.blockedAt = null; sub.blockedReason = ''; sub.aiMessageLimit = -1;
   sub.trialBlockedNotificationEventAt = null; sub.trialBlockedNotificationEnqueuedAt = null;
@@ -289,6 +293,10 @@ async function acceptQuote(sellerId, body) {
     if (op.terms.retryOf && (id(sub.safepayBilling.lastFailedOperation) !== op.terms.retryOf
       || !sub.safepayBilling.autoRenew || sub.cancelledAt && !sub.pendingDowngrade?.toPlan)) {
       throw fail('This renewal is no longer authorized. Review the current subscription.', 'SUBSCRIPTION_QUOTE_STALE');
+    }
+    if (op.terms.retryOf && renewalPolicy.ownsRecovery(sub)
+      && date(sub.safepayBilling.recovery.cancelAt) <= new Date()) {
+      throw fail('The renewal recovery period has ended. Refresh Subscription to choose a new plan.', 'SUBSCRIPTION_RECOVERY_EXPIRED');
     }
     const claim = await CheckoutClaim.findOne({ seller: sellerId, flow: 'subscription', provider: 'safepay',
       token: op.terms.checkoutClaimToken, expiresAt: { $gt: new Date() } }).session(session);
@@ -343,6 +351,8 @@ async function claimRecurringCharge(paymentId) {
       throw fail('The recurring charge has no matching billing authorization.', 'SAFEPAY_RECURRING_BINDING_INVALID');
     }
     if (['renewal', 'downgrade'].includes(op.kind) && !sub.safepayBilling.autoRenew) return null;
+    if (['renewal', 'downgrade'].includes(op.kind) && renewalPolicy.ownsRecovery(sub)
+      && date(sub.safepayBilling.recovery.cancelAt) <= new Date()) return null;
     const fundedEnd = op.kind === 'enrollment' ? monthlyBoundary(op.acceptedAt, 1)
       : op.terms.periodEnd || op.terms.proration?.periodEnd;
     if (fundedEnd && date(fundedEnd) <= new Date()) throw fail('The agreed billing period ended before collection. Review is required before a new charge.', 'SUBSCRIPTION_MISSED_PERIOD_REVIEW');
@@ -395,13 +405,14 @@ async function holdBillingPayment(payment, tracker, session) {
   await Store.updateOne({ seller: sub.seller, isActive: true }, { $set: { isActive: false, blockedAt: sub.blockedAt } }, { session });
 }
 
-async function failBillingPayment(payment, session) {
+async function failBillingPayment(payment, session, { failureCode = 'SAFEPAY_RECURRING_PAYMENT_DECLINED' } = {}) {
   const op = await Operation.findOne({ _id: payment.terms.billingOperationId, payment: payment._id,
     seller: payment.user, environment: payment.environment }).session(session);
   if (!op || op.status === 'applied') throw fail('The declined payment conflicts with its invoice.', 'SAFEPAY_RECURRING_BINDING_INVALID');
   if (op.status === 'failed') return;
   const sub = await Subscription.findById(op.subscription).session(session);
-  op.status = 'failed'; op.failureCode = 'SAFEPAY_RECURRING_PAYMENT_DECLINED';
+  const at = new Date();
+  op.status = 'failed'; op.failureCode = failureCode; op.failedAt = at;
   await op.save({ session });
   if (sub && id(sub.safepayBilling.pendingOperation) === id(op)) {
     sub.safepayBilling.pendingOperation = null;
@@ -409,9 +420,21 @@ async function failBillingPayment(payment, session) {
     sub.safepayBilling.lastFailureCode = op.failureCode;
     sub.safepayBilling.version += 1;
     if (['renewal', 'downgrade'].includes(op.kind)) {
-      sub.status = 'past_due'; sub.blockedAt = sub.blockedAt || new Date();
-      // A declined recurring charge requires a deliberate retry/card update;
-      // never hammer an issuer with repeated automatic authorization attempts.
+      if (renewalPolicy.ownsRecovery(sub) && op.terms.sourceContractId === sub.safepayBilling.contractId
+        && op.terms.cycle === sub.safepayBilling.cycle) {
+        const r = sub.safepayBilling.recovery;
+        r.lastFailureAt = at;
+        r.nextRetryAt = sub.safepayBilling.autoRenew ? renewalPolicy.nextRetry(r, at) : null;
+        // Billing attention and funded-period history remain separate from
+        // the explicitly granted, time-limited seven-day access grace.
+        sub.status = renewalPolicy.hasGraceAccess(sub, at) ? 'active' : 'past_due';
+        if (sub.status === 'past_due') sub.blockedAt = sub.blockedAt || at;
+        op.recoveryNotice = renewalPolicy.failureNotice(sub, op, at).snapshot;
+        await op.save({ session });
+      } else {
+        // Existing pre-policy failures are not silently re-authorized.
+        sub.status = 'past_due'; sub.blockedAt = sub.blockedAt || at;
+      }
       sub.safepayBilling.nextChargeAt = null;
     } else if (op.kind === 'enrollment') {
       // A definitively declined initial invoice must not leave a billing
@@ -421,8 +444,10 @@ async function failBillingPayment(payment, session) {
     }
     await sub.save({ session });
   }
-  await notifyOperation(op, { session, type: 'subscription.payment_failed', title: 'Subscription payment unsuccessful',
-    body: 'Your payment of {{money.charged}} was unsuccessful. This attempt did not activate or extend your subscription. Review your payment method and retry in Subscription.' });
+  const notice = op.recoveryNotice ? renewalPolicy.failureNotice(sub, op, at) : {
+    title: 'Subscription payment unsuccessful',
+    body: 'Your payment of {{money.charged}} was unsuccessful. This attempt did not activate or extend your subscription. Review your payment method and retry in Subscription.' };
+  await notifyOperation(op, { session, type: 'subscription.payment_failed', ...notice });
 }
 
 module.exports = { CONSENT_VERSION, createQuote, acceptQuote, presentQuote, operationStatus, claimRecurringCharge,

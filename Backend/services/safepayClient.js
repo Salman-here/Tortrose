@@ -152,9 +152,10 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       if (!matches.size) return null;
       return this.getTracker([...matches][0], expected);
     },
-    buildPaymentCheckoutUrl({ tracker, authToken, reference, redirectUrl, cancelUrl, customerId, source = 'hosted' }) {
+    buildPaymentCheckoutUrl({ tracker, authToken, reference, redirectUrl, cancelUrl, customerId, implicitCardSave = false, source = 'hosted' }) {
       requireId(tracker, 'track');
       if (customerId) requireId(customerId, 'cus');
+      if (typeof implicitCardSave !== 'boolean' || implicitCardSave && !customerId) throw providerError('Card storage requires an owned customer and consent.', 'SAFEPAY_CARD_STORAGE_INVALID', 400);
       for (const value of [redirectUrl, cancelUrl]) {
         const url = new URL(value);
         if (url.protocol !== 'https:' || url.username || url.password) throw providerError('Invalid payment return URL.', 'SAFEPAY_RETURN_URL_INVALID', 500);
@@ -165,7 +166,8 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       const url = new URL('/embedded/', config.checkoutHost);
       url.search = new URLSearchParams({ environment: config.environment, tracker, tbt: authToken,
         source, order_id: reference, redirect_url: redirectUrl, cancel_url: cancelUrl,
-        ...(customerId ? { user_id: customerId } : {}) }).toString();
+        ...(customerId ? { user_id: customerId } : {}),
+        ...(implicitCardSave ? { is_implicit: 'true' } : {}) }).toString();
       return url.toString();
     },
     async createCustomer(contact) {

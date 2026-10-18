@@ -87,6 +87,16 @@ test('recovery only adopts an exact owned reference and does not create a new tr
   expect(fetchImpl.mock.calls.every(([, args]) => args.method === 'GET')).toBe(true);
 });
 
+test('the hosted reusable-save option is explicit and requires an owned merchant customer', () => {
+  const options = { tracker: tracker.token, authToken: 'private-fixture-auth', reference: 'card:fixture123',
+    redirectUrl: 'https://rozare.up.railway.app/api/safepay/return?attempt=123',
+    cancelUrl: 'https://rozare.up.railway.app/api/safepay/return?attempt=123&outcome=cancel' };
+  const client = createSafepayClient({ config });
+  expect(new URL(client.buildPaymentCheckoutUrl(options)).searchParams.has('is_implicit')).toBe(false);
+  expect(new URL(client.buildPaymentCheckoutUrl({ ...options, customerId: 'cus_card-fixture', implicitCardSave: true })).searchParams.get('is_implicit')).toBe('true');
+  expect(() => client.buildPaymentCheckoutUrl({ ...options, implicitCardSave: true })).toThrow();
+});
+
 test('hosted checkout uses the selected environment and safely encodes return URLs', () => {
   const url = new URL(createSafepayClient({ config }).buildPaymentCheckoutUrl({ tracker: tracker.token,
     authToken: 'private-fixture-auth', reference: 'order:fixture123',

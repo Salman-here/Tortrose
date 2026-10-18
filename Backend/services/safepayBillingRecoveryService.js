@@ -9,6 +9,7 @@ const { readSafepayConfig } = require('../config/safepay');
 const { claimSellerCheckout, releaseSellerCheckoutClaim } = require('./sellerCheckoutClaimService');
 const { requireOwnedReusableCard } = require('./safepayCustomerService');
 const { fail, id, date, transaction } = billing;
+const renewalPolicy = require('./safepayRenewalPolicy');
 
 async function retryQuote(sellerId, body) {
   const config = readSafepayConfig(process.env, { requireWebhook: true });
@@ -28,6 +29,9 @@ async function retryQuote(sellerId, body) {
     || sub.cancelledAt && !sub.pendingDowngrade?.toPlan) throw fail('This subscription has no retryable renewal.', 'SUBSCRIPTION_RETRY_UNAVAILABLE');
   const previous = await Operation.findOne({ _id: sub.safepayBilling.lastFailedOperation, subscription: sub._id,
     environment: config.environment, status: 'failed', kind: { $in: ['renewal', 'downgrade'] } });
+  if (renewalPolicy.ownsRecovery(sub) && date(sub.safepayBilling.recovery.cancelAt) <= new Date()) {
+    throw fail('The renewal recovery period has ended. Refresh Subscription to choose a new plan.', 'SUBSCRIPTION_RECOVERY_EXPIRED');
+  }
   const failedPayment = previous?.payment && await Payment.findById(previous.payment);
   if (!previous || failedPayment?.status !== 'failed' || failedPayment.chargeOutcome !== 'declined'
     || failedPayment.appliedAt || previous.terms.sourceContractId !== sub.safepayBilling.contractId
@@ -43,7 +47,7 @@ async function retryQuote(sellerId, body) {
     const op = await Operation.create({ seller: sellerId, subscription: sub._id, environment: config.environment,
       requestKey: body.requestKey, fingerprint, sourceVersion: sub.safepayBilling.version, kind: previous.kind,
       expiresAt: new Date(Math.min(date(claim.claim.expiresAt).getTime(), date(previous.terms.periodEnd).getTime())),
-      terms: { ...previous.terms, trialDays: 0, retryOf: id(previous), checkoutClaimToken: claim.claim.token } });
+      terms: { ...previous.terms, trialDays: 0, automaticRetry: false, retryOf: id(previous), checkoutClaimToken: claim.claim.token } });
     return billing.presentQuote(op);
   } catch (error) {
     await releaseSellerCheckoutClaim({ sellerId, flow: 'subscription', token: claim.claim.token });

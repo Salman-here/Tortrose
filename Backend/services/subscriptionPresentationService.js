@@ -3,6 +3,7 @@
 const { buildPlanPricing, getPricingCatalog } = require('./subscriptionPricingService');
 const { FEATURED_LIMITS, TRIAL_PRODUCT_LIMIT } = require('./sellerProductQuotaService');
 const { FOUNDER_PROMOTION } = require('./founderPromotionService');
+const renewalPolicy = require('./safepayRenewalPolicy');
 
 const TRIAL_DAYS = 15;
 const STARTER_BONUS_MONTHS = 6;
@@ -91,6 +92,7 @@ function getSubscriptionCatalog() {
       cancellationTiming: 'period_end',
       planChangesMayProrate: true,
       introductoryPeriodIsOneTime: true,
+      renewalRecovery: { maxAttempts: 4, attemptDays: [1, 3, 5, 7], cancellation: 'end_of_day_7', timeZone: renewalPolicy.BILLING_TIME_ZONE },
     },
     afterAccessEnds: {
       publicStoreVisible: false,
@@ -174,6 +176,7 @@ function buildSubscriptionStatusPresentation(subscription, {
     failedBillingOperation: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.lastFailedOperation || null : null,
     billingFailureCode: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.lastFailureCode || null : null,
     automaticRenewal: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.autoRenew === true : null,
+    renewalRecovery: renewalPolicy.presentation(subscription, now),
     requiresExternalPaymentAccount: subscription.billingProvider === 'safepay' ? false : null,
     cancelledAt: subscription.cancelledAt || null,
     blockedReason: subscription.blockedReason || null,

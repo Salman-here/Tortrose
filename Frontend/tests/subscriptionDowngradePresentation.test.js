@@ -7,6 +7,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { formatUsdCents, getSubscriptionPricing } from '../src/utils/subscriptionPricing.js';
 import { calendarMonthsRemaining, subscriptionStatusConfirmsEntitlement } from '../src/utils/subscriptionPlanChange.js';
+import { subscriptionRecoveryNotice } from '../src/utils/subscriptionRecovery.js';
 
 // Render the entire real component, not an extracted banner that could be
 // unreachable inside a contradictory parent condition.
@@ -46,6 +47,7 @@ function fixture(overrides = {}, busy = false) {
     '../../utils/cookieHelper': { getAuthToken: () => 'fixture-token' },
     '../../utils/subscriptionPricing': { formatUsdCents, getSubscriptionPricing },
     '../../utils/subscriptionStatusRefresh': { notifySubscriptionStatusChanged() {} },
+    '../../utils/subscriptionRecovery': { subscriptionRecoveryNotice },
     '../../contexts/AuthContext': { useAuth: () => ({ currentUser: { _id: 'qa-seller' } }) },
     '../../utils/subscriptionPlanChange': { calendarMonthsRemaining, subscriptionStatusConfirmsEntitlement },
   };

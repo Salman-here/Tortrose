@@ -14,6 +14,7 @@ const { safepayWorkersEnabled } = require('./safepayFeatureFlags');
 const { buildPlanPricing } = require('./subscriptionPricingService');
 const { applyBillingCredit, renewalPeriod } = require('./safepayBillingMath');
 const { requireOwnedReusableCard } = require('./safepayCustomerService');
+const renewalPolicy = require('./safepayRenewalPolicy');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { id, fail, minor, date, transaction } = billing;
@@ -102,6 +103,12 @@ async function cancel(sellerId) {
       }
     }
     await sub.save({ session });
+    if (renewalPolicy.ownsRecovery(sub) && !currentPaymentMayComplete && !sub.safepayBilling.pendingOperation
+      && sub.currentPeriodEnd && date(sub.currentPeriodEnd) <= at) {
+      sub.safepayBilling.recovery.nextRetryAt = null;
+      await finishSubscription(sub, at, at, session);
+      return { msg: 'Your subscription was cancelled. No further renewal attempts will be started.', currentPaymentMayComplete: false };
+    }
     if (sub.safepayBilling.monthlyMinor !== null) await notify(sub, 'cancel_scheduled', at, 'Subscription renewal cancelled',
       `Automatic renewal of your plan ({{money.monthly}} per month) is turned off.${['active', 'free_period'].includes(sub.status) && sub.currentPeriodEnd && Number.isFinite(new Date(sub.currentPeriodEnd).getTime()) ? ` You can use your current plan until ${date(sub.currentPeriodEnd).toISOString().slice(0, 10)}.` : ''}${currentPaymentMayComplete ? ' A payment already in progress may still complete. No further renewals will be started.' : ''} Review your subscription details if you want to resume.`, session);
     return { msg: 'Subscription renewal is cancelled. Current funded access remains until period end.', currentPaymentMayComplete };
@@ -165,6 +172,7 @@ async function queueRenewal(subscriptionId, at = new Date()) {
     const sub = await Subscription.findOne({ _id: subscriptionId, billingProvider: 'safepay', 'safepayBilling.environment': config.environment }).select('+safepayBilling.cardId').session(session);
     if (!sub || !sub.safepayBilling.autoRenew || sub.paymentRisk?.suspended) return null;
     if (sub.safepayBilling.pendingOperation) return Operation.findById(sub.safepayBilling.pendingOperation).session(session);
+    if (renewalPolicy.ownsRecovery(sub)) return queueRecoveryAttempt(sub, at, config, session);
     const period = renewalPeriod({ anchorAt: sub.safepayBilling.anchorAt, cycle: sub.safepayBilling.cycle, now: at });
     if (!period.due) {
       if (period.missed) {
@@ -175,6 +183,16 @@ async function queueRenewal(subscriptionId, at = new Date()) {
         await sub.save({ session });
         await Store.updateOne({ seller: sub.seller, isActive: true }, { $set: { isActive: false, blockedAt: sub.blockedAt } }, { session });
       }
+      return null;
+    }
+    if (renewalPolicy.cancellationDeadline(period.start) <= at) {
+      // An extended scheduling outage is not authorization to collect an old
+      // month or to bunch missed issuer attempts together.
+      sub.status = 'past_due'; sub.blockedAt = sub.blockedAt || period.start;
+      sub.safepayBilling.nextChargeAt = null;
+      sub.safepayBilling.lastFailureCode = 'SUBSCRIPTION_MISSED_PERIOD_REVIEW';
+      await sub.save({ session });
+      await Store.updateOne({ seller: sub.seller, isActive: true }, { $set: { isActive: false, blockedAt: sub.blockedAt } }, { session });
       return null;
     }
     const downgrade = sub.pendingDowngrade?.toPlan === 'starter';
@@ -189,7 +207,8 @@ async function queueRenewal(subscriptionId, at = new Date()) {
       founderRate: sub.founderOffer?.active === true, sourceContractId: sub.safepayBilling.contractId,
       periodStart: period.start, periodEnd: period.end, cycle: sub.safepayBilling.cycle,
       grossMinor: monthlyMinor, dueMinor: credit.chargeMinor, appliedCreditMinor: credit.appliedCreditMinor,
-      remainingCreditMinor: credit.remainingCreditMinor, creditMinor: 0 };
+      remainingCreditMinor: credit.remainingCreditMinor, creditMinor: 0,
+      renewalAttempt: 1, automaticRetry: true, recoveryPolicyVersion: renewalPolicy.POLICY_VERSION };
     const existing = await Operation.findOne({ seller: sub.seller, environment: config.environment, requestKey }).session(session);
     if (existing) return existing;
     const [op] = await Operation.create([{ seller: sub.seller, subscription: sub._id, environment: config.environment,
@@ -197,8 +216,11 @@ async function queueRenewal(subscriptionId, at = new Date()) {
       sourceVersion: sub.safepayBilling.version, terms, acceptedAt: period.start, consentVersion: sub.safepayBilling.consentVersion,
       cardId: sub.safepayBilling.cardId, status: 'accepted' }], { session });
     sub.safepayBilling.pendingOperation = op._id;
-    sub.status = 'past_due'; sub.blockedAt = sub.blockedAt || period.start;
-    await Store.updateOne({ seller: sub.seller, isActive: true }, { $set: { isActive: false, blockedAt: sub.blockedAt } }, { session });
+    sub.safepayBilling.recovery = { rootOperation: op._id, contractId: sub.safepayBilling.contractId,
+      cycle: sub.safepayBilling.cycle, policyVersion: renewalPolicy.POLICY_VERSION,
+      startedAt: period.start, cancelAt: renewalPolicy.cancellationDeadline(period.start),
+      attempts: 1, nextRetryAt: null, lastFailureAt: null, cancelledAt: null };
+    sub.status = 'active';
     if (terms.dueMinor > 0) {
       const payment = await payments.ensurePayment({ user: sub.seller, purpose: 'subscription', reference: `billing:${op._id}`, requestKey: `billing:${op._id}`,
         amountMinor: terms.dueMinor, currency: 'USD', customerId: sub.safepayBilling.customerId, cardId: sub.safepayBilling.cardId,
@@ -210,36 +232,113 @@ async function queueRenewal(subscriptionId, at = new Date()) {
   });
 }
 
+async function queueRecoveryAttempt(sub, at, config, session) {
+  const r = sub.safepayBilling.recovery;
+  if (!r.nextRetryAt || date(r.nextRetryAt) > at || date(r.cancelAt) <= at || r.attempts >= renewalPolicy.ATTEMPT_DAYS.length) return null;
+  const previous = await Operation.findOne({ _id: sub.safepayBilling.lastFailedOperation, subscription: sub._id,
+    seller: sub.seller, environment: config.environment, status: 'failed', kind: { $in: ['renewal', 'downgrade'] } }).session(session);
+  const failed = previous?.payment && await Payment.findById(previous.payment).session(session);
+  if (!previous || previous.terms.sourceContractId !== sub.safepayBilling.contractId
+    || previous.terms.cycle !== sub.safepayBilling.cycle || date(previous.terms.periodEnd) <= at
+    || failed?.status !== 'failed' || failed.chargeOutcome !== 'declined' || failed.appliedAt || failed.capturedMinor !== 0) return null;
+  const attempt = r.attempts + 1;
+  const requestKey = `renewal-retry:${sub.safepayBilling.contractId}:${sub.safepayBilling.cycle}:${attempt}`;
+  const existing = await Operation.findOne({ seller: sub.seller, environment: config.environment, requestKey }).session(session);
+  if (existing) return existing;
+  // Reuse the frozen unpaid invoice's price, credit and exact period. Only a
+  // definitively failed authorization permits a fresh payment/tracker.
+  const terms = { ...previous.terms, trialDays: 0, retryOf: id(previous), automaticRetry: true, renewalAttempt: attempt };
+  delete terms.checkoutClaimToken;
+  const [op] = await Operation.create([{ seller: sub.seller, subscription: sub._id, environment: config.environment,
+    kind: previous.kind, requestKey, fingerprint: payments.fingerprint(terms), sourceVersion: sub.safepayBilling.version,
+    terms, acceptedAt: at, consentVersion: sub.safepayBilling.consentVersion,
+    cardId: sub.safepayBilling.cardId, status: 'accepted' }], { session });
+  const payment = await payments.ensurePayment({ user: sub.seller, purpose: 'subscription',
+    reference: `billing:${op._id}`, requestKey: `billing:${op._id}`, amountMinor: terms.dueMinor, currency: 'USD',
+    customerId: sub.safepayBilling.customerId, cardId: sub.safepayBilling.cardId,
+    terms: { billingOperationId: id(op), subscriptionId: id(sub), contractId: terms.sourceContractId } }, { session });
+  op.payment = payment._id; op.status = 'awaiting_payment';
+  sub.safepayBilling.pendingOperation = op._id;
+  r.attempts = attempt; r.nextRetryAt = null;
+  await sub.save({ session }); await op.save({ session });
+  return op;
+}
+
+async function finishSubscription(sub, endedAt, at, session, unpaid = false) {
+  sub.status = 'cancelled'; sub.blockedAt = endedAt;
+  sub.blockedReason = unpaid ? 'Subscription cancelled because the renewal remained unpaid. Subscribe to reactivate your store.'
+    : 'Subscription period ended. Subscribe to reactivate your store.';
+  sub.safepayBilling.endedAt = endedAt; sub.safepayBilling.nextChargeAt = null; sub.safepayBilling.version += 1;
+  if (sub.founderOffer?.active) { sub.founderOffer.active = false; sub.founderOffer.forfeitedAt = endedAt; }
+  sub.bonusGraceDeadline = new Date(endedAt.getTime() + 3 * 86400000);
+  await sub.save({ session });
+  const store = await Store.findOne({ seller: sub.seller }).session(session);
+  if (store) {
+    store.isActive = false; store.blockedAt = endedAt;
+    if (!(store.subdomainPurchase?.isPurchased && store.subdomainPurchase.expiresAt && date(store.subdomainPurchase.expiresAt) > at)) {
+      store.subdomainPurchase.removalScheduledAt = store.subdomainPurchase.removalScheduledAt || new Date(endedAt.getTime() + 7 * 86400000);
+    }
+    await store.save({ session });
+  }
+  await notify(sub, 'ended', endedAt, unpaid ? 'Subscription cancelled — renewal payment unsuccessful' : 'Your subscription has ended',
+    unpaid ? 'Your subscription ({{money.monthly}} per month) was cancelled because its renewal remained unpaid at the end of the seven-day recovery period. Your store is now hidden from customers. Your seller data is preserved. Choose a plan in Subscription to reactivate your store.'
+      : 'Your subscription ({{money.monthly}} per month) has ended and your store is hidden from customers. Your seller data remains available. Choose a plan in Subscription to reactivate your store.', session);
+  return true;
+}
+
+async function closeUnpaidRenewal(subscriptionId, at = new Date()) {
+  const config = readSafepayConfig(process.env, { requireWebhook: true });
+  return transaction(async session => {
+    const sub = await Subscription.findOne({ _id: subscriptionId, billingProvider: 'safepay',
+      'safepayBilling.environment': config.environment }).session(session);
+    if (!sub || !renewalPolicy.ownsRecovery(sub) || !sub.safepayBilling.autoRenew || sub.safepayBilling.endedAt
+      || sub.paymentRisk?.suspended || date(sub.safepayBilling.recovery.cancelAt) > at) return false;
+    if (sub.safepayBilling.pendingOperation) {
+      const op = await Operation.findById(sub.safepayBilling.pendingOperation).session(session);
+      const payment = op?.payment && await Payment.findById(op.payment).session(session);
+      if (!op || payment?.chargeStartedAt || payment?.appliedAt) {
+        // An unknown/in-flight result is never a decline and cannot authorize
+        // another charge or a false final cancellation. Pause expired grace
+        // access while the original invoice is reconciled read-only.
+        sub.status = 'past_due'; sub.blockedAt = sub.blockedAt || date(sub.safepayBilling.recovery.cancelAt);
+        sub.safepayBilling.recovery.reviewNextAt = new Date(at.getTime() + 15 * 60000);
+        await sub.save({ session });
+        await Store.updateOne({ seller: sub.seller, isActive: true }, { $set: { isActive: false, blockedAt: sub.blockedAt } }, { session });
+        return false;
+      }
+      if (payment) { payment.status = 'cancelled'; payment.cancelledAt = at; await payment.save({ session }); }
+      op.status = 'cancelled'; await op.save({ session });
+      sub.safepayBilling.pendingOperation = null;
+    }
+    const endedAt = date(sub.safepayBilling.recovery.cancelAt);
+    sub.safepayBilling.autoRenew = false; sub.cancelledAt = endedAt;
+    sub.safepayBilling.recovery.cancelledAt = endedAt; sub.safepayBilling.recovery.nextRetryAt = null;
+    sub.pendingDowngrade = { toPlan: null };
+    return finishSubscription(sub, endedAt, at, session, true);
+  });
+}
+
 async function closeEndedSubscription(subscriptionId, at = new Date()) {
   return transaction(async session => {
     const sub = await Subscription.findById(subscriptionId).session(session);
     if (!sub || sub.billingProvider !== 'safepay' || sub.safepayBilling.autoRenew || !sub.cancelledAt || sub.pendingDowngrade?.toPlan
       || sub.safepayBilling.pendingOperation || sub.safepayBilling.endedAt || !sub.currentPeriodEnd || date(sub.currentPeriodEnd) > at) return false;
     const endedAt = date(sub.currentPeriodEnd);
-    sub.status = 'cancelled'; sub.blockedAt = endedAt; sub.blockedReason = 'Subscription period ended. Subscribe to reactivate your store.';
-    sub.safepayBilling.endedAt = endedAt; sub.safepayBilling.nextChargeAt = null; sub.safepayBilling.version += 1;
-    if (sub.founderOffer?.active) { sub.founderOffer.active = false; sub.founderOffer.forfeitedAt = endedAt; }
-    sub.bonusGraceDeadline = new Date(endedAt.getTime() + 3 * 86400000);
-    await sub.save({ session });
-    const store = await Store.findOne({ seller: sub.seller }).session(session);
-    if (store) {
-      store.isActive = false; store.blockedAt = endedAt;
-      if (!(store.subdomainPurchase?.isPurchased && store.subdomainPurchase.expiresAt && date(store.subdomainPurchase.expiresAt) > at)) {
-        store.subdomainPurchase.removalScheduledAt = store.subdomainPurchase.removalScheduledAt || new Date(endedAt.getTime() + 7 * 86400000);
-      }
-      await store.save({ session });
-    }
-    await notify(sub, 'ended', endedAt, 'Your subscription has ended', 'Your subscription ({{money.monthly}} per month) has ended and your store is hidden from customers. Your seller data remains available. Choose a plan in Subscription to reactivate your store.', session);
-    return true;
+    return finishSubscription(sub, endedAt, at, session);
   });
 }
 
 async function refreshStatus(subscriptionId) {
+  await closeUnpaidRenewal(subscriptionId);
   await closeEndedSubscription(subscriptionId);
   return transaction(async session => {
     const sub = await Subscription.findById(subscriptionId).session(session);
     if (sub?.billingProvider === 'safepay' && ['active', 'free_period'].includes(sub.status)
       && sub.currentPeriodEnd && date(sub.currentPeriodEnd) <= new Date() && !sub.safepayBilling.endedAt) {
+      if (renewalPolicy.hasGraceAccess(sub)) {
+        if (sub.status !== 'active') { sub.status = 'active'; await sub.save({ session }); }
+        return sub;
+      }
       // Read paths never charge a card, but expired paid access and public
       // visibility must agree even before the scheduled worker wakes up.
       sub.status = 'past_due'; sub.blockedAt = sub.blockedAt || sub.currentPeriodEnd;
@@ -261,6 +360,15 @@ function createBillingWorker() {
       const config = readSafepayConfig(process.env, { requireWebhook: true });
       await Promise.all([Operation.init(), Payment.init(), Subscription.init()]);
       const at = new Date();
+      const expiredGrace = await Subscription.find({ billingProvider: 'safepay', 'safepayBilling.environment': config.environment,
+        'safepayBilling.autoRenew': true, 'safepayBilling.endedAt': null,
+        'safepayBilling.recovery.rootOperation': { $ne: null }, 'safepayBilling.recovery.cancelAt': { $lte: at, $ne: null },
+        $or: [{ 'safepayBilling.recovery.reviewNextAt': null }, { 'safepayBilling.recovery.reviewNextAt': { $lte: at } }],
+        'paymentRisk.suspended': { $ne: true } }).select('_id').sort({ 'safepayBilling.recovery.cancelAt': 1, _id: 1 }).limit(25);
+      for (const row of expiredGrace) {
+        try { await closeUnpaidRenewal(row._id, at); }
+        catch (error) { console.error('[safepay-billing] recovery deadline:', error.code || 'BILLING_UNAVAILABLE'); }
+      }
       // A pending invoice owns its renewal; it must not permanently consume
       // BOTH batches while later sellers wait for their first billing attempt.
       const acceptedFilter = { environment: config.environment,
@@ -283,6 +391,7 @@ function createBillingWorker() {
         $and: [...eligibleAt('safepayBilling.workerNextAttemptAt', 'safepayBilling.workerLeaseUntil', at).$and,
           { $or: [
             { 'safepayBilling.autoRenew': true, 'safepayBilling.nextChargeAt': { $ne: null, $lte: at } },
+            { 'safepayBilling.autoRenew': true, 'safepayBilling.recovery.nextRetryAt': { $ne: null, $lte: at } },
             { 'safepayBilling.autoRenew': false, cancelledAt: { $ne: null }, currentPeriodEnd: { $lte: at }, 'safepayBilling.endedAt': null },
           ] }],
       };
@@ -335,4 +444,4 @@ function startBillingWorker() {
 function stopBillingWorker() { if (workerTimer) clearInterval(workerTimer); workerTimer = null; }
 
 module.exports = { cancel, resume, scheduleDowngrade, cancelDowngrade, queueRenewal, closeEndedSubscription,
-  refreshStatus, createBillingWorker, runBillingWorker, startBillingWorker, stopBillingWorker };
+  closeUnpaidRenewal, refreshStatus, createBillingWorker, runBillingWorker, startBillingWorker, stopBillingWorker };
