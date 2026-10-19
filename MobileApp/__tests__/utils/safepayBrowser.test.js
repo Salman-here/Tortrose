@@ -12,7 +12,7 @@ const fixture = () => {
 };
 afterEach(() => cancelSafepayBrowser());
 
-test('checking whether a hosted link can be embedded does not launch or claim a browser session', () => {
+test('validating a hosted link does not launch or claim a browser session', () => {
   const payment = fixture();
   expect(validateSafepayBrowserPayment(payment)).toBe(payment.checkoutUrl);
   expect(isSafepayBrowserReturn(`rozare://safepay-return?paymentId=${id}&purpose=order`)).toBe(false);
@@ -38,4 +38,15 @@ test('rejects a checkout redirect bound to another payment', async () => {
   const payment = fixture(), url = new URL(payment.checkoutUrl);
   url.searchParams.set('redirect_url', 'https://evil.example/collect');
   const open = jest.fn(); await expect(presentSafepayBrowser({ ...payment, checkoutUrl: url.toString() }, open)).rejects.toMatchObject({ code: 'SAFEPAY_BROWSER_INVALID' }); expect(open).not.toHaveBeenCalled();
+});
+
+test.each([['b'.repeat(24), 'order'], [id, 'wallet_top_up']])('a foreign return never completes the owned browser checkout (%s, %s)', async (paymentId, purpose) => {
+  const open = jest.fn().mockResolvedValue({ type: 'success', url: `rozare://safepay-return?paymentId=${paymentId}&purpose=${purpose}` });
+  await expect(presentSafepayBrowser(fixture(), open)).rejects.toMatchObject({ code: 'SAFEPAY_BROWSER_INVALID' });
+});
+
+test('a failed browser launch releases its session so the same original attempt can be retried', async () => {
+  const payment = fixture();
+  await expect(presentSafepayBrowser(payment, () => { throw new Error('Browser unavailable'); })).rejects.toThrow('unavailable');
+  await expect(presentSafepayBrowser(payment, async () => ({ type: 'cancel' }))).resolves.toEqual({ type: 'dismiss' });
 });

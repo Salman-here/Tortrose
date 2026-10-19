@@ -1,5 +1,4 @@
 import React from 'react';
-import { Platform } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import SafepayCheckoutProvider from '../../src/components/SafepayCheckoutProvider';
 import { presentSafepaySheet } from '../../src/utils/safepaySheet';
@@ -13,7 +12,7 @@ jest.mock('../../src/contexts/ThemeContext', () => ({ useTheme: () => ({ palette
   background: '#fff', text: '#111', textSecondary: '#555', primary: '#6366f1',
 } } }) }));
 const payment = { paymentId: 'a'.repeat(24), environment: 'sandbox', checkoutUrl: 'https://sandbox.api.getsafepay.com/embedded/?tbt=private-test-token' };
-beforeEach(() => { jest.clearAllMocks(); mockCurrentUser = { _id: 'buyer' }; });
+beforeEach(() => { jest.clearAllMocks(); WebBrowser.openAuthSessionAsync.mockReset(); mockCurrentUser = { _id: 'buyer' }; });
 const browserPayment = () => {
   const url = new URL('https://sandbox.api.getsafepay.com/embedded/');
   url.searchParams.set('environment', 'sandbox'); url.searchParams.set('source', 'hosted');
@@ -25,67 +24,62 @@ const browserPayment = () => {
   return { ...payment, purpose: 'order', checkoutPresentation: 'browser', checkoutUrl: url.toString() };
 };
 
-test('standard checkout stays inside Rozare even when the backend permits a browser handoff', async () => {
-  const screen = render(<SafepayCheckoutProvider />);
-  let done;
-  act(() => { done = presentSafepaySheet(browserPayment()); });
-  expect(screen.getByTestId('safepay-webview').props.source.uri).toBe(browserPayment().checkoutUrl);
-  expect(screen.getByTestId('safepay-webview').props.paymentRequestEnabled).toBe(Platform.OS === 'android');
-  expect(WebBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByLabelText('Close payment screen'));
-  await expect(done).resolves.toEqual({ type: 'dismiss' });
-});
-
-test('Android standard checkout enables the installed native payment-request bridge without opening Chrome', async () => {
-  const platform = jest.replaceProperty(Platform, 'OS', 'android');
-  try {
-    const screen = render(<SafepayCheckoutProvider />); let done;
-    act(() => { done = presentSafepaySheet(browserPayment()); });
-    const form = screen.getByTestId('safepay-webview');
-    expect(form.props.paymentRequestEnabled).toBe(true);
-    expect(form.props.sharedCookiesEnabled).toBe(false);
-    expect(form.props.mixedContentMode).toBe('never');
-    expect(form.props.allowFileAccess).toBe(false);
-    expect(WebBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByLabelText('Close payment screen'));
-    await expect(done).resolves.toEqual({ type: 'dismiss' });
-  } finally { platform.restore(); }
-});
-
-test('only an explicit browser choice opens the system browser; reopening defaults to in-app again', async () => {
+test('standard checkout automatically opens the normal browser; closing and reopening keeps the same payment', async () => {
   let closeBrowser;
   WebBrowser.openAuthSessionAsync.mockImplementationOnce(() => new Promise(resolve => { closeBrowser = resolve; }));
   const screen = render(<SafepayCheckoutProvider />);
   let done;
-  act(() => { done = presentSafepaySheet(browserPayment()); });
-  expect(WebBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
-  await act(async () => {
-    const button = screen.getByLabelText('Open this payment in browser');
-    fireEvent.press(button); fireEvent.press(button); await Promise.resolve();
-  });
+  await act(async () => { done = presentSafepaySheet(browserPayment()); await Promise.resolve(); });
   expect(screen.queryByTestId('safepay-webview')).toBeNull();
-  expect(screen.getByText('Continue in your browser')).toBeTruthy();
+  expect(screen.queryByLabelText('Open this payment in browser')).toBeNull();
   expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(1);
   expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledWith(browserPayment().checkoutUrl,
     'rozare://safepay-return', { preferEphemeralSession: false, showTitle: true });
   await act(async () => { closeBrowser({ type: 'cancel' }); await done; });
   await expect(done).resolves.toEqual({ type: 'dismiss' });
-  act(() => { done = presentSafepaySheet(browserPayment()); });
-  expect(screen.getByTestId('safepay-webview')).toBeTruthy();
-  expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(1);
-  fireEvent.press(screen.getByLabelText('Close payment screen'));
+  WebBrowser.openAuthSessionAsync.mockImplementationOnce(() => new Promise(resolve => { closeBrowser = resolve; }));
+  await act(async () => { done = presentSafepaySheet(browserPayment()); await Promise.resolve(); });
+  expect(screen.queryByTestId('safepay-webview')).toBeNull();
+  expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(2);
+  await act(async () => { closeBrowser({ type: 'cancel' }); await done; });
   await expect(done).resolves.toEqual({ type: 'dismiss' });
 });
 
-test('an unavailable optional browser returns to the same in-app provider form, not a new order', async () => {
+test('repeated opens cannot launch duplicate browsers or overlap a different payment', async () => {
+  let closeBrowser;
+  WebBrowser.openAuthSessionAsync.mockImplementationOnce(() => new Promise(resolve => { closeBrowser = resolve; }));
+  render(<SafepayCheckoutProvider />); let first, second;
+  await act(async () => { first = presentSafepaySheet(browserPayment()); second = presentSafepaySheet(browserPayment()); await Promise.resolve(); });
+  expect(first).toBe(second); expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(1);
+  await expect(presentSafepaySheet({ ...browserPayment(), paymentId: 'b'.repeat(24) })).rejects.toThrow('Finish');
+  await act(async () => { closeBrowser({ type: 'cancel' }); await first; });
+});
+
+test('browser unavailability offers a controlled same-payment retry, never a silent private WebView fallback', async () => {
   WebBrowser.openAuthSessionAsync.mockRejectedValueOnce(new Error('Browser unavailable'));
   const screen = render(<SafepayCheckoutProvider />);
-  let done;
-  act(() => { done = presentSafepaySheet(browserPayment()); });
-  await act(async () => { fireEvent.press(screen.getByLabelText('Open this payment in browser')); await Promise.resolve(); });
-  expect(screen.getByTestId('safepay-webview').props.source.uri).toBe(browserPayment().checkoutUrl);
+  let done, closeBrowser;
+  await act(async () => { done = presentSafepaySheet(browserPayment()); await Promise.resolve(); });
+  expect(screen.queryByTestId('safepay-webview')).toBeNull();
+  expect(screen.getByText('Could not open secure checkout')).toBeTruthy();
   expect(screen.getByText(/Your browser could not open/)).toBeTruthy();
-  fireEvent.press(screen.getByLabelText('Close payment screen'));
+  WebBrowser.openAuthSessionAsync.mockImplementationOnce(() => new Promise(resolve => { closeBrowser = resolve; }));
+  await act(async () => {
+    const retry = screen.getByLabelText('Try opening browser again');
+    fireEvent.press(retry); fireEvent.press(retry); await Promise.resolve();
+  });
+  expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(2);
+  expect(WebBrowser.openAuthSessionAsync.mock.calls[1][0]).toBe(browserPayment().checkoutUrl);
+  expect(screen.queryByTestId('safepay-webview')).toBeNull();
+  await act(async () => { closeBrowser({ type: 'cancel' }); await done; });
+  await expect(done).resolves.toEqual({ type: 'dismiss' });
+});
+
+test('a failed browser can also be closed for authenticated status verification', async () => {
+  WebBrowser.openAuthSessionAsync.mockRejectedValueOnce(new Error('Browser unavailable'));
+  const screen = render(<SafepayCheckoutProvider />); let done;
+  await act(async () => { done = presentSafepaySheet(browserPayment()); await Promise.resolve(); });
+  fireEvent.press(screen.getByText('Check payment status'));
   await expect(done).resolves.toEqual({ type: 'dismiss' });
 });
 
@@ -93,9 +87,10 @@ test('an invalid hosted callback opens neither an embedded form nor a browser', 
   const screen = render(<SafepayCheckoutProvider />), invalid = browserPayment();
   const url = new URL(invalid.checkoutUrl); url.searchParams.set('redirect_url', 'https://evil.example/collect');
   let done;
-  act(() => { done = presentSafepaySheet({ ...invalid, checkoutUrl: url.toString() }); });
+  await act(async () => { done = presentSafepaySheet({ ...invalid, checkoutUrl: url.toString() }); await Promise.resolve(); });
   expect(screen.queryByTestId('safepay-webview')).toBeNull();
   expect(screen.queryByLabelText('Open this payment in browser')).toBeNull();
+  expect(screen.queryByLabelText('Try opening browser again')).toBeNull();
   expect(WebBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
   expect(screen.getByText('Reference: browser_invalid')).toBeTruthy();
   fireEvent.press(screen.getByLabelText('Close payment screen'));
@@ -109,7 +104,8 @@ test('saved-card bank verification keeps its grant and never enables the ordinar
   let done; act(() => { done = presentSafepaySheet(saved); });
   expect(screen.getByTestId('safepay-webview').props.source).toEqual({ uri: saved.checkoutUrl,
     headers: { 'X-Rozare-Checkout-Grant': saved.checkoutSessionGrant } });
-  expect(screen.getByTestId('safepay-webview').props.paymentRequestEnabled).toBe(false);
+  expect(screen.getByTestId('safepay-webview').props.paymentRequestEnabled).toBeFalsy();
+  expect(WebBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
   expect(screen.queryByLabelText('Open this payment in browser')).toBeNull();
   fireEvent.press(screen.getByLabelText('Close payment screen'));
   await expect(done).resolves.toEqual({ type: 'dismiss' });
@@ -119,8 +115,7 @@ test('a late browser failure after logout cannot restore the old owner payment f
   let failBrowser;
   WebBrowser.openAuthSessionAsync.mockImplementationOnce(() => new Promise((_, reject) => { failBrowser = reject; }));
   const screen = render(<SafepayCheckoutProvider />); let done;
-  act(() => { done = presentSafepaySheet(browserPayment()); });
-  await act(async () => { fireEvent.press(screen.getByLabelText('Open this payment in browser')); await Promise.resolve(); });
+  await act(async () => { done = presentSafepaySheet(browserPayment()); await Promise.resolve(); });
   mockCurrentUser = null;
   screen.rerender(<SafepayCheckoutProvider />);
   await expect(done).resolves.toEqual({ type: 'dismiss' });
