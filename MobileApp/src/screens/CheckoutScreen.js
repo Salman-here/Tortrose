@@ -553,6 +553,7 @@ export default function CheckoutScreen({ navigation }) {
 
   const autoFillShipping = () => {
     if (savedShippingInfo) {
+      setErrors({});
       setFormData({
         fullName: savedShippingInfo.fullName || '',
         email: savedShippingInfo.email || '',

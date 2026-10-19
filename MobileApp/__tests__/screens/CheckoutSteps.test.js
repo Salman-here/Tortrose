@@ -30,6 +30,27 @@ test('checkout counts actual quantities and labels one item correctly', () => {
   expect(source).toContain("checkoutItemCount === 1 ? 'item' : 'items'");
 });
 
+test('Auto Fill clears stale required errors while restoring saved shipping details, without placing an order', () => {
+  const ast = parse(source, { sourceType: 'module', plugins: ['jsx'] });
+  let autoFill;
+  const find = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'VariableDeclarator' && node.id?.name === 'autoFillShipping') autoFill = node.init.body;
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(find);
+      else if (value && typeof value === 'object') find(value);
+    }
+  };
+  find(ast);
+  const body = source.slice(autoFill.start + 1, autoFill.end - 1);
+  const run = new Function('savedShippingInfo', 'formData', 'setFormData', 'setErrors', 'Feedback', body);
+  const setForm = jest.fn(), setErrors = jest.fn(), show = jest.fn();
+  run({ fullName: 'Checkout Tester', countryCode: 'PK', country: 'Pakistan', city: 'Lahore' }, {}, setForm, setErrors, { show });
+  expect(setForm).toHaveBeenCalledWith(expect.objectContaining({ fullName: 'Checkout Tester', city: 'Lahore' }));
+  expect(setErrors).toHaveBeenCalledWith({});
+  expect(body).not.toContain('api.');
+});
+
 test('the actual screen mounts shipping only in step 2 and payment only in step 3', () => {
   const ast = parse(source, { sourceType: 'module', plugins: ['jsx'] });
   const sections = {};
