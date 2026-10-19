@@ -1,4 +1,4 @@
-import { cancelSafepayBrowser, isSafepayBrowserReturn, presentSafepayBrowser } from '../../src/utils/safepayBrowser';
+import { cancelSafepayBrowser, isSafepayBrowserReturn, presentSafepayBrowser, validateSafepayBrowserPayment } from '../../src/utils/safepayBrowser';
 const id = 'a'.repeat(24);
 const fixture = () => {
   const url = new URL('https://sandbox.api.getsafepay.com/embedded/');
@@ -11,6 +11,12 @@ const fixture = () => {
   return { paymentId: id, purpose: 'order', environment: 'sandbox', checkoutPresentation: 'browser', checkoutUrl: url.toString() };
 };
 afterEach(() => cancelSafepayBrowser());
+
+test('checking whether a hosted link can be embedded does not launch or claim a browser session', () => {
+  const payment = fixture();
+  expect(validateSafepayBrowserPayment(payment)).toBe(payment.checkoutUrl);
+  expect(isSafepayBrowserReturn(`rozare://safepay-return?paymentId=${id}&purpose=order`)).toBe(false);
+});
 test('opens the supported system session, not an incognito WebView; a close is not cancellation proof', async () => {
   const open = jest.fn().mockResolvedValue({ type: 'cancel' }), payment = fixture();
   await expect(presentSafepayBrowser(payment, open)).resolves.toEqual({ type: 'dismiss' });

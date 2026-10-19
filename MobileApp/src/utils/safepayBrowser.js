@@ -17,8 +17,8 @@ export function cancelSafepayBrowser(paymentId) {
   if (!paymentId || active?.payment.paymentId === paymentId) active = null;
   recent = null;
 }
-export function presentSafepayBrowser(payment, openAuthSession) {
-  if (!/^[a-f0-9]{24}$/i.test(payment?.paymentId || '') || payment.checkoutPresentation !== 'browser') return Promise.reject(invalid());
+export function validateSafepayBrowserPayment(payment) {
+  if (!/^[a-f0-9]{24}$/i.test(payment?.paymentId || '') || payment.checkoutPresentation !== 'browser') throw invalid();
   let url;
   try {
     url = new URL(payment.checkoutUrl);
@@ -30,10 +30,15 @@ export function presentSafepayBrowser(payment, openAuthSession) {
         || target.searchParams.get('attempt') !== payment.paymentId || target.searchParams.get('purpose') !== payment.purpose
         || target.searchParams.get('surface') !== 'mobile' || target.searchParams.get('outcome') !== outcome || target.searchParams.get('browser') !== '1') throw invalid();
     }
-  } catch (_) { return Promise.reject(invalid()); }
+  } catch (_) { throw invalid(); }
+  return url.toString();
+}
+export function presentSafepayBrowser(payment, openAuthSession) {
+  let url;
+  try { url = validateSafepayBrowserPayment(payment); } catch (error) { return Promise.reject(error); }
   if (active) return active.payment.paymentId === payment.paymentId ? active.promise : Promise.reject(invalid());
   const session = { payment, promise: null }; active = session; recent = null;
-  session.promise = Promise.resolve().then(() => openAuthSession(url.toString(), RETURN_BASE, { preferEphemeralSession: false, showTitle: true }))
+  session.promise = Promise.resolve().then(() => openAuthSession(url, RETURN_BASE, { preferEphemeralSession: false, showTitle: true }))
     .then(result => {
       if (result?.type === 'success' && !matchesReturn(result.url, payment)) throw invalid();
       if (active === session && result?.type === 'success') recent = { payment, until: Date.now() + 2000 };
