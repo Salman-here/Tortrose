@@ -9,7 +9,7 @@ const STORE_STATUS_TIMEOUT_MS = 3500;
 // Only hosts that are actually served by this deployment bypass storefront
 // validation. Reserved names such as app/admin/api must not silently inherit
 // the public marketplace SPA while they are unused.
-const PLATFORM_SUBDOMAINS = new Set(['www', 'docs']);
+const PLATFORM_SUBDOMAINS = new Set(['www', 'docs', 'ai-automations']);
 
 const CRAWLER_MARKERS = [
   'bot', 'crawler', 'spider', 'crawling', 'google-inspectiontool', 'slurp',
@@ -171,6 +171,16 @@ export const config = {
 export default async function middleware(request) {
   const url = new URL(request.url);
   const hostname = url.hostname.toLowerCase();
+
+  // Independent static platform: never load the marketplace shell, analytics,
+  // storefront lookup, or branded error pages on this host.
+  if (hostname === 'ai-automations.rozare.com') {
+    if (url.pathname === '/' || url.pathname === '/ai-automations.html') {
+      return rewrite(new URL('/ai-automations.html', url));
+    }
+    if (url.pathname === '/ai-automations-robots.txt') return next();
+    return new Response('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found | AI Automations</title><body style="background:#101111;color:#f4f4ef;font:18px system-ui;padding:10vw"><h1>Page not found</h1><a href="/" style="color:#d5fc77">Back to AI Automations</a></body></html>', { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex' } });
+  }
 
   if (hostname === `www.${CANONICAL_HOST}`) {
     const target = new URL(request.url);

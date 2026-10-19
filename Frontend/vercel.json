@@ -59,6 +59,8 @@
     }
   ],
   "rewrites": [
+    { "source": "/robots.txt", "has": [{ "type": "host", "value": "ai-automations.rozare.com" }], "destination": "/ai-automations-robots.txt" },
+    { "source": "/", "has": [{ "type": "host", "value": "ai-automations.rozare.com" }], "destination": "/ai-automations.html" },
     { "source": "/about", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-about.html" },
     { "source": "/contact", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-contact.html" },
     { "source": "/faq", "has": [{ "type": "host", "value": "rozare.com" }], "destination": "/public-faq.html" },
