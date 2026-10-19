@@ -66,6 +66,7 @@ import { checkoutDraftStorageKey, createCheckoutCartIdentity, markGuestCheckoutH
 import useCheckoutQuote from '../../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../../utils/checkoutQuote';
 import { getSafepayCheckoutLabel } from '../../utils/paymentPresentation';
+import { getSafepayCheckoutNameError, getSafepayBillingFieldErrors } from '../../utils/safepayBillingValidation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const STRIPE_RETURN_STORAGE_KEY = 'rozare_stripe_return_v1';
@@ -605,6 +606,8 @@ function OwnedCheckout({ owner }) {
     watch,
     trigger,
     setValue,
+    setError,
+    setFocus,
     control,
     formState: { errors, isSubmitting },
   } = useForm({
@@ -641,6 +644,16 @@ function OwnedCheckout({ owner }) {
   const paymentMethod = watch("paymentMethod");
   const billingSameAsShipping = watch("billingSameAsShipping");
   const allFormValues = watch();
+  const billingFieldToFocus = useRef(null);
+  const billingNameError = value => getSafepayCheckoutNameError(value, {
+    paymentMethod, billingProfileReady: savedCards.billingProfileReady, selectedCardId: savedCards.selectedCardId,
+    paymentRequired: totalAmount > 0,
+  });
+  const showShippingFieldErrors = fieldErrors => {
+    Object.entries(fieldErrors).forEach(([field, message]) => setError(field, { type: 'billing', message }));
+    billingFieldToFocus.current = Object.keys(fieldErrors)[0];
+    setCurrentStep(1);
+  };
 
   useEffect(() => {
     try {
@@ -894,7 +907,7 @@ function OwnedCheckout({ owner }) {
         "postalCode",
         "country",
         "countryCode",
-      ]);
+      ], { shouldFocus: true });
       if (!valid) return;
 
       // Validate shipping method is selected for all sellers
@@ -932,6 +945,11 @@ function OwnedCheckout({ owner }) {
   // Final form submit
   const onPlaceOrder = async (data) => {
     if (isProcessing) return;
+    const nameError = billingNameError(data.fullName);
+    if (nameError) {
+      showShippingFieldErrors({ fullName: nameError });
+      return;
+    }
     if (!isCartReady) {
       toast.error(cartHydrationStatus === 'error'
         ? 'Your cart could not be verified. Retry synchronization before placing the order.'
@@ -1289,6 +1307,12 @@ function OwnedCheckout({ owner }) {
         navigate('/login?redirect=%2Fcheckout');
         return;
       }
+      const billingErrors = getSafepayBillingFieldErrors(error);
+      if (Object.keys(billingErrors).length) {
+        setIsProcessing(false);
+        showShippingFieldErrors(billingErrors);
+        return;
+      }
       if (order.paymentMethod === 'safepay') {
         console.error("Checkout session creation error:", error);
         toast.error(error.response?.data?.msg || "Server error while creating checkout session. Try again!");
@@ -1471,6 +1495,16 @@ function OwnedCheckout({ owner }) {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -40 }}
                 transition={{ duration: 0.35 }}
+                onAnimationComplete={() => {
+                  // The shipping inputs mount after the outgoing step exits.
+                  // Focus only then, rather than losing the correction on an unmounted input.
+                  if (currentStep === 1 && billingFieldToFocus.current) {
+                    const field = billingFieldToFocus.current;
+                    billingFieldToFocus.current = null;
+                    setFocus(field);
+                    document.querySelector(`[name="${field}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                  }
+                }}
               >
                 {/* CART STEP */}
                 {currentStep === 0 && (
@@ -1625,8 +1659,10 @@ function OwnedCheckout({ owner }) {
                             <InputField
                               icon={<User className="w-5 h-5  text-gray-400" />}
                               placeholder="Full Name"
-                              {...register("fullName", { required: "Full name is required" })}
+                              {...register("fullName", { required: "Full name is required", validate: value => billingNameError(value) || true })}
                               error={errors.fullName}
+                              hint={paymentMethod === 'safepay' && totalAmount > 0 && savedCards.billingProfileReady === false && !savedCards.selectedCardId
+                                ? 'For Safepay, enter your first and last name as shown on your card.' : null}
                             />
                             <InputField
                               icon={<Mail className="w-5 h-5  text-gray-400" />}
@@ -2251,7 +2287,14 @@ function OwnedCheckout({ owner }) {
                 {currentStep === steps.length - 1 ? (
                   <button
                     type="button"
-                    onClick={handleSubmit(onPlaceOrder)}
+                    onClick={handleSubmit(onPlaceOrder, invalid => {
+                      const field = ['fullName', 'email', 'phone', 'address', 'country', 'state', 'city', 'postalCode']
+                        .find(name => invalid[name]);
+                      if (field) {
+                        billingFieldToFocus.current = field;
+                        setCurrentStep(1);
+                      }
+                    })}
                     disabled={isSubmitting || isProcessing || checkoutBlocked || !!couponPricing.error || !cartItems?.cart || cartItems.cart.length == 0}
                     className="px-4 sm:px-6 py-2.5 sm:py-3 rounded-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:-translate-y-0.5 flex items-center gap-2 text-sm sm:text-base glow-soft"
                     style={{ background: 'linear-gradient(135deg, hsl(220, 70%, 55%), hsl(260, 60%, 60%))', color: 'white' }}
@@ -2448,7 +2491,7 @@ function OwnedCheckout({ owner }) {
 
 /* ---------- Subcomponents ---------- */
 
-const InputField = React.forwardRef(({ icon, error, ...props }, ref) => (
+const InputField = React.forwardRef(({ icon, error, hint, ...props }, ref) => (
   <div className="relative">
     <div className="relative">
       {icon && (
@@ -2458,6 +2501,7 @@ const InputField = React.forwardRef(({ icon, error, ...props }, ref) => (
       )}
       <input
         ref={ref}
+        aria-invalid={!!error}
         className={`glass-input w-full ${icon ? "pl-10" : ""} ${error ? "border-red-400" : ""}`}
         {...props}
       />
@@ -2465,6 +2509,7 @@ const InputField = React.forwardRef(({ icon, error, ...props }, ref) => (
     {error?.message && (
       <p className="text-xs mt-1" style={{ color: 'hsl(0, 72%, 55%)' }}>{String(error.message)}</p>
     )}
+    {hint && !error && <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>{hint}</p>}
   </div>
 ));
 

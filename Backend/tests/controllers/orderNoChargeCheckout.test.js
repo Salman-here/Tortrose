@@ -1,6 +1,7 @@
 'use strict';
 
-const providerFlagKeys = ['STRIPE_ENABLED', 'SAFEPAY_WEB_ENABLED', 'SAFEPAY_MOBILE_ENABLED'];
+const providerFlagKeys = ['STRIPE_ENABLED', 'SAFEPAY_WEB_ENABLED', 'SAFEPAY_MOBILE_ENABLED', 'SAFEPAY_ENV',
+  'SAFEPAY_SANDBOX_PUBLIC_KEY', 'SAFEPAY_SANDBOX_SECRET_KEY', 'SAFEPAY_SANDBOX_WEBHOOK_SECRET', 'SAFEPAY_SANDBOX_WEBHOOK_SCHEME'];
 const previousProviderFlags = Object.fromEntries(providerFlagKeys.map(key => [key, process.env[key]]));
 
 const mockEnsureStripeCustomerForUser = jest.fn();
@@ -9,6 +10,8 @@ const mockCheckoutSessionCreate = jest.fn();
 const mockStripeCouponCreate = jest.fn();
 const mockRemoveFulfilledOrderItemsFromCart = jest.fn().mockResolvedValue({ removed: true });
 const mockGetExchangeRateSnapshot = jest.fn();
+const mockEnsureSafepayCustomer = jest.fn();
+jest.mock('../../services/safepayCustomerService', () => ({ ensureCustomer: mockEnsureSafepayCustomer }));
 
 jest.mock('../../config/stripe', () => ({
   stripe: {
@@ -238,6 +241,31 @@ afterEach(() => {
 });
 
 describe('initial zero-value and provider-minimum checkout boundaries', () => {
+  test.each(['web', 'mobile'])('Safepay billing corrections on %s identify safe fields without creating an order or taking stock', async clientSurface => {
+    Object.assign(process.env, { SAFEPAY_ENV: 'sandbox', SAFEPAY_WEB_ENABLED: 'true', SAFEPAY_MOBILE_ENABLED: 'true',
+      SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_billing-validation', SAFEPAY_SANDBOX_SECRET_KEY: 'private-billing-validation-fixture',
+      SAFEPAY_SANDBOX_WEBHOOK_SECRET: 'private-billing-validation-webhook', SAFEPAY_SANDBOX_WEBHOOK_SCHEME: 'sha512-raw' });
+    const fixture = await makeCheckout('safepay');
+    Object.assign(fixture.order, { safepayCheckout: 'card', appliedCoupons: [],
+      orderSummary: { subtotal: 100, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 100 } });
+    fixture.order.shippingInfo.fullName = 'SingleName';
+    mockEnsureSafepayCustomer.mockRejectedValue(Object.assign(new Error('Enter your billing first and last name.'), {
+      code: 'SAFEPAY_BILLING_PROFILE_REQUIRED', statusCode: 400, fields: ['fullName', 'unsafe'],
+    }));
+    const res = response();
+    await placeOrder({ body: { order: fixture.order, clientSurface, paymentFlow: 'safepay_hosted' },
+      headers: { 'x-idempotency-key': fixture.key }, user: { id: fixture.buyer._id.toString(), role: 'user' } }, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ code: 'SAFEPAY_BILLING_PROFILE_REQUIRED',
+      msg: 'Enter your billing first and last name.', fields: ['fullName'] });
+    expect(mockEnsureSafepayCustomer).toHaveBeenCalledWith(fixture.buyer._id.toString(), expect.objectContaining({ fullName: 'SingleName' }), { recordCardConsent: false });
+    expect(await Order.countDocuments()).toBe(0);
+    expect(await CouponRedemption.countDocuments()).toBe(0);
+    expect(await WalletTransaction.countDocuments()).toBe(0);
+    expect((await Product.findById(fixture.product._id)).stock).toBe(5);
+    expect(mockCheckoutSessionCreate).not.toHaveBeenCalled();
+    expect(mockPaymentIntentCreate).not.toHaveBeenCalled();
+  });
   test('read-only quote shares checkout pricing without reserving inventory, coupons, money or an order id', async () => {
     const fixture = await makeCheckout('cash_on_delivery');
     const res = response();

@@ -72,6 +72,7 @@ import { createCheckoutQuoteInput } from '../utils/checkoutQuote';
 import { getOriginalPaymentRefundCopy, getSafepayCheckoutLabel } from '../utils/paymentPresentation';
 import CheckoutPolicyNotice from '../components/common/CheckoutPolicyNotice';
 import { getOrderItemOptionPairs } from '../utils/orderPresentation';
+import { getSafepayCheckoutNameError, getSafepayBillingFieldErrors } from '../utils/safepayBillingValidation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -113,6 +114,7 @@ export default function CheckoutScreen({ navigation }) {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [errors, setErrors] = useState({});
+  const fullNameInputRef = useRef(null);
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [formData, setFormData] = useState({
     fullName: '', email: '', phone: '', address: '',
@@ -497,9 +499,15 @@ export default function CheckoutScreen({ navigation }) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (formData.email && !emailRegex.test(formData.email)) newErrors.email = 'Please enter a valid email address';
     if (formData.phone && !isValidPhoneNumber(formData.phone)) newErrors.phone = 'Please enter a valid phone number';
+    const billingNameError = getSafepayCheckoutNameError(formData.fullName, {
+      paymentMethod, billingProfileReady: savedCards.billingProfileReady, selectedCardId: savedCards.selectedCardId,
+      paymentRequired: totalAmount > 0,
+    });
+    if (billingNameError) newErrors.fullName = billingNameError;
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) {
-      Feedback.show({ type: 'error', text1: 'Missing Information', text2: 'Please fill in all required fields correctly' });
+      if (newErrors.fullName) fullNameInputRef.current?.focus();
+      Feedback.show({ type: 'error', text1: 'Check your details', text2: newErrors.fullName || 'Please correct the highlighted fields.' });
       return false;
     }
     return true;
@@ -962,6 +970,13 @@ export default function CheckoutScreen({ navigation }) {
         navigation.navigate('Login', { returnTo: 'Cart', intent: 'checkout' });
       }
       if (!shouldRetainIdempotencyKey(error.response?.status)) await resetCheckoutAttempt();
+      const billingErrors = getSafepayBillingFieldErrors(error);
+      if (Object.keys(billingErrors).length) {
+        setErrors(previous => ({ ...previous, ...billingErrors }));
+        if (billingErrors.fullName) fullNameInputRef.current?.focus();
+        Feedback.show({ type: 'error', text1: 'Check your billing details', text2: Object.values(billingErrors)[0] });
+        return;
+      }
       Feedback.show({ type: 'error', text1: 'Order not completed', text2: error.response?.data?.msg || error.message || 'Please check your connection and try again.' });
     } finally {
       submittingRef.current = false;
@@ -976,7 +991,9 @@ export default function CheckoutScreen({ navigation }) {
         <View style={[styles.inputContainer, hasError && styles.inputContainerError]}>
           {options.icon && <Ionicons name={options.icon} size={18} color={hasError ? palette.colors.error : 'rgba(255,255,255,0.5)'} style={styles.inputIcon} />}
           <TextInput
+            ref={options.inputRef}
             style={styles.input} placeholder={placeholder} placeholderTextColor={palette.colors.grayLight}
+            accessibilityLabel={placeholder}
             value={formData[field]} onChangeText={(value) => handleInputChange(field, value)}
             keyboardType={options.keyboardType || 'default'} autoCapitalize={options.autoCapitalize || 'sentences'}
             multiline={options.multiline} numberOfLines={options.numberOfLines}
@@ -1124,7 +1141,10 @@ export default function CheckoutScreen({ navigation }) {
                 </TouchableOpacity>
               )}
             </View>
-            {renderInput('fullName', 'Full Name', { icon: 'person-outline' })}
+            {renderInput('fullName', 'Full Name', { icon: 'person-outline', inputRef: fullNameInputRef })}
+            {paymentMethod === 'card' && totalAmount > 0 && savedCards.billingProfileReady === false && !savedCards.selectedCardId && (
+              <Text style={styles.fieldHint}>For Safepay, enter your first and last name as shown on your card.</Text>
+            )}
             {renderInput('email', 'Email Address', { icon: 'mail-outline', keyboardType: 'email-address', autoCapitalize: 'none' })}
             <PhoneNumberInput
               label="Phone Number"
@@ -1584,6 +1604,7 @@ const buildStyles = (p) => StyleSheet.create({
   inputIcon: { marginRight: spacing.sm },
   input: { flex: 1, paddingVertical: 13, fontSize: fontSize.md, color: p.colors.text },
   errorText: { fontSize: fontSize.xs, color: p.colors.error, marginTop: 4, marginLeft: 4 },
+  fieldHint: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginBottom: spacing.sm, marginHorizontal: 4 },
   row: { flexDirection: 'row', gap: spacing.md },
   halfInput: { flex: 1 },
   multiSellerNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.info}12`, borderWidth: 1, borderColor: `${p.colors.info}24`, marginBottom: spacing.md },

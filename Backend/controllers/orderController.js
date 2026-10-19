@@ -2148,6 +2148,8 @@ exports.placeOrder = async (req, res) => {
         return res.status(error.statusCode || 500).json({
             msg: error.statusCode ? error.message : "Server error while creating checkout session. Try again!",
             ...(error.code ? { code: error.code } : {}),
+            ...(error.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED' && Array.isArray(error.fields)
+                ? { fields: error.fields.filter(field => ['fullName', 'phone', 'country'].includes(field)) } : {}),
             ...(error?.needsSelection ? {
                 needsSelection: true,
                 productId: error.productId,

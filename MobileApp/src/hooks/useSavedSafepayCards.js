@@ -5,23 +5,25 @@ import api from '../config/api';
 export default function useSavedSafepayCards() {
   const { currentUser } = useAuth();
   const owner = String(currentUser?._id || currentUser?.id || '');
-  const [state, setState] = useState({ owner: '', cards: [], selectedCardId: '', loading: false });
+  const [state, setState] = useState({ owner: '', cards: [], selectedCardId: '', loading: false, billingProfileReady: null });
   const [refreshRevision, setRefreshRevision] = useState(0);
   const refreshCards = useCallback(() => setRefreshRevision(value => value + 1), []);
   const touched = useRef(false);
   useEffect(() => {
     let active = true;
     touched.current = false;
-    setState({ owner, cards: [], selectedCardId: '', loading: !!owner });
+    setState({ owner, cards: [], selectedCardId: '', loading: !!owner, billingProfileReady: null });
     if (owner) api.get('/api/safepay/cards').then(({ data }) => {
       if (!active) return;
       const cards = Array.isArray(data.cards) ? data.cards.filter(card => card.usable === true
         && /^pm_[a-zA-Z0-9-]{8,100}$/.test(card.id) && /^\d{4}$/.test(card.last4)) : [];
-      setState(previous => ({ owner, cards, loading: false, selectedCardId: touched.current
+      setState(previous => ({ owner, cards, loading: false,
+        billingProfileReady: typeof data.billingProfileReady === 'boolean' ? data.billingProfileReady : null,
+        selectedCardId: touched.current
         ? previous.selectedCardId : cards.some(card => card.id === data.defaultPaymentMethodId) ? data.defaultPaymentMethodId : '' }));
-    }).catch(() => { if (active) setState({ owner, cards: [], selectedCardId: '', loading: false }); });
+    }).catch(() => { if (active) setState({ owner, cards: [], selectedCardId: '', loading: false, billingProfileReady: null }); });
     return () => { active = false; };
   }, [owner, refreshRevision]);
-  const current = state.owner === owner ? state : { cards: [], selectedCardId: '', loading: !!owner };
+  const current = state.owner === owner ? state : { cards: [], selectedCardId: '', loading: !!owner, billingProfileReady: null };
   return { ...current, refreshCards, setSelectedCardId: id => { touched.current = true; setState(previous => ({ ...previous, owner, selectedCardId: id })); } };
 }
