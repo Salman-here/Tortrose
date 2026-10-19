@@ -483,6 +483,16 @@ const respondWithExistingCheckout = async (res, existingOrder) => {
     }
     if (existingOrder.paymentMethod === 'safepay') {
         res.set('Cache-Control', 'no-store, private, max-age=0');
+        if (!existingOrder.isPaid && (existingOrder.orderStatus === 'cancelled' || existingOrder.paymentSetupState === 'closed')) {
+            // Only an explicitly closed local purchase may retire its browser
+            // idempotency key. This is not a claim that the provider cancelled
+            // or refunded its payment: late captures still reconcile normally.
+            return res.status(410).json({
+                msg: 'That unpaid order was cancelled. Submit checkout again to start a new order.',
+                code: 'CHECKOUT_ATTEMPT_EXPIRED',
+                orderId: existingOrder.orderId,
+            });
+        }
         const checkout = await safepayPayments.prepareCheckout(existingOrder.safepayPaymentId, { clientSurface: existingOrder.clientSurface || 'mobile' });
         return res.status(200).json({ ...checkout, orderId: existingOrder.orderId,
             order: orderResponseSummary(existingOrder), idempotentReplay: true });

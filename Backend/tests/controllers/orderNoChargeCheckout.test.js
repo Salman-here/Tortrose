@@ -277,6 +277,12 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
       const replay = response(); await placeOrder(req, replay);
       expect(replay.status).toHaveBeenCalledWith(200);
       expect(replay.json.mock.calls[0][0].paymentId).toBe(res.json.mock.calls[0][0].paymentId);
+      const callsBeforeCancellation = prepare.mock.calls.length;
+      await Order.updateOne({ user: fixture.buyer._id }, { $set: { orderStatus: 'cancelled', paymentSetupState: 'closed' } });
+      const cancelledReplay = response(); await placeOrder(req, cancelledReplay);
+      expect(cancelledReplay.status).toHaveBeenCalledWith(410);
+      expect(cancelledReplay.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_ATTEMPT_EXPIRED' }));
+      expect(prepare.mock.calls.length).toBe(callsBeforeCancellation);
     } finally { prepare.mockRestore(); }
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ checkoutPresentation: 'embedded' }));
