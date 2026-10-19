@@ -1,4 +1,4 @@
-export const SAFEPAY_BILLING_NAME_MESSAGE = 'Enter your first and last name as shown on your card.';
+export const SAFEPAY_BILLING_NAME_MESSAGE = 'Enter your first name and last name.';
 
 // Only first-time Safepay customer creation needs a billing name. Do not impose
 // this rule on delivery recipients using COD, Wallet or an existing profile.

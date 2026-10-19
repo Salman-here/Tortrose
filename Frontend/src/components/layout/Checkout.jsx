@@ -66,7 +66,7 @@ import { checkoutDraftStorageKey, createCheckoutCartIdentity, markGuestCheckoutH
 import useCheckoutQuote from '../../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../../utils/checkoutQuote';
 import { getSafepayCheckoutLabel } from '../../utils/paymentPresentation';
-import { getSafepayCheckoutNameError, getSafepayBillingFieldErrors } from '../../utils/safepayBillingValidation';
+import { getSafepayBillingFieldErrors } from '../../utils/safepayBillingValidation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const STRIPE_RETURN_STORAGE_KEY = 'rozare_stripe_return_v1';
@@ -645,10 +645,6 @@ function OwnedCheckout({ owner }) {
   const billingSameAsShipping = watch("billingSameAsShipping");
   const allFormValues = watch();
   const billingFieldToFocus = useRef(null);
-  const billingNameError = value => getSafepayCheckoutNameError(value, {
-    paymentMethod, billingProfileReady: savedCards.billingProfileReady, selectedCardId: savedCards.selectedCardId,
-    paymentRequired: totalAmount > 0,
-  });
   const showShippingFieldErrors = fieldErrors => {
     Object.entries(fieldErrors).forEach(([field, message]) => setError(field, { type: 'billing', message }));
     billingFieldToFocus.current = Object.keys(fieldErrors)[0];
@@ -945,11 +941,6 @@ function OwnedCheckout({ owner }) {
   // Final form submit
   const onPlaceOrder = async (data) => {
     if (isProcessing) return;
-    const nameError = billingNameError(data.fullName);
-    if (nameError) {
-      showShippingFieldErrors({ fullName: nameError });
-      return;
-    }
     if (!isCartReady) {
       toast.error(cartHydrationStatus === 'error'
         ? 'Your cart could not be verified. Retry synchronization before placing the order.'
@@ -1659,10 +1650,8 @@ function OwnedCheckout({ owner }) {
                             <InputField
                               icon={<User className="w-5 h-5  text-gray-400" />}
                               placeholder="Full Name"
-                              {...register("fullName", { required: "Full name is required", validate: value => billingNameError(value) || true })}
+                              {...register("fullName", { required: "Enter your first name and last name." })}
                               error={errors.fullName}
-                              hint={paymentMethod === 'safepay' && totalAmount > 0 && savedCards.billingProfileReady === false && !savedCards.selectedCardId
-                                ? 'For Safepay, enter your first and last name as shown on your card.' : null}
                             />
                             <InputField
                               icon={<Mail className="w-5 h-5  text-gray-400" />}

@@ -95,6 +95,7 @@ const Store = require('../../models/Store');
 const TaxConfig = require('../../models/TaxConfig');
 const User = require('../../models/User');
 const WalletTransaction = require('../../models/WalletTransaction');
+const SafepayPayment = require('../../models/SafepayPayment');
 const { placeOrder, quoteCheckout } = require('../../controllers/orderController');
 
 let replicaSet;
@@ -230,6 +231,7 @@ beforeEach(async () => {
     TaxConfig.deleteMany({}),
     User.deleteMany({}),
     WalletTransaction.deleteMany({}),
+    SafepayPayment.deleteMany({}),
   ]);
 });
 
@@ -241,7 +243,7 @@ afterEach(() => {
 });
 
 describe('initial zero-value and provider-minimum checkout boundaries', () => {
-  test.each(['web', 'mobile'])('Safepay billing corrections on %s identify safe fields without creating an order or taking stock', async clientSurface => {
+  test.each(['web', 'mobile'])('new-card %s checkout opens standard Safepay without creating a merchant billing profile', async clientSurface => {
     Object.assign(process.env, { SAFEPAY_ENV: 'sandbox', SAFEPAY_WEB_ENABLED: 'true', SAFEPAY_MOBILE_ENABLED: 'true',
       SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_billing-validation', SAFEPAY_SANDBOX_SECRET_KEY: 'private-billing-validation-fixture',
       SAFEPAY_SANDBOX_WEBHOOK_SECRET: 'private-billing-validation-webhook', SAFEPAY_SANDBOX_WEBHOOK_SCHEME: 'sha512-raw' });
@@ -249,17 +251,30 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     Object.assign(fixture.order, { safepayCheckout: 'card', appliedCoupons: [],
       orderSummary: { subtotal: 100, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 100 } });
     fixture.order.shippingInfo.fullName = 'SingleName';
-    mockEnsureSafepayCustomer.mockRejectedValue(Object.assign(new Error('Enter your billing first and last name.'), {
-      code: 'SAFEPAY_BILLING_PROFILE_REQUIRED', statusCode: 400, fields: ['fullName', 'unsafe'],
+    mockEnsureSafepayCustomer.mockRejectedValue(new Error('Standard checkout must not create a billing profile.'));
+    const payments = require('../../services/safepayPaymentService');
+    const prepare = jest.spyOn(payments, 'prepareCheckout').mockImplementation(async paymentId => ({
+      paymentId: String(paymentId), checkoutPresentation: 'embedded', status: 'ready', environment: 'sandbox',
     }));
     const res = response();
-    await placeOrder({ body: { order: fixture.order, clientSurface, paymentFlow: 'safepay_hosted' },
-      headers: { 'x-idempotency-key': fixture.key }, user: { id: fixture.buyer._id.toString(), role: 'user' } }, res);
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ code: 'SAFEPAY_BILLING_PROFILE_REQUIRED',
-      msg: 'Enter your billing first and last name.', fields: ['fullName'] });
-    expect(mockEnsureSafepayCustomer).toHaveBeenCalledWith(fixture.buyer._id.toString(), expect.objectContaining({ fullName: 'SingleName' }), { recordCardConsent: false });
-    expect(await Order.countDocuments()).toBe(0);
+    const req = { body: { order: fixture.order, clientSurface, paymentFlow: 'safepay_hosted' },
+      headers: { 'x-idempotency-key': fixture.key }, user: { id: fixture.buyer._id.toString(), role: 'user' } };
+    try {
+      await placeOrder(req, res);
+      const replay = response(); await placeOrder(req, replay);
+      expect(replay.status).toHaveBeenCalledWith(200);
+      expect(replay.json.mock.calls[0][0].paymentId).toBe(res.json.mock.calls[0][0].paymentId);
+    } finally { prepare.mockRestore(); }
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ checkoutPresentation: 'embedded' }));
+    expect(mockEnsureSafepayCustomer).not.toHaveBeenCalled();
+    expect(await Order.countDocuments()).toBe(1);
+    expect(await SafepayPayment.countDocuments()).toBe(1);
+    const payment = await SafepayPayment.findOne().lean();
+    expect(payment.customerId).toBeNull();
+    expect(payment.terms.checkoutCardPolicy).toBeUndefined();
+    expect(payment.cardSetup.selectionPolicy).toBe('');
+    expect(payment.capturedMinor).toBe(0);
     expect(await CouponRedemption.countDocuments()).toBe(0);
     expect(await WalletTransaction.countDocuments()).toBe(0);
     expect((await Product.findById(fixture.product._id)).stock).toBe(5);

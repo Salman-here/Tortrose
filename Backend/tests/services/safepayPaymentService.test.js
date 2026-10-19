@@ -76,6 +76,77 @@ test.each(['new', 'creating', 'deleted'])('a %s profile is never attached to a n
   expect((await service.ensurePayment(input())).customerId).toBeNull();
 });
 
+async function legacyMerchantCard(currency = 'PKR', patch = {}) {
+  await Customer.create({ user: buyer, environment: 'sandbox', customerId: 'cus_owned-fixture', status: 'ready' });
+  client.listCards = jest.fn().mockResolvedValue([]);
+  const tracker = () => ({ token: 'track_fixture-owned-payment', state: 'TRACKER_STARTED',
+    next_actions: { CYBERSOURCE: { kind: 'GENERATE_CAPTURE_CONTEXT' } } });
+  client.createTracker.mockImplementation(async () => tracker());
+  client.getTracker.mockImplementation(async () => tracker());
+  const payment = await service.ensurePayment({ ...input(), purpose: 'order', currency,
+    terms: { checkoutCardPolicy: require('../../services/safepayCheckoutCardService').POLICY } });
+  if (Object.keys(patch).length) await Payment.updateOne({ _id: payment._id }, { $set: patch });
+  return payment;
+}
+
+test.each(['PKR', 'USD', 'EUR', 'GBP'])('untouched legacy %s new-card attempts open standard checkout directly with the same frozen payment', async currency => {
+  const payment = await legacyMerchantCard(currency);
+  const updateOrder = jest.spyOn(require('../../models/Order'), 'updateOne').mockResolvedValue({ matchedCount: 1 });
+  try {
+    const first = await service.prepareCheckout(payment._id, { clientSurface: 'web' });
+    const second = await service.prepareCheckout(payment._id, { clientSurface: 'mobile' });
+    expect(first.checkoutPresentation).toBe('embedded');
+    expect(second.paymentId).toBe(first.paymentId);
+    const url = new URL(first.checkoutUrl);
+    expect(url.hostname).toBe('sandbox.api.getsafepay.com');
+    expect(url.pathname).toBe('/embedded/');
+    expect(url.searchParams.get('user_id')).toBe('cus_owned-fixture');
+    expect(url.searchParams.has('is_implicit')).toBe(false);
+    expect(client.createTracker).toHaveBeenCalledTimes(1);
+    const stored = await Payment.findById(payment._id);
+    expect(stored.checkoutCard.hostedCheckoutAt).toBeInstanceOf(Date);
+    expect(stored.checkoutCard.consentToSave).toBe(false);
+    expect(stored.customerId).toBe(payment.customerId);
+    expect(stored.fingerprint).toBe(payment.fingerprint);
+    expect(stored.capturedMinor).toBe(0);
+    expect(stored.chargeStartedAt).toBeNull();
+    expect(await Payment.countDocuments()).toBe(1);
+  } finally { updateOrder.mockRestore(); }
+});
+
+test.each([
+  { 'checkoutCard.approvalStartedAt': new Date() },
+  { 'savedCardAuthentication.setupStartedAt': new Date() },
+  { 'savedCardAuthentication.encryptedContext': 'existing-bank-session' },
+  { 'savedCardAuthentication.resetStartedAt': new Date() },
+  { 'savedCardAuthentication.operationLeaseUntil': new Date('2030-01-01') },
+])('an in-progress legacy bank verification is never reset to change its presentation: %j', async patch => {
+  const payment = await legacyMerchantCard('PKR', patch);
+  const updateOrder = jest.spyOn(require('../../models/Order'), 'updateOne').mockResolvedValue({ matchedCount: 1 });
+  try {
+    const result = await service.prepareCheckout(payment._id);
+    expect(result.checkoutPresentation).toBe('saved-card');
+    expect((await Payment.findById(payment._id)).checkoutCard.hostedCheckoutAt).toBeNull();
+    expect(client.createAuthToken).not.toHaveBeenCalled();
+    expect(client.createTracker).toHaveBeenCalledTimes(1);
+  } finally { updateOrder.mockRestore(); }
+});
+
+test('losing the legacy presentation fence returns a controlled retry and never another payment', async () => {
+  const payment = await legacyMerchantCard();
+  const updateOrder = jest.spyOn(require('../../models/Order'), 'updateOne').mockResolvedValue({ matchedCount: 1 });
+  const original = Payment.findOneAndUpdate;
+  const fence = jest.spyOn(Payment, 'findOneAndUpdate').mockImplementation(function (filter, update, options) {
+    if (update.$set?.['checkoutCard.hostedCheckoutAt']) return { select: async () => null };
+    return original.call(this, filter, update, options);
+  });
+  try {
+    await expect(service.prepareCheckout(payment._id)).rejects.toMatchObject({ code: 'SAFEPAY_AUTHENTICATION_IN_PROGRESS' });
+    expect(await Payment.countDocuments()).toBe(1);
+    expect(client.createTracker).toHaveBeenCalledTimes(1);
+  } finally { fence.mockRestore(); updateOrder.mockRestore(); }
+});
+
 test('guest, unconsented and other-environment profiles never expose stored cards', async () => {
   await Customer.create({ user: buyer, environment: 'sandbox', customerId: 'cus_unconsented-fixture', status: 'ready' });
   await Customer.create({ user: buyer, environment: 'production', customerId: 'cus_live-fixture', status: 'ready', createdForCardConsentAt: clock });

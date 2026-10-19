@@ -55,7 +55,7 @@ test.each(['SingleName', '', '   ', 'a'.repeat(161)])('rejects incomplete billin
 });
 
 test('single-word saved name gets a useful first/last-name error rather than being sent to Safepay', async () => {
-  await expect(ensureCustomer(user._id)).rejects.toThrow('first and last name');
+  await expect(ensureCustomer(user._id)).rejects.toThrow('Enter your first name and last name.');
   expect(mockCreateCustomer).not.toHaveBeenCalled();
 });
 

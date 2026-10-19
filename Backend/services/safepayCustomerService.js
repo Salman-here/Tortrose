@@ -39,7 +39,7 @@ function billingContact(user, supplied = {}) {
   const fullName = value('fullName').replace(/\s+/g, ' ');
   const [first, ...last] = fullName.split(' ');
   if (!first || !last.join(' ') || fullName.length > 160) {
-    throw billingError('Enter your billing first and last name as shown on your card. Safepay requires both names.', ['fullName']);
+    throw billingError('Enter your first name and last name.', ['fullName']);
   }
   const phone = value('phone');
   const countryCode = value('countryCode').toUpperCase();
@@ -68,7 +68,7 @@ function profileWaitError(link, uncertain = false) {
 function customerFailureForUser(error) {
   const fields = error.providerValidationFields || [];
   if (fields.includes('first_name') || fields.includes('last_name')) {
-    return billingError('Enter your billing first and last name as shown on your card. Safepay requires both names.', ['fullName']);
+    return billingError('Enter your first name and last name.', ['fullName']);
   }
   if (fields.includes('email')) return fail('Safepay did not accept your account email. Check the email in your Profile before trying again.', 'SAFEPAY_BILLING_EMAIL_REJECTED', 400);
   if (fields.includes('phone_number')) return billingError('Safepay did not accept this billing phone number. Check the country code and number.', ['phone']);

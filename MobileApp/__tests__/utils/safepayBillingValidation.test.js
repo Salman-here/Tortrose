@@ -38,28 +38,24 @@ test('late server billing validation maps only safe correction fields', () => {
   }
 });
 
-test('actual mobile form validation focuses the name before an order can be submitted; corrected details pass', () => {
+test('shipping errors return to step 2 with simple name wording; standard checkout imposes no merchant-profile name rule', () => {
   const source = readFileSync(require.resolve('../../src/screens/CheckoutScreen.js'), 'utf8');
-  const body = source.split('const validateForm = () => {')[1].split('\n  const autoFillShipping')[0].replace(/};\s*$/, '');
-  const run = new Function('formData', 'paymentMethod', 'savedCards', 'getSafepayCheckoutNameError',
-    'isValidPhoneNumber', 'setErrors', 'Feedback', 'fullNameInputRef', 'totalAmount', body);
-  const focus = jest.fn(), setErrors = jest.fn(), show = jest.fn();
+  const body = source.split('const validateForm = () => {')[1].split('\n  const handleNextStep')[0].replace(/};\s*$/, '');
+  const run = new Function('formData', 'isValidPhoneNumber', 'setErrors', 'Feedback', 'fullNameInputRef', 'setCurrentStep', body);
+  const focus = jest.fn(), setErrors = jest.fn(), show = jest.fn(), setStep = jest.fn();
   const form = { fullName: 'Salman', email: 'buyer@example.com', phone: '+923001234567', address: '1 Test Street',
     country: 'Pakistan', countryCode: 'PK', state: 'Punjab', city: 'Lahore', postalCode: '54000' };
-  const validate = (details, method = 'card', ready = false) => run(details, method,
-    { billingProfileReady: ready, selectedCardId: '' }, getSafepayCheckoutNameError,
-    () => true, setErrors, { show }, { current: { focus } }, 1);
-  expect(validate(form)).toBe(false);
+  const validate = details => run(details, () => true, setErrors, { show }, { current: { focus } }, setStep);
+  expect(validate({ ...form, fullName: '' })).toBe(false);
   expect(focus).toHaveBeenCalledTimes(1);
+  expect(setStep).toHaveBeenLastCalledWith(1);
   expect(setErrors).toHaveBeenLastCalledWith({ fullName: SAFEPAY_BILLING_NAME_MESSAGE });
   expect(validate({ ...form, fullName: 'Salman Iqbal' })).toBe(true);
-  expect(validate(form, 'wallet')).toBe(true);
-  expect(validate(form, 'cash_on_delivery')).toBe(true);
-  expect(validate(form, 'card', true)).toBe(true);
+  expect(validate(form)).toBe(true);
   const submit = source.split('const handlePlaceOrder = async')[1];
   expect(submit.indexOf('if (!validateForm()) {')).toBeGreaterThan(0);
   expect(submit.indexOf('if (!validateForm()) {')).toBeLessThan(submit.indexOf("api.post('/api/order/place'"));
   expect(source).toContain('inputRef: fullNameInputRef');
   expect(source).toContain('const billingErrors = getSafepayBillingFieldErrors(error);');
-  expect(source).toMatch(/!savedCards.selectedCardId && !errors.fullName &&/);
+  expect(source).not.toContain('as shown on your card');
 });

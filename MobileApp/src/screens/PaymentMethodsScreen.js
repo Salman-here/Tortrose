@@ -31,6 +31,7 @@ import {
 } from '../utils/stripePaymentSheet';
 import { trackError, trackPaymentEvent } from '../utils/breadcrumbs';
 import { fontSize, fontWeight, shadows, spacing } from '../styles/theme';
+import { getSafepayCheckoutNameError } from '../utils/safepayBillingValidation';
 
 const BRAND_META = {
   visa: { label: 'VISA', color: '#1A1F71', tint: 'rgba(26,31,113,0.10)' },
@@ -63,10 +64,8 @@ const initialBillingContact = user => {
 };
 
 const billingContactProblem = contact => {
-  const name = clean(contact.fullName);
-  if (name.length > 160 || name.split(/\s+/).filter(Boolean).length < 2) {
-    return 'Enter your billing first and last name as shown on your card. Safepay requires both names.';
-  }
+  const nameError = getSafepayCheckoutNameError(contact.fullName, { paymentMethod: 'card', billingProfileReady: false });
+  if (nameError) return nameError;
   if (!clean(contact.phone)) return 'Enter your billing phone number.';
   if (!clean(contact.country) && !clean(contact.countryCode)) return 'Select your billing country.';
   return '';
@@ -486,7 +485,7 @@ export default function PaymentMethodsScreen({ navigation }) {
           {needsBillingContact && <GlassPanel style={{ padding: spacing.lg, gap: spacing.md, marginBottom: spacing.lg }}>
             <Text style={{ color: palette.colors.text, fontWeight: '700' }}>Billing contact</Text>
             <Text style={{ color: palette.colors.textSecondary, fontSize: fontSize.sm }}>
-              Use the name shown on your card. Safepay requires both first and last names.
+              Enter your first name and last name.
             </Text>
             <TextInput accessibilityLabel="Billing full name" placeholder="First and last name" value={billingContact.fullName}
               maxLength={160} autoCapitalize="words" autoComplete="name"

@@ -11,7 +11,7 @@ test('web and mobile share the exact billing-validation contract', () => {
 
 test('first-time Safepay accepts complete names and highlights incomplete names, not COD/Wallet recipients', () => {
   const context = { paymentMethod: 'safepay', billingProfileReady: false };
-  assert.match(getSafepayCheckoutNameError('Salman', context), /first and last name/);
+  assert.equal(getSafepayCheckoutNameError('Salman', context), 'Enter your first name and last name.');
   assert.equal(getSafepayCheckoutNameError('  محمد   علی  ', context), null);
   for (const override of [{ paymentMethod: 'wallet' }, { paymentMethod: 'cash_on_delivery' },
     { billingProfileReady: true }, { billingProfileReady: null }, { selectedCardId: 'pm_owned-fixture' }, { paymentRequired: false }]) {
@@ -22,11 +22,10 @@ test('first-time Safepay accepts complete names and highlights incomplete names,
   } } })), ['fullName']);
 });
 
-test('web validates before placement and returns to the mounted shipping field for server corrections', () => {
+test('web uses standard checkout without requiring a merchant billing profile and retains field correction recovery', () => {
   const source = readFileSync(new URL('../src/components/layout/Checkout.jsx', import.meta.url), 'utf8');
-  const submit = source.split('const onPlaceOrder = async (data) => {')[1];
-  assert.ok(submit.indexOf('const nameError = billingNameError(data.fullName)') < submit.indexOf('setIsProcessing(true)'));
-  assert.match(source, /validate: value => billingNameError\(value\) \|\| true/);
+  assert.doesNotMatch(source, /billingNameError|getSafepayCheckoutNameError|as shown on your card/);
+  assert.match(source, /required: "Enter your first name and last name\."/);
   assert.match(source, /showShippingFieldErrors\(billingErrors\)/);
   assert.match(source, /onAnimationComplete={[\s\S]*?setFocus\(field\)/);
   assert.match(source, /handleSubmit\(onPlaceOrder, invalid =>/);

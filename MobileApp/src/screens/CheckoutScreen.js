@@ -5,7 +5,7 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  StyleSheet, ActivityIndicator,
+  StyleSheet, ActivityIndicator, BackHandler, Keyboard,
 } from 'react-native';
 import Modal from '../components/common/AppModal';
 import { Image } from 'expo-image';
@@ -72,7 +72,9 @@ import { createCheckoutQuoteInput } from '../utils/checkoutQuote';
 import { getOriginalPaymentRefundCopy, getSafepayCheckoutLabel } from '../utils/paymentPresentation';
 import CheckoutPolicyNotice from '../components/common/CheckoutPolicyNotice';
 import { getOrderItemOptionPairs } from '../utils/orderPresentation';
-import { getSafepayCheckoutNameError, getSafepayBillingFieldErrors } from '../utils/safepayBillingValidation';
+import { getSafepayBillingFieldErrors } from '../utils/safepayBillingValidation';
+import CheckoutProgress from '../components/common/CheckoutProgress';
+import { createCheckoutReviewIdentity, getReviewedCheckoutStep } from '../utils/checkoutProgress';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -120,6 +122,26 @@ export default function CheckoutScreen({ navigation }) {
     fullName: '', email: '', phone: '', address: '',
     city: '', state: '', stateCode: '', postalCode: '', country: '', countryCode: '',
   });
+  const [checkoutProgress, setCheckoutProgress] = useState({ step: 0, identity: null });
+  const checkoutReviewIdentity = isCartReady ? createCheckoutReviewIdentity(cartItems?.cart || [], currency,
+    String(currentUser?._id || currentUser?.id || 'guest')) : null;
+  const currentStep = getReviewedCheckoutStep(checkoutProgress, checkoutReviewIdentity);
+  const setCurrentStep = step => {
+    Keyboard.dismiss();
+    setCheckoutProgress({ step, identity: checkoutReviewIdentity });
+  };
+  useFocusEffect(useCallback(() => {
+    const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (currentStep <= 0 || isProcessing) return false;
+      Keyboard.dismiss();
+      setCheckoutProgress({ step: currentStep - 1, identity: checkoutReviewIdentity });
+      return true;
+    });
+    return () => back.remove();
+  }, [currentStep, isProcessing, checkoutReviewIdentity]));
+  useEffect(() => {
+    if (currentStep === 1 && errors.fullName) fullNameInputRef.current?.focus();
+  }, [currentStep, errors.fullName]);
   const [savedShippingInfo, setSavedShippingInfo] = useState(null);
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
   const [pendingOrderData, setPendingOrderData] = useState(null);
@@ -495,22 +517,36 @@ export default function CheckoutScreen({ navigation }) {
     for (let field of required) {
       if (!formData[field]?.trim()) newErrors[field] = `${field.replace(/([A-Z])/g, ' $1').trim()} is required`;
     }
+    if (!formData.fullName?.trim()) newErrors.fullName = 'Enter your first name and last name.';
     if (!formData.countryCode) newErrors.country = 'Please select your country from the list';
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (formData.email && !emailRegex.test(formData.email)) newErrors.email = 'Please enter a valid email address';
     if (formData.phone && !isValidPhoneNumber(formData.phone)) newErrors.phone = 'Please enter a valid phone number';
-    const billingNameError = getSafepayCheckoutNameError(formData.fullName, {
-      paymentMethod, billingProfileReady: savedCards.billingProfileReady, selectedCardId: savedCards.selectedCardId,
-      paymentRequired: totalAmount > 0,
-    });
-    if (billingNameError) newErrors.fullName = billingNameError;
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) {
+      setCurrentStep(1);
       if (newErrors.fullName) fullNameInputRef.current?.focus();
       Feedback.show({ type: 'error', text1: 'Check your details', text2: newErrors.fullName || 'Please correct the highlighted fields.' });
       return false;
     }
     return true;
+  };
+
+  const handleNextStep = () => {
+    if (isProcessing || !isCartReady) return;
+    if (currentStep === 0) {
+      setCurrentStep(1);
+      return;
+    }
+    if (currentStep === 1) {
+      if (!validateForm()) return;
+      if (summaryLoading || shippingError || !shippingPricing.valid) {
+        Feedback.show({ type: 'info', text1: 'Choose delivery',
+          text2: shippingError || 'Select a delivery method for each store before continuing.' });
+        return;
+      }
+      setCurrentStep(2);
+    }
   };
 
   const autoFillShipping = () => {
@@ -740,6 +776,7 @@ export default function CheckoutScreen({ navigation }) {
   };
 
   const handlePlaceOrder = async () => {
+    if (currentStep !== 2) return;
     if (submittingRef.current || isProcessing) return;
     if (hasPendingSafepayPayment) {
       navigation.navigate('SafepayReturn', {
@@ -973,6 +1010,7 @@ export default function CheckoutScreen({ navigation }) {
       const billingErrors = getSafepayBillingFieldErrors(error);
       if (Object.keys(billingErrors).length) {
         setErrors(previous => ({ ...previous, ...billingErrors }));
+        setCurrentStep(1);
         if (billingErrors.fullName) fullNameInputRef.current?.focus();
         Feedback.show({ type: 'error', text1: 'Check your billing details', text2: Object.values(billingErrors)[0] });
         return;
@@ -1025,7 +1063,8 @@ export default function CheckoutScreen({ navigation }) {
       <View style={{ flex: 1 }}>
         {/* Glass Header */}
         <GlassPanel variant="floating" style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={styles.backBtn} accessibilityRole="button" accessibilityLabel={currentStep > 0 ? 'Previous checkout step' : 'Back to cart'}
+            onPress={() => { if (!isProcessing) currentStep > 0 ? setCurrentStep(currentStep - 1) : navigation.goBack(); }}>
             <Ionicons name="arrow-back" size={20} color={palette.colors.text} />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
@@ -1036,8 +1075,9 @@ export default function CheckoutScreen({ navigation }) {
             <Ionicons name="lock-closed" size={18} color={palette.colors.primary} />
           </View>
         </GlassPanel>
+        <CheckoutProgress currentStep={currentStep} onStepPress={setCurrentStep} disabled={isProcessing} />
 
-        <KeyboardAwareFormScrollView contentContainerStyle={{ paddingHorizontal: spacing.md, paddingBottom: 120, paddingTop: spacing.md }} bottomOffset={32}>
+        <KeyboardAwareFormScrollView key={currentStep} contentContainerStyle={{ paddingHorizontal: spacing.md, paddingBottom: 120, paddingTop: spacing.md }} bottomOffset={32}>
           {!isCartReady && (
             <View style={styles.shippingErrorCard} accessibilityRole="alert">
               <View style={styles.shippingErrorCopy}>
@@ -1099,6 +1139,7 @@ export default function CheckoutScreen({ navigation }) {
             </View>
           )}
           {/* Order Items */}
+          {currentStep === 0 && (
           <GlassPanel variant="card" style={styles.section}>
             <View style={styles.sectionHeader}>
               <Ionicons name="bag-outline" size={18} color={palette.colors.primary} />
@@ -1128,8 +1169,10 @@ export default function CheckoutScreen({ navigation }) {
               );
             })}
           </GlassPanel>
+          )}
 
           {/* Shipping Info */}
+          {currentStep === 1 && (<>
           <GlassPanel variant="card" style={styles.section}>
             <View style={styles.sectionHeader}>
               <Ionicons name="location-outline" size={18} color={palette.colors.secondary} />
@@ -1142,9 +1185,6 @@ export default function CheckoutScreen({ navigation }) {
               )}
             </View>
             {renderInput('fullName', 'Full Name', { icon: 'person-outline', inputRef: fullNameInputRef })}
-            {paymentMethod === 'card' && totalAmount > 0 && savedCards.billingProfileReady === false && !savedCards.selectedCardId && !errors.fullName && (
-              <Text style={styles.fieldHint}>For Safepay, enter your first and last name as shown on your card.</Text>
-            )}
             {renderInput('email', 'Email Address', { icon: 'mail-outline', keyboardType: 'email-address', autoCapitalize: 'none' })}
             <PhoneNumberInput
               label="Phone Number"
@@ -1324,8 +1364,10 @@ export default function CheckoutScreen({ navigation }) {
               />
             </View>
           </GlassPanel>
+          </>)}
 
           {/* Coupon codes */}
+          {currentStep === 0 && (
           <GlassPanel variant="card" style={styles.section}>
             <View style={styles.sectionHeader}>
               <Ionicons name="pricetag-outline" size={18} color="#f97316" />
@@ -1379,8 +1421,21 @@ export default function CheckoutScreen({ navigation }) {
               </View>
             )}
           </GlassPanel>
+          )}
 
           {/* Payment Method */}
+          {currentStep === 2 && (<>
+          <GlassPanel variant="card" style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="location-outline" size={18} color={palette.colors.secondary} />
+              <Text style={styles.sectionTitle}>Deliver to</Text>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Edit shipping details" onPress={() => setCurrentStep(1)}>
+                <Text style={{ color: palette.colors.primary, fontWeight: fontWeight.semibold }}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: palette.colors.text, fontWeight: fontWeight.semibold }}>{formData.fullName}</Text>
+            <Text style={styles.summaryLabel}>{[formData.address, formData.city, formData.state, formData.country].filter(Boolean).join(', ')}</Text>
+          </GlassPanel>
           <GlassPanel variant="card" style={styles.section}>
             <View style={styles.sectionHeader}>
               <Ionicons name="card-outline" size={18} color={palette.colors.info} />
@@ -1498,6 +1553,7 @@ export default function CheckoutScreen({ navigation }) {
               )}
             </TouchableOpacity>
           </GlassPanel>
+          </>)}
 
           {/* Order Summary */}
           <GlassPanel variant="card" style={styles.section}>
@@ -1515,9 +1571,9 @@ export default function CheckoutScreen({ navigation }) {
             <View style={styles.divider} />
             <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{checkoutMoney(totalAmount)}</Text></View>
           </GlassPanel>
-          <GlassPanel variant="card" style={styles.section}>
+          {currentStep === 2 && <GlassPanel variant="card" style={styles.section}>
             <CheckoutPolicyNotice onOpenPolicy={screen => navigation.navigate(screen)} />
-          </GlassPanel>
+          </GlassPanel>}
         </KeyboardAwareFormScrollView>
 
         {/* Footer */}
@@ -1528,17 +1584,17 @@ export default function CheckoutScreen({ navigation }) {
           </View>
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel={isProcessing ? 'Processing payment' : paymentButtonLabel}
-            accessibilityState={{ disabled: paymentButtonDisabled }}
-            style={[styles.placeOrderBtn, paymentButtonDisabled && { opacity: 0.7 }]}
-            onPress={handlePlaceOrder}
-            disabled={paymentButtonDisabled}
+            accessibilityLabel={currentStep === 2 ? isProcessing ? 'Processing payment' : paymentButtonLabel : currentStep === 0 ? 'Continue to shipping' : 'Continue to payment'}
+            accessibilityState={{ disabled: currentStep === 2 ? paymentButtonDisabled : isProcessing || !isCartReady }}
+            style={[styles.placeOrderBtn, (currentStep === 2 ? paymentButtonDisabled : isProcessing || !isCartReady) && { opacity: 0.7 }]}
+            onPress={currentStep === 2 ? handlePlaceOrder : handleNextStep}
+            disabled={currentStep === 2 ? paymentButtonDisabled : isProcessing || !isCartReady}
           >
             <LinearGradient colors={['#14B8A6', '#0EA5E9', '#6366F1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
             {isProcessing ? <><ActivityIndicator size="small" color="#fff" /><Text style={styles.placeOrderText}>Processing…</Text></> : (
               <>
-                <Ionicons name={paymentMethod === 'card' ? 'card-outline' : paymentMethod === 'wallet' ? 'wallet-outline' : 'bag-check-outline'} size={20} color="#fff" />
-                <Text style={styles.placeOrderText}>{paymentButtonLabel}</Text>
+                <Ionicons name={currentStep < 2 ? 'arrow-forward' : paymentMethod === 'card' ? 'card-outline' : paymentMethod === 'wallet' ? 'wallet-outline' : 'bag-check-outline'} size={20} color="#fff" />
+                <Text style={styles.placeOrderText}>{currentStep === 2 ? paymentButtonLabel : currentStep === 0 ? 'Next: Shipping' : 'Next: Payment'}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -1604,7 +1660,6 @@ const buildStyles = (p) => StyleSheet.create({
   inputIcon: { marginRight: spacing.sm },
   input: { flex: 1, paddingVertical: 13, fontSize: fontSize.md, color: p.colors.text },
   errorText: { fontSize: fontSize.xs, color: p.colors.error, marginTop: 4, marginLeft: 4 },
-  fieldHint: { fontSize: fontSize.xs, color: p.colors.textSecondary, marginBottom: spacing.sm, marginHorizontal: 4 },
   row: { flexDirection: 'row', gap: spacing.md },
   halfInput: { flex: 1 },
   multiSellerNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, padding: spacing.md, borderRadius: 14, backgroundColor: `${p.colors.info}12`, borderWidth: 1, borderColor: `${p.colors.info}24`, marginBottom: spacing.md },

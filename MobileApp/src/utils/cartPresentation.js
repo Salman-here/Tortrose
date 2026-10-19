@@ -46,6 +46,7 @@ const productCurrency = (product) => {
   if (new Set(values).size > 1) throw cartIntegrityError('The stored product currency metadata conflicts.');
   return values[0] || 'USD';
 };
+export const getCartPresentationProductCurrency = productCurrency;
 
 const productMoney = (product, field) => {
   if (!product || typeof product !== 'object') throw cartIntegrityError('The stored product price is invalid.');

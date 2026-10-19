@@ -7,6 +7,7 @@ import PhoneField from '../common/PhoneField';
 import LocationAutocomplete from '../common/LocationAutocomplete';
 import { safepayApi, openSafepayCheckout } from '../../utils/safepay';
 import { safepayCardSetupNotice } from '../../utils/safepayCardNotice';
+import { getSafepayCheckoutNameError } from '../../utils/safepayBillingValidation';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptForFingerprint, clearPersistedMutationAttemptForFingerprint } from '../../utils/persistedMutationAttempt';
 
 export default function PaymentMethods() {
@@ -57,8 +58,10 @@ export default function PaymentMethods() {
     event.preventDefault();
     if (busyRef.current || remaining || !consent || cardsUnavailable) return;
     setError(''); setNotice('');
-    if (!profileReady && (contact.fullName.trim().split(/\s+/).length < 2 || !isValidPhoneNumber(contact.phone || '') || !contact.countryCode)) {
-      setError('Enter your billing first and last name, a valid phone number, and select your country.'); return;
+    const nameError = !profileReady && getSafepayCheckoutNameError(contact.fullName, { paymentMethod: 'safepay', billingProfileReady: false });
+    if (nameError) { setError(nameError); return; }
+    if (!profileReady && (!isValidPhoneNumber(contact.phone || '') || !contact.countryCode)) {
+      setError('Enter a valid phone number and select your country.'); return;
     }
     busyRef.current = true; setBusy(true);
     try {

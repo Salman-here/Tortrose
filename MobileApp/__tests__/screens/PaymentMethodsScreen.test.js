@@ -80,7 +80,7 @@ test('new accounts see prefilled billing fields before attempting customer creat
   await waitFor(() => expect(screen.getByLabelText('Billing full name').props.value).toBe('SingleName'));
   expect(screen.UNSAFE_getByType('PhoneNumberInput').props.value).toBe('+923001234567');
   expect(screen.UNSAFE_getByType('LocationAutocomplete').props.code).toBe('PK');
-  expect(screen.getByText('Use the name shown on your card. Safepay requires both first and last names.')).toBeTruthy();
+  expect(screen.getByText('Enter your first name and last name.')).toBeTruthy();
   expect(api.post).not.toHaveBeenCalled();
 });
 

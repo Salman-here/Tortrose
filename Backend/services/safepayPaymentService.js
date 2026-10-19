@@ -186,6 +186,34 @@ function createSafepayPaymentService({
       await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
     }
 
+    // An untouched pre-release merchant-card attempt can open the standard
+    // provider screen directly without changing its frozen tracker/customer.
+    // Never interrupt bank verification, reset a tracker, or create a second
+    // payment just to change presentation. In-flight SDK/TMS authentication
+    // retains its original recovery path.
+    if (isCheckoutCard(payment) && !payment.checkoutCard?.hostedCheckoutAt) {
+      const tracker = await client.getTracker(payment.tracker, payment);
+      const at = now(), auth = payment.savedCardAuthentication;
+      const fresh = tracker.state === 'TRACKER_STARTED' && !tracker.charge
+        && ['GENERATE_CAPTURE_CONTEXT', 'PAYER_AUTH_SETUP'].includes(tracker.next_actions?.CYBERSOURCE?.kind);
+      // The encrypted context is select:false. Check only its existence; do
+      // not select a bank-session secret into a checkout response document.
+      const hasBankContext = fresh && await Payment.exists({ _id: payment._id,
+        'savedCardAuthentication.encryptedContext': { $type: 'string', $ne: '' } });
+      if (fresh && !payment.checkoutCard?.approvalStartedAt && !auth?.setupStartedAt && !hasBankContext
+        && !auth?.resetStartedAt && !(auth?.operationLeaseUntil > at)) {
+        const selected = await Payment.findOneAndUpdate({ _id: payment._id, status: 'ready', appliedAt: null,
+          riskPending: false, localCancelledAt: null, capturedMinor: 0, refundedMinor: 0, walletRefundMinor: 0,
+          'checkoutCard.hostedCheckoutAt': null, 'checkoutCard.approvalStartedAt': null,
+          'savedCardAuthentication.setupStartedAt': null, 'savedCardAuthentication.resetStartedAt': null,
+          'savedCardAuthentication.encryptedContext': { $in: [null, ''] },
+          $or: [{ 'savedCardAuthentication.operationLeaseUntil': null }, { 'savedCardAuthentication.operationLeaseUntil': { $lte: at } }],
+        }, { $set: { 'checkoutCard.hostedCheckoutAt': at } }, { new: true }).select('+cardId');
+        if (!selected) throw fail('This payment is being verified. Check this same payment before retrying.', 'SAFEPAY_AUTHENTICATION_IN_PROGRESS');
+        payment = selected;
+      }
+    }
+
     if (payment.providerEntryMode === 'tms' || isCheckoutCard(payment) && !payment.checkoutCard?.hostedCheckoutAt) {
       const saved = savedCheckoutFor(payment, clientSurface);
       const checkoutUrl = typeof saved === 'string' ? saved : saved.checkoutUrl;
