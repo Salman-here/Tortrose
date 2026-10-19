@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { parse } from '@babel/parser';
 import { createCheckoutReviewIdentity, getReviewedCheckoutStep } from '../../src/utils/checkoutProgress';
+import { getCartPresentationItemCount } from '../../src/utils/cartPresentation';
 
 const cart = () => [{ product: { _id: 'p1', seller: 's1', price: 100, priceCurrency: 'PKR' }, qty: 2,
   selectedOptions: { Color: 'Blue', Size: 'M' } }];
@@ -21,6 +22,12 @@ test('review progress is stable across object/order replacement, but changes in 
   expect(getReviewedCheckoutStep(progress, identity(cart(), 'PKR', 'buyerB'))).toBe(0);
   expect(getReviewedCheckoutStep(progress, null)).toBe(0);
   expect(getReviewedCheckoutStep({ identity: initial, step: 3 }, initial)).toBe(0);
+});
+
+test('checkout counts actual quantities and labels one item correctly', () => {
+  expect(getCartPresentationItemCount(cart())).toBe(2);
+  expect(getCartPresentationItemCount([{ ...cart()[0], qty: 1 }])).toBe(1);
+  expect(source).toContain("checkoutItemCount === 1 ? 'item' : 'items'");
 });
 
 test('the actual screen mounts shipping only in step 2 and payment only in step 3', () => {

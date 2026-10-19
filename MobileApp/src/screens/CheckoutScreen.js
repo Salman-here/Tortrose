@@ -75,6 +75,7 @@ import { getOrderItemOptionPairs } from '../utils/orderPresentation';
 import { getSafepayBillingFieldErrors } from '../utils/safepayBillingValidation';
 import CheckoutProgress from '../components/common/CheckoutProgress';
 import { createCheckoutReviewIdentity, getReviewedCheckoutStep } from '../utils/checkoutProgress';
+import { getCartPresentationItemCount } from '../utils/cartPresentation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 
@@ -126,6 +127,7 @@ export default function CheckoutScreen({ navigation }) {
   const checkoutReviewIdentity = isCartReady ? createCheckoutReviewIdentity(cartItems?.cart || [], currency,
     String(currentUser?._id || currentUser?.id || 'guest')) : null;
   const currentStep = getReviewedCheckoutStep(checkoutProgress, checkoutReviewIdentity);
+  const checkoutItemCount = getCartPresentationItemCount(cartItems?.cart || []);
   const setCurrentStep = step => {
     Keyboard.dismiss();
     setCheckoutProgress({ step, identity: checkoutReviewIdentity });
@@ -1069,7 +1071,7 @@ export default function CheckoutScreen({ navigation }) {
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Checkout</Text>
-            <Text style={styles.headerSubtitle}>{cartItems.cart.length} items - {checkoutMoney(totalAmount)}</Text>
+            <Text style={styles.headerSubtitle}>{checkoutItemCount} {checkoutItemCount === 1 ? 'item' : 'items'} · {checkoutMoney(totalAmount)}</Text>
           </View>
           <View style={styles.lockIcon}>
             <Ionicons name="lock-closed" size={18} color={palette.colors.primary} />
