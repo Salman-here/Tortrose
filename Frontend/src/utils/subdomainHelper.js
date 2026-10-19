@@ -31,7 +31,7 @@ export const getSubdomain = () => {
 };
 
 // Subdomains that are NOT stores — system/reserved
-export const RESERVED_SUBDOMAINS = ['www', 'api', 'admin', 'app', 'docs', 'help', 'blog', 'mail', 'cdn', 'static'];
+export const RESERVED_SUBDOMAINS = ['www', 'api', 'admin', 'app', 'docs', 'ai-automations', 'help', 'blog', 'mail', 'cdn', 'static'];
 
 // Detect if current host is the docs subdomain (docs.rozare.com)
 export const isDocsSubdomain = () => {
