@@ -67,6 +67,20 @@ test('web tracker metadata is hosted, not mislabeled mobile', async () => {
   expect(JSON.parse(fetchImpl.mock.calls[0][1].body).metadata).toEqual({ order_id: 'order:fixture123', source: 'hosted' });
 });
 
+test('a URL-only checkout contact never becomes the merchant user in payment setup', async () => {
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { tracker } }) }));
+  const client = createSafepayClient({ config, fetchImpl });
+  await client.createTracker({ amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123',
+    purpose: 'order', customerId: null, checkoutContactId: 'cus_prefill-fixture' });
+  const payload = JSON.parse(fetchImpl.mock.calls[0][1].body);
+  expect(payload.user).toBeUndefined();
+  expect(payload).toMatchObject({ mode: 'payment', amount: 10000, currency: 'PKR' });
+  const url = new URL(client.buildPaymentCheckoutUrl({ tracker: tracker.token, authToken: 'private-fixture-auth',
+    reference: 'order:fixture123', customerId: 'cus_prefill-fixture',
+    redirectUrl: 'https://rozare.com/return', cancelUrl: 'https://rozare.com/return' }));
+  expect(url.searchParams.get('user_id')).toBe('cus_prefill-fixture');
+});
+
 test('a selected saved card uses payment/tms and retains required customer ownership', async () => {
   const savedTracker = { ...tracker, entry_mode: 'tms', customer: 'cus_owned-fixture' };
   const fetchImpl = jest.fn(async () => ({ ok: true, json: async () => ({ data: { tracker: savedTracker } }) }));

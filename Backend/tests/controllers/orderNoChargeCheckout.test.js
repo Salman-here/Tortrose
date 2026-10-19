@@ -284,7 +284,8 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     expect(await Order.countDocuments()).toBe(1);
     expect(await SafepayPayment.countDocuments()).toBe(1);
     const payment = await SafepayPayment.findOne().lean();
-    expect(payment.customerId).toBe('cus_controller-prefill');
+    expect(payment.customerId).toBeNull();
+    expect(payment.checkoutContactId).toBe('cus_controller-prefill');
     expect(payment.checkoutAddressId).toBe('address_controller-prefill');
     expect(mockEnsureCheckoutAddress).toHaveBeenCalledTimes(1);
     expect(payment.terms).toMatchObject({ checkoutContactPolicy: 'hosted-checkout-contact-v1', checkoutContactHash: 'a'.repeat(64) });

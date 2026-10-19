@@ -68,6 +68,7 @@ function createSafepayPaymentService({
     const identity = { environment: config.environment, user: input.user || null, purpose: input.purpose, requestKey: input.requestKey };
     let existing = await Payment.findOne(identity).session(session);
     let customerId = input.customerId || null;
+    let checkoutContactId = null;
     if (providerMode === 'payment') {
       // Standard checkout may use a guest contact solely for prefill. A
       // selected saved card or legacy SDK policy uses the consented profile.
@@ -87,9 +88,17 @@ function createSafepayPaymentService({
       const guestLink = !existing && checkoutPrefill ? await CheckoutContact.findOne({ user: input.user,
         environment: config.environment, status: 'ready', contactHash: input.terms.checkoutContactHash, customerId })
         .select('customerId').session(session) : null;
-      const ownedId = existing ? existing.customerId : (checkoutPrefill ? guestLink?.customerId : link?.customerId) || null;
+      const ownedId = existing ? (checkoutPrefill ? existing.checkoutContactId || existing.customerId : existing.customerId)
+        : (checkoutPrefill ? guestLink?.customerId : link?.customerId) || null;
       if (customerId && customerId !== ownedId) throw fail('This checkout payment profile does not belong to this account.', 'SAFEPAY_CUSTOMER_MISMATCH');
       customerId = ownedId;
+      if (checkoutPrefill && (!existing || existing.checkoutContactId)) {
+        // Keep the verified contact for URL prefill only. The provider's
+        // standard checkout authenticates the shopper itself. Binding this
+        // merchant customer to its tracker causes a merchant-auth 401 later.
+        checkoutContactId = customerId;
+        customerId = null;
+      }
       if (checkoutCard && (!input.user || !customerId)) throw fail('Complete your card billing profile before checkout.', 'SAFEPAY_CUSTOMER_REQUIRED', 400);
       if (input.cardId) {
         if (!input.user || !customerId || !/^pm_[a-zA-Z0-9-]{8,100}$/.test(input.cardId)) throw fail('Choose a saved card belonging to your account.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
@@ -113,7 +122,8 @@ function createSafepayPaymentService({
     const terms = { user: String(input.user || ''), purpose: input.purpose, reference: input.reference,
       amountMinor: input.amountMinor, currency: input.currency, order: String(input.order || ''),
       store: String(input.store || ''), returnRequest: String(input.returnRequest || ''), terms: input.terms || {},
-      ...(customerId ? { customerId } : {}), ...(checkoutAddressId ? { checkoutAddressId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
+      ...(customerId ? { customerId } : {}), ...(checkoutContactId ? { checkoutContactId } : {}),
+      ...(checkoutAddressId ? { checkoutAddressId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
     const expectedFingerprint = fingerprint(terms);
     if (!existing) {
       const cardSetup = input.purpose === 'card_setup' || input.terms?.checkoutCardPolicy === CHECKOUT_CARD_POLICY
@@ -122,7 +132,7 @@ function createSafepayPaymentService({
         const [created] = await Payment.create([{ ...identity, reference: input.reference, amountMinor: input.amountMinor,
           currency: input.currency, order: input.order || null, store: input.store || null, returnRequest: input.returnRequest || null,
           terms: input.terms || {}, fingerprint: expectedFingerprint, providerMode,
-          providerEntryMode: providerMode === 'payment' && input.cardId ? 'tms' : '', customerId, checkoutAddressId, cardId: input.cardId || null,
+          providerEntryMode: providerMode === 'payment' && input.cardId ? 'tms' : '', customerId, checkoutContactId, checkoutAddressId, cardId: input.cardId || null,
           ...(cardSetup ? { cardSetup } : {}) }], { session });
         existing = created;
       } catch (error) {
@@ -205,6 +215,13 @@ function createSafepayPaymentService({
       && payment.lastErrorCode === 'SAFEPAY_CARD_SETUP_NOT_REUSABLE') return paymentResponse(payment);
     if (['paid', 'authorized'].includes(payment.status) && payment.appliedAt) return paymentResponse(payment);
     if (!['ready'].includes(payment.status)) throw fail('This checkout can no longer accept payment. Check its current status.', 'SAFEPAY_CHECKOUT_CLOSED');
+    if (payment.purpose === 'order' && payment.customerId && payment.terms?.checkoutContactPolicy === CHECKOUT_CONTACT_POLICY) {
+      // Already-issued trackers retain their immutable merchant binding; the
+      // provider reset does not remove it. Never substitute a second tracker
+      // or weaken identity checks to disguise this old setup as a new attempt.
+      throw fail('This unpaid checkout uses an older payment setup. Cancel the unpaid order from Your Orders, then check out again. Check payment status first if your bank shows a charge.',
+        'SAFEPAY_CHECKOUT_RESTART_REQUIRED');
+    }
     if (payment.purpose === 'order' && payment.terms?.settlementPolicy === 'revalidate-on-payment-v1') {
       await mongoose.connection.transaction(session => require('./safepayOrderAvailabilityService').assertOrderAvailable(payment, session));
     }
@@ -250,7 +267,7 @@ function createSafepayPaymentService({
     const redirectUrl = buildReturnUrl({ ...returnContext, outcome: 'return' });
     const cancelUrl = buildReturnUrl({ ...returnContext, outcome: 'cancel' });
     const checkoutUrl = client.buildPaymentCheckoutUrl({ tracker: payment.tracker, authToken, reference: payment.reference,
-      redirectUrl, cancelUrl, customerId: payment.customerId, checkoutAddressId: payment.checkoutAddressId,
+      redirectUrl, cancelUrl, customerId: payment.checkoutContactId || payment.customerId, checkoutAddressId: payment.checkoutAddressId,
       // The user has already explicitly consented in Rozare's saved-card
       // screen. Safepay's supported instrument flag requests a reusable token
       // (use_once=false) instead of silently creating a one-use credential.

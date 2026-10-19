@@ -85,7 +85,8 @@ test('standard checkout freezes an owned guest contact, uses provider prefill an
     terms: { checkoutContactPolicy: CHECKOUT_CONTACT_POLICY, checkoutContactHash: contact.contactHash } };
   const payment = await service.ensurePayment(value);
   expect(String((await service.ensurePayment(value))._id)).toBe(String(payment._id));
-  expect(payment.customerId).toBe(contact.customerId);
+  expect(payment.customerId).toBeNull();
+  expect(payment.checkoutContactId).toBe(contact.customerId);
   expect(payment.cardSetup.selectionPolicy).toBe('');
   expect(payment.providerEntryMode).toBe('');
   expect(await Customer.countDocuments()).toBe(0);
@@ -97,10 +98,34 @@ test('standard checkout freezes an owned guest contact, uses provider prefill an
     expect(url.pathname).toBe('/embedded/');
     expect(url.searchParams.get('user_id')).toBe(contact.customerId);
     expect(url.searchParams.has('is_implicit')).toBe(false);
-    expect(client.createTracker.mock.calls[0][0].customerId).toBe(contact.customerId);
+    expect(client.createTracker.mock.calls[0][0].customerId).toBeNull();
+    expect(client.createTracker.mock.calls[0][0].checkoutContactId).toBe(contact.customerId);
     expect((await service.prepareCheckout(payment._id)).paymentId).toBe(checkout.paymentId);
     expect(client.createTracker).toHaveBeenCalledTimes(1);
   } finally { update.mockRestore(); }
+});
+
+test('legacy merchant-bound prefill cannot silently replace its tracker or bypass authentication', async () => {
+  const value = { ...input(), purpose: 'order', customerId: 'cus_prefill-fixture',
+    terms: { checkoutContactPolicy: CHECKOUT_CONTACT_POLICY, checkoutContactHash: 'a'.repeat(64) } };
+  const terms = { user: String(buyer), purpose: value.purpose, reference: value.reference,
+    amountMinor: value.amountMinor, currency: value.currency, order: '', store: '', returnRequest: '',
+    terms: value.terms, customerId: value.customerId };
+  const legacy = await Payment.create({ ...value, environment: 'sandbox', fingerprint: fingerprint(terms),
+    providerMode: 'payment', status: 'ready', tracker: 'track_fixture-owned-payment' });
+  expect(String((await service.ensurePayment(value))._id)).toBe(String(legacy._id));
+  await expect(service.prepareCheckout(legacy._id)).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_RESTART_REQUIRED' });
+  expect(client.createTracker).not.toHaveBeenCalled(); expect(client.createAuthToken).not.toHaveBeenCalled();
+  const same = await Payment.findById(legacy._id);
+  expect(same.tracker).toBe(legacy.tracker); expect(same.customerId).toBe(value.customerId);
+  expect(same.checkoutContactId).toBeNull(); expect(same.capturedMinor).toBe(0);
+  expect(await Payment.countDocuments()).toBe(1);
+  // An old attempt that later really settles must still be reconciled once;
+  // the presentation guard must not hide or undo a verified payment.
+  providerState = 'TRACKER_ENDED';
+  expect((await service.prepareCheckout(legacy._id)).status).toBe('paid');
+  expect((await Payment.findById(legacy._id)).capturedMinor).toBe(value.amountMinor);
+  expect(client.createTracker).not.toHaveBeenCalled();
 });
 
 test.each([

@@ -29,6 +29,9 @@ const schema = new mongoose.Schema({
     operationLeaseUntil: { type: Date, default: null },
   },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
+  // Contact prefill is not a merchant authorization identity. Passing this
+  // reference as the tracker's user prevents hosted shopper/Google Pay auth.
+  checkoutContactId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
   checkoutAddressId: { type: String, default: null, match: /^address_[a-zA-Z0-9-]+$/, immutable: true },
   cardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false, immutable: true },
   cardSetup: {
