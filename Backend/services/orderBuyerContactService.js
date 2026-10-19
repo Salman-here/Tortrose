@@ -6,6 +6,16 @@ const { resolveCountryCode } = require('./locationCatalogService');
 const E164_PHONE_PATTERN = /^\+[1-9]\d{7,14}$/;
 const PHONE_INPUT_PATTERN = /^[+0-9().\-\s]+$/;
 
+const canonicalizeShippingName = value => {
+  const name = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+  const missing = name.split(' ').filter(part => /\p{L}/u.test(part)).length < 2;
+  if (missing || name.length > 160) throw Object.assign(new Error(missing
+    ? 'Enter your first name and last name.' : 'Use no more than 160 characters for your name.'), {
+    statusCode: 400, code: 'SHIPPING_NAME_INVALID', fields: ['fullName'],
+  });
+  return name;
+};
+
 const invalidShippingPhoneError = (message = (
   'Enter a valid international phone number, or choose a valid shipping country for a local number.'
 )) => {
@@ -117,6 +127,7 @@ const tryOrderBuyerPhoneE164 = order => {
 module.exports = {
   E164_PHONE_PATTERN,
   canonicalizeShippingPhone,
+  canonicalizeShippingName,
   invalidShippingPhoneError,
   normalizeExplicitE164,
   orderBuyerPhoneDigits,

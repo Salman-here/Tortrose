@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const mongoose = require('mongoose');
 const Payment = require('../models/SafepayPayment');
 const Customer = require('../models/SafepayCustomer');
+const CheckoutContact = require('../models/SafepayCheckoutContact');
 const Order = require('../models/Order');
 const { readSafepayConfig } = require('../config/safepay');
 const { createSafepayClient, requireMoney, requireReusableCard } = require('./safepayClient');
@@ -12,6 +13,7 @@ const { normalizeSafepayPaymentRail, normalizeRaastAttemptStatus, safepayPayment
 const { buildReturnUrl } = require('./safepayReturnNavigation');
 const { POLICY: CARD_SETUP_POLICY, snapshotCardSetup, verifySavedSetupCard, applyCardSetupDefault } = require('./safepayCardSetupService');
 const { POLICY: CHECKOUT_CARD_POLICY, isCheckoutCard, synchronizeCheckoutCard } = require('./safepayCheckoutCardService');
+const { POLICY: CHECKOUT_CONTACT_POLICY } = require('./safepayCheckoutContactService');
 
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const stable = value => Array.isArray(value) ? value.map(stable)
@@ -65,17 +67,25 @@ function createSafepayPaymentService({
     let existing = await Payment.findOne(identity).session(session);
     let customerId = input.customerId || null;
     if (providerMode === 'payment') {
-      // Legacy hosted checkout remains guest-bound. A selected saved card or
-      // the explicit merchant-card SDK policy uses this buyer's owned profile.
-      // Never pass that profile into the legacy hosted shopper-JWT flow.
+      // Standard checkout may use a guest contact solely for prefill. A
+      // selected saved card or legacy SDK policy uses the consented profile.
+      // These identities and their purposes must never be interchangeable.
       // Reopening retains the original binding, including a guest/null binding:
       // creating a profile later must never change an existing payment attempt.
       const checkoutCard = input.purpose === 'order' && input.terms?.checkoutCardPolicy === CHECKOUT_CARD_POLICY;
+      const checkoutPrefill = input.purpose === 'order' && input.terms?.checkoutContactPolicy === CHECKOUT_CONTACT_POLICY;
+      if (checkoutPrefill && (input.cardId || checkoutCard)) throw fail('Choose one checkout payment method.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
+      if (checkoutPrefill && (!input.user || !/^[a-f0-9]{64}$/.test(input.terms.checkoutContactHash || '') || !/^cus_[a-zA-Z0-9-]{8,100}$/.test(customerId || ''))) {
+        throw fail('The checkout contact could not be verified.', 'SAFEPAY_CUSTOMER_REQUIRED', 400);
+      }
       if (checkoutCard && input.cardId) throw fail('Choose either a saved card or new-card checkout.', 'SAFEPAY_CARD_SELECTION_INVALID', 400);
       const link = !existing && input.user && (input.cardId || checkoutCard) ? await Customer.findOne({ user: input.user,
         environment: config.environment, status: 'ready', ...(!checkoutCard ? { createdForCardConsentAt: { $ne: null } } : {}) })
         .select('customerId').session(session) : null;
-      const ownedId = existing ? existing.customerId : link?.customerId || null;
+      const guestLink = !existing && checkoutPrefill ? await CheckoutContact.findOne({ user: input.user,
+        environment: config.environment, status: 'ready', contactHash: input.terms.checkoutContactHash, customerId })
+        .select('customerId').session(session) : null;
+      const ownedId = existing ? existing.customerId : (checkoutPrefill ? guestLink?.customerId : link?.customerId) || null;
       if (customerId && customerId !== ownedId) throw fail('This checkout payment profile does not belong to this account.', 'SAFEPAY_CUSTOMER_MISMATCH');
       customerId = ownedId;
       if (checkoutCard && (!input.user || !customerId)) throw fail('Complete your card billing profile before checkout.', 'SAFEPAY_CUSTOMER_REQUIRED', 400);

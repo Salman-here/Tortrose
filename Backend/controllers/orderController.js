@@ -75,7 +75,8 @@ const {
     isAuthoritativeStripeResourceMissingError,
 } = require('../services/stripeCheckoutErrorService');
 const { checkoutRequestFingerprint } = require('../services/checkoutIdempotencyService');
-const { canonicalizeShippingPhone } = require('../services/orderBuyerContactService');
+const { canonicalizeShippingName, canonicalizeShippingPhone } = require('../services/orderBuyerContactService');
+const { ensureCheckoutContact, POLICY: CHECKOUT_CONTACT_POLICY } = require('../services/safepayCheckoutContactService');
 const { removeFulfilledOrderItemsFromCart } = require('../services/cartFulfillmentService');
 const {
     parsePositiveSafeInteger,
@@ -1247,6 +1248,7 @@ exports.placeOrder = async (req, res) => {
         // Freeze one authoritative international destination at checkout. A
         // domestic number is resolved only from the selected shipping country;
         // there is deliberately no Pakistan (or any other) default guess.
+        const shippingNameSnapshot = quoteOnly ? '' : canonicalizeShippingName(order.shippingInfo.fullName);
         const shippingPhoneSnapshot = quoteOnly
             ? { e164:'', countryCode:order.shippingInfo.countryCode || '' }
             : canonicalizeShippingPhone(order.shippingInfo);
@@ -1635,7 +1637,7 @@ exports.placeOrder = async (req, res) => {
             orderItems: normalizedOrderItems,
 
             shippingInfo: {
-                fullName: order.shippingInfo.fullName,
+                fullName: shippingNameSnapshot,
                 email: order.shippingInfo.email,
                 phone: shippingPhoneSnapshot.e164,
                 phoneE164: shippingPhoneSnapshot.e164,
@@ -1745,6 +1747,10 @@ exports.placeOrder = async (req, res) => {
         // in Rozare remains a separate, explicitly consented Saved Cards flow.
         // Keep the legacy request value "card" so pending retry fingerprints
         // stay stable across the web/mobile release.
+        // A guest contact prefills the standard provider form; it never grants
+        // Saved Cards consent or enables Rozare's custom card-entry screen.
+        const checkoutContact = newOrder.paymentMethod === 'safepay' && !order.savedCardId && !noPaymentRequired
+            ? await ensureCheckoutContact(userId, newOrder.shippingInfo, { config: safepayConfig }) : null;
         let paidOrder = null;
         let noChargeOrder = null;
         try {
@@ -1774,7 +1780,10 @@ exports.placeOrder = async (req, res) => {
                         requestKey: checkoutIdempotencyKey, reference: `order:${newOrder._id}`, order: newOrder._id,
                         amountMinor: getExpectedStripeTotalMinor(newOrder), currency: newOrder.currency,
                         cardId: order.savedCardId || null,
-                        terms: { settlementPolicy: 'revalidate-on-payment-v1' },
+                        customerId: checkoutContact?.customerId || null,
+                        terms: { settlementPolicy: 'revalidate-on-payment-v1', ...(checkoutContact ? {
+                            checkoutContactPolicy: CHECKOUT_CONTACT_POLICY, checkoutContactHash: checkoutContact.contactHash,
+                        } : {}) },
                     }, { session });
                     await Order.updateOne({ _id: newOrder._id }, { $set: { safepayPaymentId: payment._id } }, { session });
                     newOrder.safepayPaymentId = payment._id;
@@ -2141,8 +2150,8 @@ exports.placeOrder = async (req, res) => {
         return res.status(error.statusCode || 500).json({
             msg: error.statusCode ? error.message : "Server error while creating checkout session. Try again!",
             ...(error.code ? { code: error.code } : {}),
-            ...(error.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED' && Array.isArray(error.fields)
-                ? { fields: error.fields.filter(field => ['fullName', 'phone', 'country'].includes(field)) } : {}),
+            ...(['SAFEPAY_BILLING_PROFILE_REQUIRED', 'SHIPPING_NAME_INVALID', 'SAFEPAY_CHECKOUT_CONTACT_REQUIRED'].includes(error.code) && Array.isArray(error.fields)
+                ? { fields: error.fields.filter(field => ['fullName', 'email', 'phone', 'country'].includes(field)) } : {}),
             ...(error?.needsSelection ? {
                 needsSelection: true,
                 productId: error.productId,

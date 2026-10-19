@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+  canonicalizeShippingName,
   canonicalizeShippingPhone,
   normalizeExplicitE164,
   orderBuyerPhoneDigits,
@@ -8,6 +9,23 @@ const {
   tryOrderBuyerPhoneE164,
 } = require('../../services/orderBuyerContactService');
 const { normalizePhone: normalizeQueuePhone } = require('../../services/whatsapp/messageBuilder');
+
+describe('shipping names', () => {
+  test.each(['', 'SingleName', '  SingleName  ', 'John ---', 'John 123', null, undefined])('rejects incomplete name %s with actionable fields', name => {
+    expect(() => canonicalizeShippingName(name)).toThrow('Enter your first name and last name.');
+    try { canonicalizeShippingName(name); } catch (error) {
+      expect(error).toMatchObject({ code: 'SHIPPING_NAME_INVALID', statusCode: 400, fields: ['fullName'] });
+    }
+  });
+  test.each(['John Smith', 'محمد علی', '李 小龍', "Anne-Marie O'Neill", 'Élodie van der Meer'])('accepts complete names %s', name => {
+    expect(canonicalizeShippingName(name)).toBe(name);
+  });
+  test('normalizes whitespace and enforces the same 160-character limit as both clients', () => {
+    expect(canonicalizeShippingName('  Élodie \n van   der Meer  ')).toBe('Élodie van der Meer');
+    expect(canonicalizeShippingName('A ' + 'b'.repeat(158))).toHaveLength(160);
+    expect(() => canonicalizeShippingName('A ' + 'b'.repeat(159))).toThrow('160');
+  });
+});
 
 describe('order buyer international phone snapshots', () => {
   test.each([

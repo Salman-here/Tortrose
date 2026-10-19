@@ -72,7 +72,7 @@ import { createCheckoutQuoteInput } from '../utils/checkoutQuote';
 import { getOriginalPaymentRefundCopy, getSafepayCheckoutLabel } from '../utils/paymentPresentation';
 import CheckoutPolicyNotice from '../components/common/CheckoutPolicyNotice';
 import { getOrderItemOptionPairs } from '../utils/orderPresentation';
-import { getSafepayBillingFieldErrors } from '../utils/safepayBillingValidation';
+import { getCheckoutNameError, getSafepayBillingFieldErrors } from '../utils/safepayBillingValidation';
 import CheckoutProgress from '../components/common/CheckoutProgress';
 import { createCheckoutReviewIdentity, getReviewedCheckoutStep } from '../utils/checkoutProgress';
 import { getCartPresentationItemCount } from '../utils/cartPresentation';
@@ -519,7 +519,8 @@ export default function CheckoutScreen({ navigation }) {
     for (let field of required) {
       if (!formData[field]?.trim()) newErrors[field] = `${field.replace(/([A-Z])/g, ' $1').trim()} is required`;
     }
-    if (!formData.fullName?.trim()) newErrors.fullName = 'Enter your first name and last name.';
+    const nameError = getCheckoutNameError(formData.fullName);
+    if (nameError) newErrors.fullName = nameError;
     if (!formData.countryCode) newErrors.country = 'Please select your country from the list';
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (formData.email && !emailRegex.test(formData.email)) newErrors.email = 'Please enter a valid email address';

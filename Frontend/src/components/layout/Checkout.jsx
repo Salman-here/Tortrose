@@ -66,7 +66,7 @@ import { checkoutDraftStorageKey, createCheckoutCartIdentity, markGuestCheckoutH
 import useCheckoutQuote from '../../hooks/useCheckoutQuote';
 import { createCheckoutQuoteInput } from '../../utils/checkoutQuote';
 import { getSafepayCheckoutLabel } from '../../utils/paymentPresentation';
-import { getSafepayBillingFieldErrors } from '../../utils/safepayBillingValidation';
+import { getCheckoutNameError, getSafepayBillingFieldErrors } from '../../utils/safepayBillingValidation';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'rozare_checkout_attempt_v1';
 const STRIPE_RETURN_STORAGE_KEY = 'rozare_stripe_return_v1';
@@ -941,6 +941,8 @@ function OwnedCheckout({ owner }) {
   // Final form submit
   const onPlaceOrder = async (data) => {
     if (isProcessing) return;
+    const nameError = getCheckoutNameError(data.fullName);
+    if (nameError) { showShippingFieldErrors({ fullName: nameError }); return; }
     if (!isCartReady) {
       toast.error(cartHydrationStatus === 'error'
         ? 'Your cart could not be verified. Retry synchronization before placing the order.'
@@ -1650,7 +1652,7 @@ function OwnedCheckout({ owner }) {
                             <InputField
                               icon={<User className="w-5 h-5  text-gray-400" />}
                               placeholder="Full Name"
-                              {...register("fullName", { required: "Enter your first name and last name." })}
+                              {...register("fullName", { required: "Enter your first name and last name.", validate: value => getCheckoutNameError(value) || true })}
                               error={errors.fullName}
                             />
                             <InputField

@@ -12,6 +12,8 @@ const mockRemoveFulfilledOrderItemsFromCart = jest.fn().mockResolvedValue({ remo
 const mockGetExchangeRateSnapshot = jest.fn();
 const mockEnsureSafepayCustomer = jest.fn();
 jest.mock('../../services/safepayCustomerService', () => ({ ensureCustomer: mockEnsureSafepayCustomer }));
+const mockEnsureCheckoutContact = jest.fn();
+jest.mock('../../services/safepayCheckoutContactService', () => ({ ...jest.requireActual('../../services/safepayCheckoutContactService'), ensureCheckoutContact: mockEnsureCheckoutContact }));
 
 jest.mock('../../config/stripe', () => ({
   stripe: {
@@ -96,6 +98,7 @@ const TaxConfig = require('../../models/TaxConfig');
 const User = require('../../models/User');
 const WalletTransaction = require('../../models/WalletTransaction');
 const SafepayPayment = require('../../models/SafepayPayment');
+const CheckoutContact = require('../../models/SafepayCheckoutContact');
 const { placeOrder, quoteCheckout } = require('../../controllers/orderController');
 
 let replicaSet;
@@ -232,6 +235,7 @@ beforeEach(async () => {
     User.deleteMany({}),
     WalletTransaction.deleteMany({}),
     SafepayPayment.deleteMany({}),
+    CheckoutContact.deleteMany({}),
   ]);
 });
 
@@ -250,7 +254,10 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     const fixture = await makeCheckout('safepay');
     Object.assign(fixture.order, { safepayCheckout: 'card', appliedCoupons: [],
       orderSummary: { subtotal: 100, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 100 } });
-    fixture.order.shippingInfo.fullName = 'SingleName';
+    fixture.order.shippingInfo.fullName = '  Checkout   Buyer  ';
+    fixture.order.shippingInfo.email = 'shipping-not-account@example.com';
+    mockEnsureCheckoutContact.mockImplementation(async user => CheckoutContact.create({ user, environment: 'sandbox',
+      customerId: 'cus_controller-prefill', contactHash: 'a'.repeat(64), status: 'ready' }));
     mockEnsureSafepayCustomer.mockRejectedValue(new Error('Standard checkout must not create a billing profile.'));
     const payments = require('../../services/safepayPaymentService');
     const prepare = jest.spyOn(payments, 'prepareCheckout').mockImplementation(async paymentId => ({
@@ -271,7 +278,12 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     expect(await Order.countDocuments()).toBe(1);
     expect(await SafepayPayment.countDocuments()).toBe(1);
     const payment = await SafepayPayment.findOne().lean();
-    expect(payment.customerId).toBeNull();
+    expect(payment.customerId).toBe('cus_controller-prefill');
+    expect(payment.terms).toMatchObject({ checkoutContactPolicy: 'hosted-checkout-contact-v1', checkoutContactHash: 'a'.repeat(64) });
+    expect(mockEnsureCheckoutContact).toHaveBeenCalledTimes(1);
+    expect(mockEnsureCheckoutContact).toHaveBeenCalledWith(fixture.buyer._id.toString(), expect.objectContaining({
+      fullName: 'Checkout Buyer', email: 'shipping-not-account@example.com', phone: '+923001234567', countryCode: 'PK',
+    }), expect.any(Object));
     expect(payment.terms.checkoutCardPolicy).toBeUndefined();
     expect(payment.cardSetup.selectionPolicy).toBe('');
     expect(payment.capturedMinor).toBe(0);
@@ -280,6 +292,21 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     expect((await Product.findById(fixture.product._id)).stock).toBe(5);
     expect(mockCheckoutSessionCreate).not.toHaveBeenCalled();
     expect(mockPaymentIntentCreate).not.toHaveBeenCalled();
+  });
+  test.each(['cash_on_delivery', 'wallet', 'safepay'])('new %s orders reject a first name alone before any financial mutation', async paymentMethod => {
+    const fixture = await makeCheckout(paymentMethod);
+    fixture.order.shippingInfo.fullName = 'Buyer';
+    const res = response();
+    await placeOrder({ body: { order: fixture.order, clientSurface: 'web',
+      ...(paymentMethod === 'safepay' ? { paymentFlow: 'safepay_hosted' } : {}) }, headers: {},
+    user: { id: fixture.buyer._id.toString(), role: 'user' } }, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'SHIPPING_NAME_INVALID',
+      msg: 'Enter your first name and last name.', fields: ['fullName'] }));
+    expect(await Order.countDocuments()).toBe(0);
+    expect(await SafepayPayment.countDocuments()).toBe(0);
+    expect(await WalletTransaction.countDocuments()).toBe(0);
+    expect(mockEnsureCheckoutContact).not.toHaveBeenCalled();
   });
   test('read-only quote shares checkout pricing without reserving inventory, coupons, money or an order id', async () => {
     const fixture = await makeCheckout('cash_on_delivery');

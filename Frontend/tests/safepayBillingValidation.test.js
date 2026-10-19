@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { getSafepayCheckoutNameError, getSafepayBillingFieldErrors } from '../src/utils/safepayBillingValidation.js';
+import { getCheckoutNameError, getSafepayCheckoutNameError, getSafepayBillingFieldErrors } from '../src/utils/safepayBillingValidation.js';
 
 test('web and mobile share the exact billing-validation contract', () => {
   const web = readFileSync(new URL('../src/utils/safepayBillingValidation.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -30,4 +30,21 @@ test('web uses standard checkout without requiring a merchant billing profile an
   assert.match(source, /onAnimationComplete={[\s\S]*?setFocus\(field\)/);
   assert.match(source, /handleSubmit\(onPlaceOrder, invalid =>/);
   assert.match(source, /shouldFocus: true/);
+  assert.match(source, /validate: value => getCheckoutNameError\(value\) \|\| true/);
+  assert.ok(source.indexOf('const nameError = getCheckoutNameError(data.fullName)') < source.indexOf('api/order/place'));
+});
+
+test('all new shipping submissions require first and last names, and map server name/contact corrections', () => {
+  for (const value of ['', 'John', '  John  ', 'John 123', 'John ---', null, undefined]) {
+    assert.equal(getCheckoutNameError(value), 'Enter your first name and last name.');
+  }
+  for (const value of ['John Smith', 'محمد علی', '李 小龍', '  Élodie   van der Meer  ', "Anne-Marie O'Neill"]) {
+    assert.equal(getCheckoutNameError(value), null);
+  }
+  for (const code of ['SHIPPING_NAME_INVALID', 'SAFEPAY_CHECKOUT_CONTACT_REQUIRED']) {
+    assert.deepEqual(getSafepayBillingFieldErrors({ response: { data: { code, fields: ['fullName', '__proto__', 'card_number'] } } }),
+      { fullName: 'Enter your first name and last name.' });
+  }
+  assert.deepEqual(getSafepayBillingFieldErrors({ response: { data: { code: 'SAFEPAY_CHECKOUT_CONTACT_REQUIRED',
+    fields: ['email'], msg: 'Enter a valid email address.' } } }), { email: 'Enter a valid email address.' });
 });

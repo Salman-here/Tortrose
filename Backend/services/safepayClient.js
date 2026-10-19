@@ -179,6 +179,16 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       requireId(customerId, 'cus');
       return requireCustomer(await request('GET', `/user/customers/v1/${customerId}`), config, customerId);
     },
+    async createCheckoutGuest(contact) {
+      const { first_name, last_name, email, phone_number, country } = contact;
+      const data = await request('POST', '/user/customers/v1/', { first_name, last_name, email, phone_number, country, is_guest: true });
+      try { return requireCheckoutGuest(data, config); }
+      catch (error) { error.outcomeUnknown = true; throw error; }
+    },
+    async getCheckoutGuest(customerId) {
+      requireId(customerId, 'cus');
+      return requireCheckoutGuest(await request('GET', `/user/customers/v1/${customerId}`), config, customerId);
+    },
     async listCards(customerId) {
       requireId(customerId, 'cus');
       const cards = [];
@@ -306,6 +316,13 @@ function requireCustomer(data, config, expectedId) {
   requireId(customer?.token, 'cus');
   if ((expectedId && customer.token !== expectedId) || customer.merchant_api_key !== config.publicKey
       || customer.is_guest !== false || customer.is_deleted === true) throw providerError('Safepay customer ownership is invalid.', 'SAFEPAY_CUSTOMER_MISMATCH', 409);
+  return customer;
+}
+function requireCheckoutGuest(data, config, expectedId) {
+  const customer = data?.customer || data;
+  requireId(customer?.token, 'cus');
+  if ((expectedId && customer.token !== expectedId) || customer.merchant_api_key !== config.publicKey
+    || customer.is_guest !== true || customer.is_deleted === true) throw providerError('Safepay checkout contact ownership is invalid.', 'SAFEPAY_CHECKOUT_CONTACT_MISMATCH', 409);
   return customer;
 }
 function requireOwnedCard(data, customerId, config, expectedId) {

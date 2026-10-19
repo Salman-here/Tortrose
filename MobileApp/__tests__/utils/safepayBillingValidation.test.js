@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { getSafepayCheckoutNameError, getSafepayBillingFieldErrors, SAFEPAY_BILLING_NAME_MESSAGE } from '../../src/utils/safepayBillingValidation';
+import { getCheckoutNameError, getSafepayCheckoutNameError, getSafepayBillingFieldErrors, SAFEPAY_BILLING_NAME_MESSAGE } from '../../src/utils/safepayBillingValidation';
 
 const firstCheckout = { paymentMethod: 'card', billingProfileReady: false, selectedCardId: '' };
 
@@ -38,20 +38,25 @@ test('late server billing validation maps only safe correction fields', () => {
   }
 });
 
-test('shipping errors return to step 2 with simple name wording; standard checkout imposes no merchant-profile name rule', () => {
+test.each(['', 'Salman', ' Salman ', 'Salman ---', 'Salman 123', null, undefined])('shipping requires both names before proceeding: %s', value => {
+  expect(getCheckoutNameError(value)).toBe(SAFEPAY_BILLING_NAME_MESSAGE);
+});
+
+test('shipping errors block Next and submission with simple wording, independent of the selected payment method', () => {
   const source = readFileSync(require.resolve('../../src/screens/CheckoutScreen.js'), 'utf8');
   const body = source.split('const validateForm = () => {')[1].split('\n  const handleNextStep')[0].replace(/};\s*$/, '');
-  const run = new Function('formData', 'isValidPhoneNumber', 'setErrors', 'Feedback', 'fullNameInputRef', 'setCurrentStep', body);
+  const run = new Function('formData', 'isValidPhoneNumber', 'setErrors', 'Feedback', 'fullNameInputRef', 'setCurrentStep', 'getCheckoutNameError', body);
   const focus = jest.fn(), setErrors = jest.fn(), show = jest.fn(), setStep = jest.fn();
   const form = { fullName: 'Salman', email: 'buyer@example.com', phone: '+923001234567', address: '1 Test Street',
     country: 'Pakistan', countryCode: 'PK', state: 'Punjab', city: 'Lahore', postalCode: '54000' };
-  const validate = details => run(details, () => true, setErrors, { show }, { current: { focus } }, setStep);
+  const validate = details => run(details, () => true, setErrors, { show }, { current: { focus } }, setStep, getCheckoutNameError);
   expect(validate({ ...form, fullName: '' })).toBe(false);
   expect(focus).toHaveBeenCalledTimes(1);
   expect(setStep).toHaveBeenLastCalledWith(1);
   expect(setErrors).toHaveBeenLastCalledWith({ fullName: SAFEPAY_BILLING_NAME_MESSAGE });
   expect(validate({ ...form, fullName: 'Salman Iqbal' })).toBe(true);
-  expect(validate(form)).toBe(true);
+  expect(validate(form)).toBe(false);
+  expect(focus).toHaveBeenCalledTimes(2);
   const submit = source.split('const handlePlaceOrder = async')[1];
   expect(submit.indexOf('if (!validateForm()) {')).toBeGreaterThan(0);
   expect(submit.indexOf('if (!validateForm()) {')).toBeLessThan(submit.indexOf("api.post('/api/order/place'"));

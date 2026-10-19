@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Payment = require('../../models/SafepayPayment');
 const Customer = require('../../models/SafepayCustomer');
+const Contact = require('../../models/SafepayCheckoutContact');
+const { POLICY: CHECKOUT_CONTACT_POLICY } = require('../../services/safepayCheckoutContactService');
 const { createSafepayClient } = require('../../services/safepayClient');
 const { createSafepayPaymentService, fingerprint } = require('../../services/safepayPaymentService');
 let replica;
@@ -25,6 +27,7 @@ afterAll(async () => { await mongoose.disconnect(); await replica?.stop(); });
 beforeEach(async () => {
   await Payment.deleteMany({});
   await Customer.deleteMany({});
+  await Contact.deleteMany({});
   await mongoose.connection.collection('safepay_test_effects').deleteMany({});
   clock = new Date('2026-09-25T10:00:00Z');
   providerState = 'TRACKER_STARTED';
@@ -46,6 +49,51 @@ test('same attempt is reused and any amount or currency change is rejected', asy
   for (const patch of [{ amountMinor: 12346 }, { currency: 'USD' }, { reference: 'different-reference' }]) {
     await expect(service.ensurePayment({ ...input(), ...patch })).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
   }
+  expect(await Payment.countDocuments()).toBe(1);
+});
+
+test('standard checkout freezes an owned guest contact, uses provider prefill and does not become a card setup', async () => {
+  const contact = await Contact.create({ user: buyer, environment: 'sandbox', status: 'ready',
+    customerId: 'cus_prefill-fixture', contactHash: 'a'.repeat(64) });
+  const value = { ...input(), purpose: 'order', customerId: contact.customerId,
+    terms: { checkoutContactPolicy: CHECKOUT_CONTACT_POLICY, checkoutContactHash: contact.contactHash } };
+  const payment = await service.ensurePayment(value);
+  expect(String((await service.ensurePayment(value))._id)).toBe(String(payment._id));
+  expect(payment.customerId).toBe(contact.customerId);
+  expect(payment.cardSetup.selectionPolicy).toBe('');
+  expect(payment.providerEntryMode).toBe('');
+  expect(await Customer.countDocuments()).toBe(0);
+  const update = jest.spyOn(require('../../models/Order'), 'updateOne').mockResolvedValue({ matchedCount: 1 });
+  try {
+    const checkout = await service.prepareCheckout(payment._id);
+    expect(checkout.checkoutPresentation).toBe('embedded');
+    const url = new URL(checkout.checkoutUrl);
+    expect(url.pathname).toBe('/embedded/');
+    expect(url.searchParams.get('user_id')).toBe(contact.customerId);
+    expect(url.searchParams.has('is_implicit')).toBe(false);
+    expect(client.createTracker.mock.calls[0][0].customerId).toBe(contact.customerId);
+    expect((await service.prepareCheckout(payment._id)).paymentId).toBe(checkout.paymentId);
+    expect(client.createTracker).toHaveBeenCalledTimes(1);
+  } finally { update.mockRestore(); }
+});
+
+test.each([
+  { user: new mongoose.Types.ObjectId() }, { environment: 'production' }, { status: 'creating' }, { contactHash: 'b'.repeat(64) },
+])('cannot bind a contact from another account, environment, state or shipping tuple: %j', async patch => {
+  await Contact.create({ user: buyer, environment: 'sandbox', status: 'ready', customerId: 'cus_prefill-fixture', contactHash: 'a'.repeat(64), ...patch });
+  await expect(service.ensurePayment({ ...input(), purpose: 'order', customerId: 'cus_prefill-fixture',
+    terms: { checkoutContactPolicy: CHECKOUT_CONTACT_POLICY, checkoutContactHash: 'a'.repeat(64) } })).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_MISMATCH' });
+  expect(await Payment.countDocuments()).toBe(0);
+});
+
+test('new contact prefill cannot retrofit a legacy null-bound attempt or be used as a saved card', async () => {
+  const original = await service.ensurePayment({ ...input(), purpose: 'order' });
+  await Contact.create({ user: buyer, environment: 'sandbox', status: 'ready', customerId: 'cus_prefill-fixture', contactHash: 'a'.repeat(64) });
+  const proposed = { ...input(), purpose: 'order', customerId: 'cus_prefill-fixture',
+    terms: { checkoutContactPolicy: CHECKOUT_CONTACT_POLICY, checkoutContactHash: 'a'.repeat(64) } };
+  await expect(service.ensurePayment(proposed)).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_MISMATCH' });
+  await expect(service.ensurePayment({ ...proposed, cardId: 'pm_owned-fixture' })).rejects.toMatchObject({ code: 'SAFEPAY_CARD_SELECTION_INVALID' });
+  expect((await Payment.findById(original._id)).customerId).toBeNull();
   expect(await Payment.countDocuments()).toBe(1);
 });
 

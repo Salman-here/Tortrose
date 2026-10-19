@@ -5,6 +5,31 @@ const env = { SAFEPAY_ENV: 'sandbox', SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_sandbox-f
 const config = readSafepayConfig(env);
 const tracker = { token: 'track_checkout-fixture', environment: 'sandbox', client: config.publicKey, mode: 'payment', metadata: { data: { order_id: 'order:fixture123' } }, state: 'TRACKER_STARTED', purchase_totals: { quote_amount: { amount: 10000, currency: 'PKR' } } };
 
+test('standard-checkout prefill forces a guest contact without changing saved-card customer creation', async () => {
+  const contact = { first_name: 'Checkout', last_name: 'Buyer', email: 'shipping@example.com', phone_number: '+923001234567', country: 'PK' };
+  const guest = { ...contact, token: 'cus_guest-fixture', merchant_api_key: config.publicKey, is_guest: true, is_deleted: false };
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { customer: guest } }) }));
+  const client = createSafepayClient({ config, fetchImpl });
+  expect(await client.createCheckoutGuest({ ...contact, is_guest: false, card_number: 'never-forward' })).toEqual(guest);
+  expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ ...contact, is_guest: true });
+  expect(await client.getCheckoutGuest(guest.token)).toEqual(guest);
+  expect(fetchImpl.mock.calls[1][1].method).toBe('GET');
+  await expect(client.getCustomer(guest.token)).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_MISMATCH' });
+  const expected = { ...tracker, customer: guest.token };
+  fetchImpl.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: { tracker: expected } }) });
+  await client.createTracker({ amountMinor: 10000, currency: 'PKR', reference: 'order:fixture123', purpose: 'order', customerId: guest.token });
+  expect(JSON.parse(fetchImpl.mock.calls.at(-1)[1].body)).toMatchObject({ mode: 'payment', user: guest.token });
+  expect(JSON.parse(fetchImpl.mock.calls.at(-1)[1].body).entry_mode).toBeUndefined();
+});
+
+test.each([
+  { is_guest: false }, { is_deleted: true }, { merchant_api_key: 'sec_other-merchant' }, { token: 'cus_other-fixture' },
+])('refuses an unverified checkout contact: %j', async patch => {
+  const customer = { token: 'cus_guest-fixture', merchant_api_key: config.publicKey, is_guest: true, is_deleted: false, ...patch };
+  const client = createSafepayClient({ config, fetchImpl: async () => ({ ok: true, json: async () => ({ data: customer }) }) });
+  await expect(client.getCheckoutGuest('cus_guest-fixture')).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_CONTACT_MISMATCH' });
+});
+
 test('environment selection cannot fall back to production or Stripe credentials', () => {
   expect(config.apiHost).toBe('https://sandbox.api.getsafepay.com');
   expect(() => readSafepayConfig({ ...env, SAFEPAY_ENV: 'production' })).toThrow();
