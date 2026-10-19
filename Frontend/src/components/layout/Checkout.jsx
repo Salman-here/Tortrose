@@ -1125,6 +1125,10 @@ function OwnedCheckout({ owner }) {
           : data.paymentMethod === "safepay"
             ? "safepay"
             : "cash_on_delivery",
+      ...(data.paymentMethod === 'safepay' && !data.billingSameAsShipping ? { billingAddress: {
+        address: data.billingAddress, city: data.billingCity, state: data.billingState || '',
+        country: data.billingCountry, countryCode: data.billingCountryCode, postalCode: data.billingPostalCode || '',
+      } } : {}),
       ...(data.paymentMethod === 'safepay' ? savedCards.selectedCardId && savedCards.selectedCardId !== 'raast' ? { savedCardId: savedCards.selectedCardId }
           : { safepayCheckout: 'card' } : {}),
 

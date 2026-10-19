@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import { createAIChatHandoff } from '../utils/aiChatHandoff';
 import Feedback from '../utils/feedback';
 import api from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -299,7 +300,7 @@ export default function ProductDetailScreen({ route, navigation }) {
     navigation.navigate('AIChat', {
       role: 'user',
       productId: product._id,
-      prompt: `I'm viewing "${product.name}"${storeName} for ${price}.${optionsNote} Help me decide if it suits my needs, explain the important details, and suggest alternatives if useful.`,
+      handoff: createAIChatHandoff(`I'm viewing "${product.name}"${storeName} for ${price}.${optionsNote} Help me decide if it suits my needs, explain the important details, and suggest alternatives if useful. Check current listing details. Product reference: ${product._id}`, currentUser, 'product-detail'),
     });
   };
 

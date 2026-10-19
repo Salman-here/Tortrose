@@ -30,6 +30,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
+import { buildCartAIChatPrompt, createAIChatHandoff } from '../utils/aiChatHandoff';
 import {
   addCurrencyAmounts,
   checkoutHasUnsupportedCurrency,
@@ -167,13 +168,14 @@ export default function CartScreen({ navigation }) {
   }, [navigation]);
 
   const handleAIShopping = useCallback(() => {
+    const params = { role: 'user', handoff: createAIChatHandoff(buildCartAIChatPrompt(cartItems?.cart), currentUser, 'cart') };
     const parentNavigation = navigation.getParent?.();
     if (parentNavigation) {
-      parentNavigation.navigate('AIChat', { role: 'user' });
+      parentNavigation.navigate('AIChat', params);
       return;
     }
-    navigation.navigate('AIChat', { role: 'user' });
-  }, [navigation]);
+    navigation.navigate('AIChat', params);
+  }, [navigation, cartItems?.cart, currentUser]);
 
   const handleCheckout = useCallback(() => {
     if (!isCartReady) {

@@ -99,6 +99,7 @@ describe('CurrencyContext strict presentation contract', () => {
     mockAuthLoading = false;
     jest.clearAllMocks();
     await AsyncStorage.clear();
+    await AsyncStorage.setItem('guestCurrencyChoice:v1', JSON.stringify({ source: 'manual', currency: 'USD' }));
   });
 
   afterEach(() => {

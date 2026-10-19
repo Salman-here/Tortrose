@@ -77,6 +77,7 @@ const {
 const { checkoutRequestFingerprint } = require('../services/checkoutIdempotencyService');
 const { canonicalizeShippingName, canonicalizeShippingPhone } = require('../services/orderBuyerContactService');
 const { ensureCheckoutContact, POLICY: CHECKOUT_CONTACT_POLICY } = require('../services/safepayCheckoutContactService');
+const { ensureCheckoutAddress, POLICY: CHECKOUT_ADDRESS_POLICY } = require('../services/safepayCheckoutAddressService');
 const { removeFulfilledOrderItemsFromCart } = require('../services/cartFulfillmentService');
 const {
     parsePositiveSafeInteger,
@@ -1751,6 +1752,8 @@ exports.placeOrder = async (req, res) => {
         // Saved Cards consent or enables Rozare's custom card-entry screen.
         const checkoutContact = newOrder.paymentMethod === 'safepay' && !order.savedCardId && !noPaymentRequired
             ? await ensureCheckoutContact(userId, newOrder.shippingInfo, { config: safepayConfig }) : null;
+        const checkoutAddress = checkoutContact ? await ensureCheckoutAddress(userId,
+            order.billingAddress !== undefined ? order.billingAddress : newOrder.shippingInfo, { config: safepayConfig }) : null;
         let paidOrder = null;
         let noChargeOrder = null;
         try {
@@ -1781,8 +1784,11 @@ exports.placeOrder = async (req, res) => {
                         amountMinor: getExpectedStripeTotalMinor(newOrder), currency: newOrder.currency,
                         cardId: order.savedCardId || null,
                         customerId: checkoutContact?.customerId || null,
+                        checkoutAddressId: checkoutAddress?.addressId || null,
                         terms: { settlementPolicy: 'revalidate-on-payment-v1', ...(checkoutContact ? {
                             checkoutContactPolicy: CHECKOUT_CONTACT_POLICY, checkoutContactHash: checkoutContact.contactHash,
+                        } : {}), ...(checkoutAddress ? {
+                            checkoutAddressPolicy: CHECKOUT_ADDRESS_POLICY, checkoutAddressHash: checkoutAddress.addressHash,
                         } : {}) },
                     }, { session });
                     await Order.updateOne({ _id: newOrder._id }, { $set: { safepayPaymentId: payment._id } }, { session });

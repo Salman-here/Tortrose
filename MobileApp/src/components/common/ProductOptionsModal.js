@@ -144,13 +144,14 @@ export function ProductOptionsModal({
   }, 0);
   const progress = groups.length > 0 ? Math.min(1, selectedCount / groups.length) : 0;
   const errorMessage = showValidation ? describeSelectionError(validation) : '';
-  const maxSheetHeight = Math.max(420, Math.min(viewportHeight * 0.9, 760));
+  const bottomSpace = Math.max(insets.bottom, spacing.md);
+  const maxSheetHeight = Math.max(180, Math.min(viewportHeight - insets.top - bottomSpace - 24, 680));
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       statusBarTranslucent
       onRequestClose={() => {
         if (!submitting) onClose?.();
@@ -165,11 +166,10 @@ export function ProductOptionsModal({
             if (!submitting) onClose?.();
           }}
           accessibilityRole="button"
-          accessibilityLabel="Close product options"
+          accessibilityLabel="Dismiss product options"
         />
-        <View style={[styles.sheetWrap, { maxHeight: maxSheetHeight, paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-          <GlassPanel variant="modal" style={styles.sheet}>
-            <View style={styles.handle} />
+        <View style={[styles.sheetWrap, { maxHeight: maxSheetHeight, marginTop: insets.top + 12, marginBottom: bottomSpace }]}>
+          <GlassPanel variant="modal" style={[styles.sheet, { maxHeight: maxSheetHeight }]}>
             <View style={styles.header}>
               <LinearGradient
                 colors={palette.gradients?.cta || OPTION_GRADIENT_FALLBACK}
@@ -295,7 +295,7 @@ export function ProductOptionsModal({
                   color={validation.ok ? palette.colors.success : palette.colors.textSecondary}
                 />
                 <Text style={[styles.footerMessage, errorMessage && styles.footerMessageError]} numberOfLines={2}>
-                  {errorMessage || (validation.ok ? 'Everything looks good — ready for your bag.' : 'Select one value in every section to continue.')}
+                  {errorMessage || (validation.ok ? 'Your selections are ready.' : 'Choose an option in each section.')}
                 </Text>
               </View>
               <TouchableOpacity
@@ -336,19 +336,22 @@ export function ProductOptionsModal({
 const buildStyles = (p) => StyleSheet.create({
   overlay: {
     flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(7, 12, 28, 0.62)',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(7, 12, 28, 0.40)',
   },
   sheetWrap: {
     width: '100%',
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.sm,
+    maxWidth: 560,
+    alignSelf: 'center',
+    paddingHorizontal: spacing.md,
+    flexShrink: 1,
   },
   sheet: {
     padding: 0,
     borderRadius: 28,
     borderColor: p.glass.borderStrong,
     overflow: 'hidden',
+    flexShrink: 1,
   },
   handle: {
     alignSelf: 'center',
@@ -445,6 +448,8 @@ const buildStyles = (p) => StyleSheet.create({
   },
   optionsScroll: {
     flexShrink: 1,
+    flexGrow: 0,
+    minHeight: 0,
   },
   optionsContent: {
     paddingHorizontal: spacing.lg,
@@ -556,6 +561,8 @@ const buildStyles = (p) => StyleSheet.create({
   footer: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
+    paddingBottom: spacing.lg,
+    flexShrink: 0,
     gap: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: p.glass.borderSubtle,
@@ -578,6 +585,8 @@ const buildStyles = (p) => StyleSheet.create({
   },
   confirmButton: {
     minHeight: 52,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
@@ -593,6 +602,8 @@ const buildStyles = (p) => StyleSheet.create({
     color: '#fff',
     fontSize: fontSize.md,
     fontWeight: fontWeight.bold,
+    flexShrink: 1,
+    textAlign: 'center',
   },
 });
 

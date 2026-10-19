@@ -117,3 +117,15 @@ export async function openSafepayCheckout({ apiClient, response, openSheet = pre
     attempts: 1, requestTimeoutMs: 2000 });
   return { ...verified, browserDismissed: returned?.type === 'cancel' || returned?.type === 'dismiss' };
 }
+
+export async function resumeSafepayCheckout({ apiClient, paymentId, ...options }) {
+  if (!ID.test(String(paymentId || ''))) throw failure('A valid payment reference is required.');
+  try {
+    const response = await apiClient.post(`/api/safepay/payments/${paymentId}/reopen`, { clientSurface: 'mobile' });
+    if (String(unwrap(response).paymentId) !== String(paymentId)) throw failure('The original payment could not be verified.');
+    return openSafepayCheckout({ apiClient, response, ...options });
+  } catch (error) {
+    if (error.response?.data?.code !== 'SAFEPAY_CHECKOUT_CLOSED') throw error;
+    return verifySafepayPayment({ apiClient, paymentId, attempts: 1, requestTimeoutMs: 2000 });
+  }
+}

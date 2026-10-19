@@ -1,8 +1,21 @@
 jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn() }));
-import { validateSafepayCheckout, normalizeSafepayStatus, openSafepayCheckout, verifySafepayPayment } from '../../src/utils/safepayCheckout';
+import { validateSafepayCheckout, normalizeSafepayStatus, openSafepayCheckout, verifySafepayPayment, resumeSafepayCheckout } from '../../src/utils/safepayCheckout';
 const paymentId = 'a'.repeat(24);
 const payment = { paymentId, paymentMethod: 'safepay', paymentFlow: 'safepay_hosted', environment: 'sandbox',
   checkoutUrl: 'https://sandbox.api.getsafepay.com/embedded/?tracker=track_fixture', status: 'pending', isPaid: false };
+
+test('continue payment reopens the original provider checkout without creating another order', async () => {
+  const apiClient = { post: jest.fn().mockResolvedValue({ data: payment }), get: jest.fn().mockResolvedValue({ data: payment }) };
+  const openSheet = jest.fn().mockResolvedValue({ type: 'dismiss' });
+  await expect(resumeSafepayCheckout({ apiClient, paymentId, openSheet })).resolves.toMatchObject({ paymentId, status: 'pending' });
+  expect(apiClient.post).toHaveBeenCalledTimes(1); expect(apiClient.post).toHaveBeenCalledWith(`/api/safepay/payments/${paymentId}/reopen`, { clientSurface: 'mobile' });
+  expect(openSheet).toHaveBeenCalledWith(expect.objectContaining({ paymentId }));
+});
+
+test('reopening a different payment never opens a provider form', async () => {
+  const apiClient = { post: jest.fn().mockResolvedValue({ data: { ...payment, paymentId: 'b'.repeat(24) } }) }, openSheet = jest.fn();
+  await expect(resumeSafepayCheckout({ apiClient, paymentId, openSheet })).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_INVALID' }); expect(openSheet).not.toHaveBeenCalled();
+});
 test('a verified zero-amount non-reusable card setup closes without reopening the completed provider form', async () => {
   const failed = { paymentId, paymentMethod: 'safepay', paymentFlow: 'safepay_hosted', environment: 'sandbox',
     purpose: 'card_setup', currency: 'PKR', amountMinor: 0, status: 'failed', isPaid: false, completed: false, cardSaved: false,

@@ -29,6 +29,7 @@ const schema = new mongoose.Schema({
     operationLeaseUntil: { type: Date, default: null },
   },
   customerId: { type: String, default: null, match: /^cus_[a-zA-Z0-9-]+$/, immutable: true },
+  checkoutAddressId: { type: String, default: null, match: /^address_[a-zA-Z0-9-]+$/, immutable: true },
   cardId: { type: String, default: null, match: /^pm_[a-zA-Z0-9-]+$/, select: false, immutable: true },
   cardSetup: {
     selectionPolicy: { type: String, enum: ['', 'new-card-default-v1'], default: '' },

@@ -18,7 +18,7 @@ import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
-import { openSafepayCheckout } from '../utils/safepayCheckout';
+import { openSafepayCheckout, resumeSafepayCheckout } from '../utils/safepayCheckout';
 import { Loader, InlineLoader } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -316,7 +316,8 @@ export default function CheckoutScreen({ navigation }) {
   const taxUnavailable = taxStatus !== 'ready';
   const checkoutBlocked = !isCartReady || taxUnavailable || checkoutRatesUnavailable || !checkoutQuote.ready;
   const hasPendingSafepayPayment = !!(paymentNotice?.safepay && paymentNotice?.paymentId);
-  const paymentButtonLabel = hasPendingSafepayPayment ? 'Check or resume payment' : paymentMethod === 'card'
+  const canResumeSafepayPayment = hasPendingSafepayPayment && !['refund_pending', 'manual_review', 'reversed', 'refunded', 'failed', 'cancelled'].includes(paymentNotice.status);
+  const paymentButtonLabel = hasPendingSafepayPayment ? canResumeSafepayPayment ? 'Continue payment' : 'View payment status' : paymentMethod === 'card'
     ? 'Pay with Safepay' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order';
   const paymentButtonDisabled = isProcessing || !hasPendingSafepayPayment
     && (summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error);
@@ -783,12 +784,30 @@ export default function CheckoutScreen({ navigation }) {
     if (currentStep !== 2) return;
     if (submittingRef.current || isProcessing) return;
     if (hasPendingSafepayPayment) {
-      navigation.navigate('SafepayReturn', {
-        paymentId: paymentNotice.paymentId, orderId: paymentNotice.orderId,
-        checkoutAttemptStorageKey: paymentNotice.checkoutAttemptStorageKey,
-        checkoutAttemptFingerprint: paymentNotice.checkoutAttemptFingerprint,
-        checkoutAttemptKey: paymentNotice.checkoutAttemptKey,
-      });
+      const pending = paymentNotice;
+      const returnParams = { paymentId: pending.paymentId, orderId: pending.orderId,
+        checkoutAttemptStorageKey: pending.checkoutAttemptStorageKey, checkoutAttemptFingerprint: pending.checkoutAttemptFingerprint,
+        checkoutAttemptKey: pending.checkoutAttemptKey };
+      if (!canResumeSafepayPayment) { navigation.navigate('SafepayReturn', returnParams); return; }
+      submittingRef.current = true; setIsProcessing(true);
+      try {
+        const verified = await resumeSafepayCheckout({ apiClient: api, paymentId: pending.paymentId });
+        if (verified.status === 'paid') {
+          await resetCheckoutAttempt({ storageKey: pending.checkoutAttemptStorageKey, fingerprint: pending.checkoutAttemptFingerprint, attemptKey: pending.checkoutAttemptKey });
+          await fetchCart(); navigation.replace('PaymentSuccess', returnParams);
+        } else if (['cancelled', 'failed', 'refunded'].includes(verified.status)) {
+          await resetCheckoutAttempt({ storageKey: pending.checkoutAttemptStorageKey, fingerprint: pending.checkoutAttemptFingerprint, attemptKey: pending.checkoutAttemptKey });
+          setPaymentNotice({ type: 'cancelled', title: 'Payment not completed', orderId: pending.orderId,
+            text: 'Safepay confirmed that this payment is closed. Your cart is unchanged.' });
+        } else {
+          setPaymentNotice({ ...pending, status: verified.status,
+            title: verified.status === 'manual_review' ? 'Payment needs review' : verified.status === 'refund_pending' ? 'Refund being verified' : 'Payment not confirmed',
+            text: ['manual_review', 'refund_pending', 'reversed'].includes(verified.status)
+              ? 'Open payment status for the latest details.' : 'Payment is not confirmed yet. Check its status or continue with Safepay.' });
+        }
+      } catch (error) {
+        Feedback.show({ type: 'error', text1: 'Could not reopen payment', text2: error.response?.data?.msg || 'Check the payment status and try again.' });
+      } finally { submittingRef.current = false; setIsProcessing(false); }
       return;
     }
     trackCheckoutStep('place_order_clicked', { paymentMethod, items: cartItems?.cart?.length, total: totalAmount });
@@ -956,11 +975,11 @@ export default function CheckoutScreen({ navigation }) {
           return;
         }
         setPaymentNotice({ type: 'pending', title: verified.status === 'refund_pending' ? 'Refund being verified' : verified.status === 'manual_review' ? 'Payment needs review' : 'Check your payment',
-          orderId, paymentId: payment.paymentId, safepay: true,
+          orderId, paymentId: payment.paymentId, safepay: true, status: verified.status,
           checkoutAttemptStorageKey, checkoutAttemptFingerprint: fingerprint, checkoutAttemptKey: checkoutAttempt.key,
           text: verified.status === 'refund_pending' ? `This order could no longer be fulfilled. ${getOriginalPaymentRefundCopy(verified, verified.status)} Use Check for its status.` : verified.status === 'manual_review'
             ? 'Please contact support with this order reference. Do not pay again while it is being reviewed.'
-            : 'Payment is not confirmed yet. Use Check or resume this same checkout; do not start another payment.' });
+            : 'Payment is not confirmed yet. Check its status or continue with Safepay.' });
         return;
       } else {
         // Check if info changed

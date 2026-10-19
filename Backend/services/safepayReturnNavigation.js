@@ -4,7 +4,7 @@ const PURPOSES = new Set(['order', 'wallet_top_up', 'subdomain', 'subscription',
 const SURFACES = new Set(['web', 'mobile']);
 const validAttempt = value => typeof value === 'string' && /^[a-f0-9]{24}$/i.test(value);
 
-function buildReturnUrl({ backendOrigin, attempt, purpose, surface, outcome }) {
+function buildReturnUrl({ backendOrigin, attempt, purpose, surface, outcome, browser = false }) {
   if (!validAttempt(attempt) || !PURPOSES.has(purpose) || !SURFACES.has(surface) || !['return', 'cancel'].includes(outcome)) {
     throw Object.assign(new Error('Invalid payment return route.'), { code: 'SAFEPAY_RETURN_URL_INVALID', statusCode: 503 });
   }
@@ -15,7 +15,7 @@ function buildReturnUrl({ backendOrigin, attempt, purpose, surface, outcome }) {
   // query suffix. Website callbacks use the corruption-proof path contract.
   const url = new URL(surface === 'mobile' ? '/api/safepay/return'
     : `/api/safepay/return/${surface}/${purpose}/${attempt}/${outcome}`, backendOrigin);
-  if (surface === 'mobile') url.search = new URLSearchParams({ attempt, purpose, surface, outcome }).toString();
+  if (surface === 'mobile') url.search = new URLSearchParams({ ...(browser ? { browser: '1' } : {}), attempt, purpose, surface, outcome }).toString();
   if (url.protocol !== 'https:') {
     throw Object.assign(new Error('The payment return service requires HTTPS.'), { code: 'SAFEPAY_RETURN_URL_INVALID', statusCode: 503 });
   }

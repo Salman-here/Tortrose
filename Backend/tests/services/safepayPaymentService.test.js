@@ -4,6 +4,8 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const Payment = require('../../models/SafepayPayment');
 const Customer = require('../../models/SafepayCustomer');
 const Contact = require('../../models/SafepayCheckoutContact');
+const Address = require('../../models/SafepayCheckoutAddress');
+const { POLICY: ADDRESS_POLICY } = require('../../services/safepayCheckoutAddressService');
 const { POLICY: CHECKOUT_CONTACT_POLICY } = require('../../services/safepayCheckoutContactService');
 const { createSafepayClient } = require('../../services/safepayClient');
 const { createSafepayPaymentService, fingerprint } = require('../../services/safepayPaymentService');
@@ -28,6 +30,7 @@ beforeEach(async () => {
   await Payment.deleteMany({});
   await Customer.deleteMany({});
   await Contact.deleteMany({});
+  await Address.deleteMany({});
   await mongoose.connection.collection('safepay_test_effects').deleteMany({});
   clock = new Date('2026-09-25T10:00:00Z');
   providerState = 'TRACKER_STARTED';
@@ -52,6 +55,29 @@ test('same attempt is reused and any amount or currency change is rejected', asy
   expect(await Payment.countDocuments()).toBe(1);
 });
 
+test('billing address prefill is frozen to an owned reference and reopening cannot create another payment', async () => {
+  await Address.create({ user: buyer, environment: 'sandbox', addressId: 'address_owned-fixture', addressHash: 'a'.repeat(64), status: 'ready' });
+  const data = { ...input(), purpose: 'order', checkoutAddressId: 'address_owned-fixture',
+    terms: { checkoutAddressPolicy: ADDRESS_POLICY, checkoutAddressHash: 'a'.repeat(64) } };
+  const payment = await service.ensurePayment(data);
+  expect(String((await service.ensurePayment(data))._id)).toBe(String(payment._id));
+  const update = jest.spyOn(require('../../models/Order'), 'updateOne').mockResolvedValue({ matchedCount: 1 });
+  try {
+    const first = await service.prepareCheckout(payment._id, { clientSurface: 'web' });
+    const again = await service.prepareCheckout(payment._id, { clientSurface: 'mobile' });
+    expect(new URL(first.checkoutUrl).searchParams.get('address')).toBe('address_owned-fixture');
+    expect(again.paymentId).toBe(first.paymentId); expect(client.createTracker).toHaveBeenCalledTimes(1);
+    expect(await Payment.countDocuments()).toBe(1); expect(payment.capturedMinor).toBe(0);
+  } finally { update.mockRestore(); }
+});
+test.each([{ user: new mongoose.Types.ObjectId() }, { environment: 'production' }, { addressHash: 'b'.repeat(64) }, { status: 'creating' }])(
+  'cannot bind a foreign or unverified address: %j', async patch => {
+    await Address.create({ user: buyer, environment: 'sandbox', addressId: 'address_owned-fixture', addressHash: 'a'.repeat(64), status: 'ready', ...patch });
+    await expect(service.ensurePayment({ ...input(), purpose: 'order', checkoutAddressId: 'address_owned-fixture',
+      terms: { checkoutAddressPolicy: ADDRESS_POLICY, checkoutAddressHash: 'a'.repeat(64) } })).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_ADDRESS_MISMATCH' });
+    expect(await Payment.countDocuments()).toBe(0);
+  });
+
 test('standard checkout freezes an owned guest contact, uses provider prefill and does not become a card setup', async () => {
   const contact = await Contact.create({ user: buyer, environment: 'sandbox', status: 'ready',
     customerId: 'cus_prefill-fixture', contactHash: 'a'.repeat(64) });
@@ -66,7 +92,7 @@ test('standard checkout freezes an owned guest contact, uses provider prefill an
   const update = jest.spyOn(require('../../models/Order'), 'updateOne').mockResolvedValue({ matchedCount: 1 });
   try {
     const checkout = await service.prepareCheckout(payment._id);
-    expect(checkout.checkoutPresentation).toBe('embedded');
+    expect(checkout.checkoutPresentation).toBe('browser');
     const url = new URL(checkout.checkoutUrl);
     expect(url.pathname).toBe('/embedded/');
     expect(url.searchParams.get('user_id')).toBe(contact.customerId);
@@ -275,7 +301,9 @@ test('web checkout uses the hosted source and fixed web bridge without creating 
   expect(mobileReturn.searchParams.get('purpose')).toBe('wallet_top_up');
   expect(mobileReturn.searchParams.get('surface')).toBe('mobile');
   expect(mobileReturn.searchParams.get('outcome')).toBe('return');
-  expect(new URL(mobile.checkoutUrl).searchParams.get('source')).toBe('mobile');
+  expect(new URL(mobile.checkoutUrl).searchParams.get('source')).toBe('hosted');
+  expect(mobile.checkoutPresentation).toBe('browser');
+  expect(mobileReturn.searchParams.get('browser')).toBe('1');
 });
 
 test('initial web tracker creation carries web provenance and reopening never creates another tracker', async () => {

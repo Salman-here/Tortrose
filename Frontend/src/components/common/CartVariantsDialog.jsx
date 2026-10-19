@@ -14,24 +14,26 @@ export default function CartVariantsDialog({ open, product, onClose }) {
   const seeded = useRef(null);
   useEffect(() => { if (!open) { seeded.current = null; return; } if (seeded.current === product?._id) return; seeded.current = product?._id; setView(lines.length ? 'manage' : 'add'); setEditing(null); setError(''); }, [open, product?._id, lines.length]);
   const blocked = busy || Boolean(qtyUpdateId) || isCartLoading;
-  const panel = useReturnDialogAccessibility({ open: open && view === 'manage', busy: blocked, onClose });
+  const displayView = seeded.current === product?._id ? view : lines.length ? 'manage' : 'add';
+  const panel = useReturnDialogAccessibility({ open: open && displayView === 'manage', busy: blocked, onClose });
   const submit = async choices => {
     if (working.current) return;
     working.current = true; setBusy(true); setError('');
     try {
-      if (view === 'edit') await handleEditCartVariant(editing, product, choices);
-      else if (findProductCartLine(product, cartItems?.cart, choices.selectedOptions, choices.selectedColor)) {
-        setError('That variant is already in your bag. Adjust its quantity below.'); setView('manage'); return;
+      if (displayView === 'edit') {
+        if (await handleEditCartVariant(editing, product, choices) === false) throw new Error('The variant was not updated. Please try again.');
+      } else if (findProductCartLine(product, cartItems?.cart, choices.selectedOptions, choices.selectedColor)) {
+        setError('This variant is already in your cart. Close options to adjust its quantity.'); return;
       } else if (!await handleAddToCart(product._id, choices.selectedColor, choices.selectedOptions, product, 'add')) throw new Error('The variant was not added. Please try again.');
-      setView('manage'); setEditing(null);
+      setEditing(null); onClose();
     } catch (failure) { setError(failure.message); }
     finally { working.current = false; setBusy(false); }
   };
   if (!open || !product) return null;
-  if (view !== 'manage') return <ProductOptionsModal open product={product} selectedOptions={editing?.selectedOptions || EMPTY} selectedColor={editing?.selectedColor || null}
-    title={view === 'edit' ? 'Edit variant' : lines.length ? 'Add another variant' : 'Choose options'} confirmLabel={view === 'edit' ? 'Save changes' : 'Add variant to cart'}
-    description={view === 'edit' ? 'Your quantity stays the same. Matching variants are combined into one line.' : 'Choose one combination. Repeat to add other colors or sizes.'}
-    error={error} submitting={busy} onConfirm={submit} onClose={() => { if (!working.current) { if (lines.length) setView('manage'); else onClose(); setError(''); } }} />;
+  if (displayView !== 'manage') return <ProductOptionsModal open product={product} selectedOptions={displayView === 'edit' ? editing?.selectedOptions || EMPTY : EMPTY} selectedColor={displayView === 'edit' ? editing?.selectedColor || null : null}
+    title={displayView === 'edit' ? 'Edit variant' : lines.length ? 'Add another variant' : 'Choose options'} confirmLabel={displayView === 'edit' ? 'Save changes' : 'Add variant to cart'}
+    description={displayView === 'edit' ? 'Your quantity stays the same. Matching variants are combined into one line.' : 'Select the options for this item.'}
+    error={error} submitting={busy} onConfirm={submit} onClose={() => { if (!working.current) { onClose(); setError(''); } }} />;
   return createPortal(<div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => !blocked && onClose()}>
     <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="cart-variants-title" tabIndex={-1} className="modal-surface glass-panel-strong rounded-3xl p-5 sm:p-6 w-full max-w-lg max-h-[90dvh] overflow-y-auto" onClick={event => event.stopPropagation()}>
       <div className="flex items-start justify-between gap-3"><div><h2 id="cart-variants-title" className="text-xl font-bold">Your variants</h2><p className="text-sm text-muted-foreground mt-1">{product.name}</p></div><button type="button" disabled={blocked} className="glass-button rounded-xl p-2" aria-label="Close cart variants" onClick={onClose}><X size={18}/></button></div>

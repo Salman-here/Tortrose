@@ -60,6 +60,7 @@ export const createCheckoutFingerprint = (
     coupons,
     currency: String(order?.currency || 'USD').trim().toUpperCase(),
     shippingInfo: canonicalShippingInfo(order?.shippingInfo),
+    ...(order?.billingAddress !== undefined ? { billingAddress: canonicalize(order.billingAddress) } : {}),
     buyerLocation: order?.buyerLocation || {},
     shippingMethod: {
       seller: String(order?.shippingMethod?.seller || ''),

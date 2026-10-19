@@ -124,6 +124,10 @@ exports.returnToApp = (req, res) => {
   }
   const query = new URLSearchParams({ paymentId: attempt, purpose, outcome });
   const appUrl = `rozare://safepay-return?${query}`;
+  if (req.query?.browser === '1') {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    return res.redirect(303, appUrl);
+  }
   res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
   res.status(200).type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Return to Rozare</title></head><body style="font-family:system-ui;padding:36px;max-width:480px;margin:auto"><h1>Continue in Rozare</h1><p>Your app will securely check the payment status.</p><a href="${appUrl.replace(/&/g, '&amp;')}" style="display:inline-block;padding:14px 20px;background:#4f46e5;color:white;border-radius:12px;text-decoration:none">Open Rozare</a><p>You can also close this page and return to the app.</p></body></html>`);

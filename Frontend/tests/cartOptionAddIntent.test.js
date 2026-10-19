@@ -10,7 +10,8 @@ test('inline detail options explicitly add, while product cards use the variant 
   for(const file of ['../src/components/common/CartVariantsDialog.jsx', '../../MobileApp/src/components/CartVariantsDialog.js']) {
     const source=readFileSync(new URL(file,import.meta.url),'utf8');
     assert.match(source, /handleAddToCart\([^\n]+['"]add['"]\)/);
-    assert.match(source, /view === 'edit'\) await handleEditCartVariant/);
+    assert.match(source, /displayView === 'edit'[\s\S]*?await handleEditCartVariant/);
+    assert.match(source, /setEditing\(null\); onClose\(\)/);
   }
 });
 test('a stale cached removal is verified against the server and cannot silently become an add',()=>{

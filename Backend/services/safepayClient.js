@@ -152,10 +152,11 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       if (!matches.size) return null;
       return this.getTracker([...matches][0], expected);
     },
-    buildPaymentCheckoutUrl({ tracker, authToken, reference, redirectUrl, cancelUrl, customerId, implicitCardSave = false, source = 'hosted' }) {
+    buildPaymentCheckoutUrl({ tracker, authToken, reference, redirectUrl, cancelUrl, customerId, checkoutAddressId, implicitCardSave = false, source = 'hosted' }) {
       requireId(tracker, 'track');
       if (customerId) requireId(customerId, 'cus');
       if (typeof implicitCardSave !== 'boolean' || implicitCardSave && !customerId) throw providerError('Card storage requires an owned customer and consent.', 'SAFEPAY_CARD_STORAGE_INVALID', 400);
+      if (checkoutAddressId) requireId(checkoutAddressId, 'address');
       for (const value of [redirectUrl, cancelUrl]) {
         const url = new URL(value);
         if (url.protocol !== 'https:' || url.username || url.password) throw providerError('Invalid payment return URL.', 'SAFEPAY_RETURN_URL_INVALID', 500);
@@ -167,6 +168,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
       url.search = new URLSearchParams({ environment: config.environment, tracker, tbt: authToken,
         source, order_id: reference, redirect_url: redirectUrl, cancel_url: cancelUrl,
         ...(customerId ? { user_id: customerId } : {}),
+        ...(checkoutAddressId ? { address: checkoutAddressId } : {}),
         ...(implicitCardSave ? { is_implicit: 'true' } : {}) }).toString();
       return url.toString();
     },
@@ -188,6 +190,16 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     async getCheckoutGuest(customerId) {
       requireId(customerId, 'cus');
       return requireCheckoutGuest(await request('GET', `/user/customers/v1/${customerId}`), config, customerId);
+    },
+    async createCheckoutAddress(value) {
+      const { street1, street2, city, state, postal_code, country } = value;
+      const data = await request('POST', '/user/address/v2/', { street1, street2, city, state, postal_code, country });
+      try { return requireCheckoutAddress(data); }
+      catch (error) { error.outcomeUnknown = true; throw error; }
+    },
+    async getCheckoutAddress(addressId) {
+      requireId(addressId, 'address');
+      return requireCheckoutAddress(await request('GET', `/user/address/v2/${addressId}`), addressId);
     },
     async listCards(customerId) {
       requireId(customerId, 'cus');
@@ -324,6 +336,12 @@ function requireCheckoutGuest(data, config, expectedId) {
   if ((expectedId && customer.token !== expectedId) || customer.merchant_api_key !== config.publicKey
     || customer.is_guest !== true || customer.is_deleted === true) throw providerError('Safepay checkout contact ownership is invalid.', 'SAFEPAY_CHECKOUT_CONTACT_MISMATCH', 409);
   return customer;
+}
+function requireCheckoutAddress(data, expectedId) {
+  const address = data?.address || data;
+  requireId(address?.token, 'address');
+  if (expectedId && address.token !== expectedId || address.is_deleted === true) throw providerError('Safepay billing address identity is invalid.', 'SAFEPAY_CHECKOUT_ADDRESS_MISMATCH', 409);
+  return address;
 }
 function requireOwnedCard(data, customerId, config, expectedId) {
   const card = data?.payment_method || data;

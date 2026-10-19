@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const Payment = require('../models/SafepayPayment');
 const Customer = require('../models/SafepayCustomer');
 const CheckoutContact = require('../models/SafepayCheckoutContact');
+const CheckoutAddress = require('../models/SafepayCheckoutAddress');
 const Order = require('../models/Order');
 const { readSafepayConfig } = require('../config/safepay');
 const { createSafepayClient, requireMoney, requireReusableCard } = require('./safepayClient');
@@ -14,6 +15,7 @@ const { buildReturnUrl } = require('./safepayReturnNavigation');
 const { POLICY: CARD_SETUP_POLICY, snapshotCardSetup, verifySavedSetupCard, applyCardSetupDefault } = require('./safepayCardSetupService');
 const { POLICY: CHECKOUT_CARD_POLICY, isCheckoutCard, synchronizeCheckoutCard } = require('./safepayCheckoutCardService');
 const { POLICY: CHECKOUT_CONTACT_POLICY } = require('./safepayCheckoutContactService');
+const { POLICY: CHECKOUT_ADDRESS_POLICY } = require('./safepayCheckoutAddressService');
 
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const stable = value => Array.isArray(value) ? value.map(stable)
@@ -97,10 +99,21 @@ function createSafepayPaymentService({
         requireReusableCard(await clientFor(config).getCard(customerId, input.cardId));
       }
     }
+    const checkoutAddressId = input.checkoutAddressId || null;
+    if (checkoutAddressId || input.terms?.checkoutAddressPolicy) {
+      if (input.purpose !== 'order' || !input.user || input.cardId || input.terms?.checkoutAddressPolicy !== CHECKOUT_ADDRESS_POLICY
+        || !/^[a-f0-9]{64}$/.test(input.terms?.checkoutAddressHash || '') || !/^address_[a-zA-Z0-9-]{8,100}$/.test(checkoutAddressId || '')) {
+        throw fail('The checkout billing address is invalid.', 'SAFEPAY_CHECKOUT_ADDRESS_MISMATCH', 400);
+      }
+      const ownedAddress = existing ? existing.checkoutAddressId === checkoutAddressId : await CheckoutAddress.exists({
+        user: input.user, environment: config.environment, status: 'ready', addressId: checkoutAddressId, addressHash: input.terms.checkoutAddressHash,
+      }).session(session);
+      if (!ownedAddress) throw fail('This billing address does not belong to this checkout.', 'SAFEPAY_CHECKOUT_ADDRESS_MISMATCH');
+    }
     const terms = { user: String(input.user || ''), purpose: input.purpose, reference: input.reference,
       amountMinor: input.amountMinor, currency: input.currency, order: String(input.order || ''),
       store: String(input.store || ''), returnRequest: String(input.returnRequest || ''), terms: input.terms || {},
-      ...(customerId ? { customerId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
+      ...(customerId ? { customerId } : {}), ...(checkoutAddressId ? { checkoutAddressId } : {}), ...(input.cardId ? { cardId: input.cardId } : {}) };
     const expectedFingerprint = fingerprint(terms);
     if (!existing) {
       const cardSetup = input.purpose === 'card_setup' || input.terms?.checkoutCardPolicy === CHECKOUT_CARD_POLICY
@@ -109,7 +122,7 @@ function createSafepayPaymentService({
         const [created] = await Payment.create([{ ...identity, reference: input.reference, amountMinor: input.amountMinor,
           currency: input.currency, order: input.order || null, store: input.store || null, returnRequest: input.returnRequest || null,
           terms: input.terms || {}, fingerprint: expectedFingerprint, providerMode,
-          providerEntryMode: providerMode === 'payment' && input.cardId ? 'tms' : '', customerId, cardId: input.cardId || null,
+          providerEntryMode: providerMode === 'payment' && input.cardId ? 'tms' : '', customerId, checkoutAddressId, cardId: input.cardId || null,
           ...(cardSetup ? { cardSetup } : {}) }], { session });
         existing = created;
       } catch (error) {
@@ -231,21 +244,22 @@ function createSafepayPaymentService({
         cardEntryRequired: isCheckoutCard(payment), checkoutUrl, url: checkoutUrl };
     }
     const authToken = await client.createAuthToken();
+    const browserCheckout = clientSurface === 'mobile' && payment.providerMode === 'payment';
     const returnContext = { backendOrigin: process.env.PUBLIC_BACKEND_URL || 'https://rozare.up.railway.app',
-      attempt: String(payment._id), purpose: payment.purpose, surface: clientSurface };
+      attempt: String(payment._id), purpose: payment.purpose, surface: clientSurface, browser: browserCheckout };
     const redirectUrl = buildReturnUrl({ ...returnContext, outcome: 'return' });
     const cancelUrl = buildReturnUrl({ ...returnContext, outcome: 'cancel' });
     const checkoutUrl = client.buildPaymentCheckoutUrl({ tracker: payment.tracker, authToken, reference: payment.reference,
-      redirectUrl, cancelUrl, customerId: payment.customerId,
+      redirectUrl, cancelUrl, customerId: payment.customerId, checkoutAddressId: payment.checkoutAddressId,
       // The user has already explicitly consented in Rozare's saved-card
       // screen. Safepay's supported instrument flag requests a reusable token
       // (use_once=false) instead of silently creating a one-use credential.
       ...(payment.purpose === 'card_setup' && payment.terms?.reusableRequired === true
         && payment.terms?.consentVersion === 'safepay-card-storage-v1' ? { implicitCardSave: true } : {}),
-      source: clientSurface === 'web' ? 'hosted' : 'mobile' });
+      source: clientSurface === 'web' || browserCheckout ? 'hosted' : 'mobile' });
     // The URL is returned only to the authenticated owner; it is neither
     // logged nor included in order serializers/notification payloads.
-    return { ...paymentResponse(payment), checkoutPresentation: 'embedded', checkoutUrl, url: checkoutUrl };
+    return { ...paymentResponse(payment), checkoutPresentation: browserCheckout ? 'browser' : 'embedded', checkoutUrl, url: checkoutUrl };
   }
 
   async function submitRecurringPayment(paymentId) {

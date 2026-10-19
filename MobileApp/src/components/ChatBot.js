@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useAIChatHandoff } from '../hooks/useAIChatHandoff';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList,
   Platform, Alert, ActivityIndicator, ScrollView, Image,
@@ -479,6 +480,8 @@ export default function ChatBot({
   onClose,
   navigation,
   initialPrompt = '',
+  handoffRequest = null,
+  onHandoffConsumed,
 }) {
   const { currentUser, fetchAndUpdateCurrentUser } = useAuth();
   const { fetchWishlist } = useWishlist();
@@ -512,6 +515,7 @@ export default function ChatBot({
   const [historyRefreshing, setHistoryRefreshing] = useState(false);
   const [conversationLoading, setConversationLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [historyReadyFor, setHistoryReadyFor] = useState('');
   const [historyBusyId, setHistoryBusyId] = useState(null);
   const [reportingMessage, setReportingMessage] = useState(null);
 
@@ -522,6 +526,7 @@ export default function ChatBot({
   const recordingActiveRef = useRef(false);
   const audioRecorderRef = useRef(audioRecorder);
   const historyInitializedForRef = useRef(null);
+  const historyCallbacksRef = useRef(null);
   const activeConvoIdRef = useRef(null);
   const currentUserId = currentUser?._id || currentUser?.id || null;
   const activeConversation = useMemo(
@@ -913,6 +918,7 @@ export default function ChatBot({
   // Initialize the currently-active account conversation once per user/role.
   // Guests keep an in-memory session; authenticated users resume their latest
   // web/app conversation and can switch sessions from the history sheet.
+  historyCallbacksRef.current = { refreshConversations, loadConversation, showWelcomeConversation };
   useEffect(() => {
     if (!visible) return undefined;
 
@@ -923,6 +929,7 @@ export default function ChatBot({
     }
 
     historyInitializedForRef.current = historyIdentity;
+    setHistoryReadyFor('');
     setConversations([]);
     activeConvoIdRef.current = null;
     setActiveConvoId(null);
@@ -930,35 +937,38 @@ export default function ChatBot({
 
     if (!currentUserId) {
       showWelcomeConversation(null);
+      setHistoryReadyFor(historyIdentity);
       return undefined;
     }
 
     let cancelled = false;
+    let completed = false;
+    const callbacks = historyCallbacksRef.current;
     setConversationLoading(true);
     (async () => {
-      const history = await refreshConversations({ silent: true });
+      const history = await callbacks.refreshConversations({ silent: true });
       if (cancelled) return;
       const activeId = history?.activeConversationId;
       const activeSummary = history?.conversations?.find(
         conversation => conversation._id === activeId,
       );
       if (activeId && activeSummary?.messageCount > 0) {
-        await loadConversation(activeId, { closeHistory: false, silent: true });
+        await callbacks.loadConversation(activeId, { closeHistory: false, silent: true });
       } else {
-        showWelcomeConversation(activeId || null);
+        callbacks.showWelcomeConversation(activeId || null);
       }
     })().finally(() => {
-      if (!cancelled) setConversationLoading(false);
+      completed = true;
+      if (!cancelled) { setConversationLoading(false); setHistoryReadyFor(historyIdentity); }
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (!completed && historyInitializedForRef.current === historyIdentity) historyInitializedForRef.current = null;
+    };
   }, [
     currentUserId,
     effectiveRole,
-    loadConversation,
-    messages.length,
-    refreshConversations,
-    showWelcomeConversation,
     visible,
   ]);
 
@@ -1235,6 +1245,13 @@ export default function ChatBot({
       setLoading(false);
     }
   };
+
+  useAIChatHandoff({ request: handoffRequest, actorKey: String(currentUserId || 'guest'),
+    ready: visible && historyReadyFor === `${currentUserId || 'guest'}:${effectiveRole}`,
+    busy: loading || conversationLoading || recordingBusy || recorderState.isRecording || Boolean(historyError),
+    send: sendMessage, consumed: onHandoffConsumed,
+    failed: prompt => { setInput(prompt); Alert.alert('AI chat unavailable', 'Your question is ready. Please try sending it again.'); },
+  });
 
   // ─── Render ───
   const renderAttachmentPreview = (attachment, compact = false) => {

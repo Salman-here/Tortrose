@@ -14,6 +14,8 @@ const mockEnsureSafepayCustomer = jest.fn();
 jest.mock('../../services/safepayCustomerService', () => ({ ensureCustomer: mockEnsureSafepayCustomer }));
 const mockEnsureCheckoutContact = jest.fn();
 jest.mock('../../services/safepayCheckoutContactService', () => ({ ...jest.requireActual('../../services/safepayCheckoutContactService'), ensureCheckoutContact: mockEnsureCheckoutContact }));
+const mockEnsureCheckoutAddress = jest.fn();
+jest.mock('../../services/safepayCheckoutAddressService', () => ({ ...jest.requireActual('../../services/safepayCheckoutAddressService'), ensureCheckoutAddress: mockEnsureCheckoutAddress }));
 
 jest.mock('../../config/stripe', () => ({
   stripe: {
@@ -99,6 +101,7 @@ const User = require('../../models/User');
 const WalletTransaction = require('../../models/WalletTransaction');
 const SafepayPayment = require('../../models/SafepayPayment');
 const CheckoutContact = require('../../models/SafepayCheckoutContact');
+const CheckoutAddress = require('../../models/SafepayCheckoutAddress');
 const { placeOrder, quoteCheckout } = require('../../controllers/orderController');
 
 let replicaSet;
@@ -236,6 +239,7 @@ beforeEach(async () => {
     WalletTransaction.deleteMany({}),
     SafepayPayment.deleteMany({}),
     CheckoutContact.deleteMany({}),
+    CheckoutAddress.deleteMany({}),
   ]);
 });
 
@@ -258,6 +262,8 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     fixture.order.shippingInfo.email = 'shipping-not-account@example.com';
     mockEnsureCheckoutContact.mockImplementation(async user => CheckoutContact.create({ user, environment: 'sandbox',
       customerId: 'cus_controller-prefill', contactHash: 'a'.repeat(64), status: 'ready' }));
+    mockEnsureCheckoutAddress.mockImplementation(async user => CheckoutAddress.create({ user, environment: 'sandbox',
+      addressId: 'address_controller-prefill', addressHash: 'b'.repeat(64), status: 'ready' }));
     mockEnsureSafepayCustomer.mockRejectedValue(new Error('Standard checkout must not create a billing profile.'));
     const payments = require('../../services/safepayPaymentService');
     const prepare = jest.spyOn(payments, 'prepareCheckout').mockImplementation(async paymentId => ({
@@ -279,6 +285,8 @@ describe('initial zero-value and provider-minimum checkout boundaries', () => {
     expect(await SafepayPayment.countDocuments()).toBe(1);
     const payment = await SafepayPayment.findOne().lean();
     expect(payment.customerId).toBe('cus_controller-prefill');
+    expect(payment.checkoutAddressId).toBe('address_controller-prefill');
+    expect(mockEnsureCheckoutAddress).toHaveBeenCalledTimes(1);
     expect(payment.terms).toMatchObject({ checkoutContactPolicy: 'hosted-checkout-contact-v1', checkoutContactHash: 'a'.repeat(64) });
     expect(mockEnsureCheckoutContact).toHaveBeenCalledTimes(1);
     expect(mockEnsureCheckoutContact).toHaveBeenCalledWith(fixture.buyer._id.toString(), expect.objectContaining({

@@ -20,6 +20,15 @@ app.get('/return/:surface/:purpose/:attempt/:outcome', controller.returnToApp);
 app.post('/cards/setup', controller.startCardSetup);
 app.post('/payments/:paymentId/reopen', controller.reopenPayment);
 const id = '6ab6e29eba71edafe4fc7596';
+
+test('browser return navigates to the exact app payment without reading or claiming financial status', async () => {
+  const result = await request(app).get('/return').query({ browser: '1', attempt: id, purpose: 'order', surface: 'mobile', outcome: 'cancel' });
+  expect(result.status).toBe(303);
+  const target = new URL(result.headers.location);
+  expect(target.protocol).toBe('rozare:'); expect(target.hostname).toBe('safepay-return');
+  expect(target.searchParams.get('paymentId')).toBe(id); expect(target.searchParams.get('outcome')).toBe('cancel');
+  expect(Payment.findOne).not.toHaveBeenCalled(); expect(service.prepareCheckout).not.toHaveBeenCalled();
+});
 const original = { web: process.env.SAFEPAY_WEB_ENABLED, mobile: process.env.SAFEPAY_MOBILE_ENABLED };
 afterEach(() => { jest.clearAllMocks();
   for (const [key, value] of [['SAFEPAY_WEB_ENABLED', original.web], ['SAFEPAY_MOBILE_ENABLED', original.mobile]]) {

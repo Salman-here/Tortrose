@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useAIChatHandoff } from '../../hooks/useAIChatHandoff';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   MessageCircle, X, Send, Bot, User, Package,
@@ -489,6 +490,7 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
 
   // State
   const [isOpen, setIsOpen] = useState(embedded);
+  const [handoffRequest, setHandoffRequest] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -544,13 +546,19 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
     const handleOpenAIChat = (event) => {
       const prompt = String(event?.detail?.prompt || '').trim();
       setIsOpen(true);
-      if (prompt) setInput(prompt);
+      if (prompt) {
+        const reference = /^[a-f0-9]{24}$/i.test(String(event.detail.productId || '')) ? `\nProduct reference: ${event.detail.productId}` : '';
+        const contextualPrompt = `${prompt}${reference}`;
+        setInput(contextualPrompt);
+        setHandoffRequest({ id: String(event.detail.requestId || `${Date.now()}-${Math.random()}`), prompt: contextualPrompt,
+          actorKey: String(currentUser?._id || currentUser?.id || 'guest') });
+      }
       window.requestAnimationFrame?.(() => inputRef.current?.focus());
     };
 
     window.addEventListener(OPEN_AI_CHAT_EVENT, handleOpenAIChat);
     return () => window.removeEventListener(OPEN_AI_CHAT_EVENT, handleOpenAIChat);
-  }, []);
+  }, [currentUser?._id, currentUser?.id]);
 
   // ─── Load initial messages from parent (AI Chat page) ───
   useEffect(() => {
@@ -1167,6 +1175,13 @@ function ChatBot({ embedded = false, conversationId = null, initialMessages = nu
       setPendingTools([]);
     }
   }, [messages, chatBusy, historyError, authToken, activeConvoId, handleClientAction, currentUser?._id, currentUser?.id, currency, chatAttemptStorageKey, onConversationCreated, fetchWishlist, fetchCart, fetchAndUpdateCurrentUser]);
+
+  useAIChatHandoff({ request: handoffRequest, actorKey: String(currentUser?._id || currentUser?.id || 'guest'),
+    ready: isOpen && hasLoadedHistory.current && !waitingForHistory,
+    busy: chatBusy || isRecordingVoice || historyError,
+    send: sendMessage, consumed: id => setHandoffRequest(value => value?.id === id ? null : value),
+    failed: prompt => { setInput(prompt); toast.error('Your question is ready. Please try sending it again.'); },
+  });
 
   // ─── Clear chat (start a brand-new conversation) ───
   const clearChat = async () => {

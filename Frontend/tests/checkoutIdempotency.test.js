@@ -65,6 +65,17 @@ const checkoutIntent = () => ({
   instructions: 'Leave at reception',
 });
 
+test('explicit alternate billing rotates the checkout key without changing default shipping retries', () => {
+  const original = checkoutIntent();
+  const billingAddress = { address: '1 Billing Road', city: 'Lahore', countryCode: 'PK' };
+  assert.equal(createCheckoutFingerprint(original), createCheckoutFingerprint({ ...original, billingAddress: undefined }));
+  assert.notEqual(createCheckoutFingerprint(original), createCheckoutFingerprint({ ...original, billingAddress }));
+  assert.equal(createCheckoutFingerprint({ ...original, billingAddress }), createCheckoutFingerprint({ ...original,
+    billingAddress: { countryCode: 'PK', city: ' Lahore ', address: '1 Billing Road' } }));
+  assert.notEqual(createCheckoutFingerprint({ ...original, billingAddress }), createCheckoutFingerprint({ ...original,
+    billingAddress: { ...billingAddress, city: 'Karachi' } }));
+});
+
 test('web retries keep the fingerprint when only live prices or delivery estimates change', () => {
   const original = checkoutIntent();
   const refreshed = checkoutIntent();

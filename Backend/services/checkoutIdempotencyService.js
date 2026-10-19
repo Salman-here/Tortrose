@@ -64,6 +64,7 @@ const checkoutRequestFingerprint = (
     coupons,
     currency: String(resolvedCurrency ?? order?.currency ?? 'USD').trim().toUpperCase(),
     shippingInfo: canonicalShippingInfo(order?.shippingInfo),
+    ...(order?.billingAddress !== undefined ? { billingAddress: canonicalize(order.billingAddress) } : {}),
     buyerLocation: order?.buyerLocation || {},
     shippingMethod: {
       seller: String(order?.shippingMethod?.seller || ''),

@@ -36,6 +36,7 @@ export const openAIChat = ({ prompt = '', productId = null } = {}) => {
       prompt: cleanText(prompt),
       productId: productId ? String(productId) : null,
       source: 'product-detail',
+      requestId: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     },
   }));
   return true;

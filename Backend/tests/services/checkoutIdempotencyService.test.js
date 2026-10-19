@@ -23,6 +23,16 @@ const order = {
 };
 
 describe('checkout request fingerprint', () => {
+  test('billing address is part of an explicit new intent, while default shipping retries stay unchanged', () => {
+    const fingerprint = value => checkoutRequestFingerprint(value, 'safepay_hosted', 'web');
+    const billingAddress = { address: '1 Billing Road', city: 'Lahore', countryCode: 'PK' };
+    expect(fingerprint(order)).toBe(fingerprint({ ...order, billingAddress: undefined }));
+    expect(fingerprint({ ...order, billingAddress })).not.toBe(fingerprint(order));
+    expect(fingerprint({ ...order, billingAddress })).toBe(fingerprint({ ...order,
+      billingAddress: { countryCode: 'PK', city: ' Lahore ', address: '1 Billing Road' } }));
+    expect(fingerprint({ ...order, billingAddress: { ...billingAddress, city: 'Karachi' } }))
+      .not.toBe(fingerprint({ ...order, billingAddress }));
+  });
   test('is stable for equivalent object key and item order', () => {
     const reordered = {
       ...order,

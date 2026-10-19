@@ -14,6 +14,7 @@ import { CurrencyProvider } from './src/contexts/CurrencyContext';
 import { BuyerLocationProvider } from './src/contexts/BuyerLocationContext';
 import ShoppingLocationPrompt from './src/components/common/ShoppingLocationPrompt';
 import SafepayCheckoutProvider from './src/components/SafepayCheckoutProvider';
+import { isSafepayBrowserReturn } from './src/utils/safepayBrowser';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
@@ -254,6 +255,9 @@ const errorStyles = StyleSheet.create({
 
 // ─── Deep Linking ────────────────────────────────────────────────────────────
 const linking = {
+  // The active presenter owns this callback and verifies its payment. A cold
+  // start or a different payment still opens the normal authenticated status page.
+  filter: url => !isSafepayBrowserReturn(url),
   prefixes: ['rozare://', 'https://rozare.com', 'http://rozare.com'],
   config: {
     screens: {

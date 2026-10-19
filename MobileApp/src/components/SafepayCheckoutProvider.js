@@ -3,10 +3,12 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import Modal from './common/AppModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { registerSafepayPresenter, safepayNavigationAction } from '../utils/safepaySheet';
+import { cancelSafepayBrowser, presentSafepayBrowser } from '../utils/safepayBrowser';
 
 export default function SafepayCheckoutProvider({ children }) {
   const { palette } = useTheme();
@@ -27,6 +29,7 @@ export default function SafepayCheckoutProvider({ children }) {
   }, []);
   const finish = useCallback((type = 'dismiss') => {
     const request = active.current;
+    if (type !== 'return') cancelSafepayBrowser(request?.paymentId);
     active.current = null; setCheckout(null); request?.resolve({ type });
   }, []);
   useEffect(() => {
@@ -38,12 +41,29 @@ export default function SafepayCheckoutProvider({ children }) {
       }
       let resolve;
       const promise = new Promise(done => { resolve = done; });
-      active.current = { paymentId: payment.paymentId, owner, resolve, promise };
+      const request = { paymentId: payment.paymentId, owner, resolve, promise };
+      active.current = request;
+      if (payment.checkoutPresentation === 'browser') {
+        presentSafepayBrowser(payment, WebBrowser.openAuthSessionAsync).then(result => {
+          if (active.current === request) finish(result.type);
+        }).catch(error => {
+          // Keep the same verified provider attempt if the device has no
+          // compatible browser. The existing card/Raast form remains usable.
+          if (active.current === request) {
+            if (error?.code === 'SAFEPAY_BROWSER_INVALID') {
+              setCheckout(payment); interrupt('browser_invalid'); return;
+            }
+            setFailed(false); setFailureCode(''); setBlockedLink(false); setLoading(true);
+            setCheckout({ ...payment, browserFallback: true });
+          }
+        });
+        return promise;
+      }
       setFailed(false); setFailureCode(''); setBlockedLink(false); setLoading(true); setCheckout(payment);
       return promise;
     });
-    return () => { unregister(); const request = active.current; active.current = null; request?.resolve({ type: 'dismiss' }); };
-  }, [owner]);
+    return () => { unregister(); const request = active.current; active.current = null; cancelSafepayBrowser(request?.paymentId); request?.resolve({ type: 'dismiss' }); };
+  }, [owner, finish, interrupt]);
   useEffect(() => { if (!active.current || active.current.owner !== owner) setCheckout(null); }, [owner]);
   const allowNavigation = request => {
     const action = safepayNavigationAction(request.url, checkout?.environment);
@@ -68,6 +88,7 @@ export default function SafepayCheckoutProvider({ children }) {
         </TouchableOpacity>
       </View>
       <Text style={[styles.notice, { color: palette.colors.textSecondary }]}>Closing this screen does not confirm cancellation. Rozare will check your payment status.</Text>
+      {checkout?.browserFallback && <Text accessibilityRole="alert" style={[styles.notice, { color: palette.colors.textSecondary }]}>Your browser could not open. You can continue with card or Raast here.</Text>}
       {blockedLink && !failed && <Text accessibilityRole="alert" style={[styles.notice, { color: palette.colors.textSecondary }]}>An unsupported link was blocked. You can continue with the card form below or close this screen to check payment status.</Text>}
       {!!checkout && !failed && <View style={styles.container}>
         {/* Our navigation policy handles every scheme; unapproved links must not be handed to the OS. */}

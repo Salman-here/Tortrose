@@ -5,6 +5,20 @@ const env = { SAFEPAY_ENV: 'sandbox', SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_sandbox-f
 const config = readSafepayConfig(env);
 const tracker = { token: 'track_checkout-fixture', environment: 'sandbox', client: config.publicKey, mode: 'payment', metadata: { data: { order_id: 'order:fixture123' } }, state: 'TRACKER_STARTED', purchase_totals: { quote_amount: { amount: 10000, currency: 'PKR' } } };
 
+test('billing address API uses documented fields and only its opaque reference reaches the checkout URL', async () => {
+  const details = { street1: '1 QA Lane', street2: '', city: 'Lahore', state: 'Punjab', postal_code: '54000', country: 'PK' };
+  const address = { token: 'address_checkout-fixture', ...details };
+  const fetchImpl = jest.fn(async () => ({ ok: true, status: 201, json: async () => ({ data: address }) }));
+  const client = createSafepayClient({ config, fetchImpl });
+  expect(await client.createCheckoutAddress({ ...details, user: 'never-forward', card_number: 'never-forward' })).toEqual(address);
+  expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual(details);
+  expect(fetchImpl.mock.calls[0][0]).toBe('https://sandbox.api.getsafepay.com/user/address/v2/');
+  expect(await client.getCheckoutAddress(address.token)).toEqual(address);
+  const url = new URL(client.buildPaymentCheckoutUrl({ tracker: tracker.token, authToken: 'private-fixture-token', reference: 'order:fixture123',
+    redirectUrl: 'https://rozare.com/', cancelUrl: 'https://rozare.com/', checkoutAddressId: address.token }));
+  expect(url.searchParams.get('address')).toBe(address.token); expect(url.toString()).not.toContain('QA'); expect(url.toString()).not.toContain('Lahore');
+});
+
 test('standard-checkout prefill forces a guest contact without changing saved-card customer creation', async () => {
   const contact = { first_name: 'Checkout', last_name: 'Buyer', email: 'shipping@example.com', phone_number: '+923001234567', country: 'PK' };
   const guest = { ...contact, token: 'cus_guest-fixture', merchant_api_key: config.publicKey, is_guest: true, is_deleted: false };

@@ -13,7 +13,8 @@ import { useAuth } from '../contexts/AuthContext';
 export default function AIChatScreen({ navigation, route }) {
   const { currentUser } = useAuth();
   const role = route?.params?.role || currentUser?.role || 'user';
-  const initialPrompt = route?.params?.prompt || '';
+  const handoff = route?.params?.handoff || null;
+  const initialPrompt = handoff?.prompt || route?.params?.prompt || '';
   const handleBack = () => {
     if (navigation.canGoBack()) navigation.goBack();
     else navigation.navigate('MainTabs', { screen: 'Home' });
@@ -29,6 +30,8 @@ export default function AIChatScreen({ navigation, route }) {
           onClose={handleBack}
           navigation={navigation}
           initialPrompt={initialPrompt}
+          handoffRequest={handoff}
+          onHandoffConsumed={id => { if (route?.params?.handoff?.id === id) navigation.setParams({ handoff: null, prompt: '' }); }}
         />
       </SafeAreaView>
     </GlassBackground>

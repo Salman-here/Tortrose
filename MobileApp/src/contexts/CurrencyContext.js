@@ -8,8 +8,8 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, NativeModules, Platform } from 'react-native';
-import axios from 'axios';
-import api, { API_BASE_URL } from '../config/api';
+import api from '../config/api';
+import { resolveBuyerCountrySuggestion } from '../utils/buyerLocation';
 import { useAuth } from './AuthContext';
 import {
   assertSafeCurrencyConversion,
@@ -225,6 +225,7 @@ const DEFAULT_RATES = {
 };
 
 const DEVICE_CURRENCY_KEY = 'userCurrency';
+const DEVICE_CURRENCY_CHOICE_KEY = 'guestCurrencyChoice:v1';
 const accountCurrencyKey = (accountId) => `accountCurrency:${accountId}`;
 
 const EURO_COUNTRY_CODES = new Set([
@@ -273,6 +274,20 @@ const getDeviceCountryCode = () => {
   }
 };
 
+export const currencyForDeviceFallback = (timeZone, localeCountry) => {
+  // Device language is often en-US on Pakistani phones. Use a recognized
+  // regional time zone only as a fallback when IP detection is unavailable.
+  const country = { 'Asia/Karachi': 'PK', 'Europe/London': 'GB', 'Europe/Paris': 'FR',
+    'Europe/Berlin': 'DE', 'Europe/Rome': 'IT', 'Europe/Madrid': 'ES', 'Europe/Amsterdam': 'NL',
+    'Europe/Dublin': 'IE', 'Europe/Lisbon': 'PT', 'Europe/Vienna': 'AT', 'Europe/Brussels': 'BE' }[timeZone];
+  return currencyForCountry(country || localeCountry);
+};
+const deviceFallbackCurrency = () => {
+  let timeZone = '';
+  try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
+  return currencyForDeviceFallback(timeZone, getDeviceCountryCode()) || 'USD';
+};
+
 const normalizeCurrency = (code) => {
   const normalized = String(code || 'USD').trim().toUpperCase();
   return CURRENCIES[normalized] ? normalized : 'USD';
@@ -280,7 +295,7 @@ const normalizeCurrency = (code) => {
 
 export const CurrencyProvider = ({ children }) => {
   const { currentUser, token, isLoading: isAuthLoading } = useAuth();
-  const [currency, setCurrencyState] = useState('USD');
+  const [currency, setCurrencyState] = useState(deviceFallbackCurrency);
   const [exchangeRates, setExchangeRates] = useState(DEFAULT_RATES);
   const [exchangeRateState, setExchangeRateState] = useState({
     isLoading: true,
@@ -297,11 +312,23 @@ export const CurrencyProvider = ({ children }) => {
   const loadSequenceRef = useRef(0);
   const currencyPreferenceRequestRef = useRef(0);
   const currencyPreferenceInFlightRef = useRef(false);
+  const guestPreferenceWritesRef = useRef(Promise.resolve());
   const ratesRequestRef = useRef({ id: 0, controller: null });
   const ratesClockRef = useRef({ lastAttemptAt: 0, lastLiveAt: 0 });
   const accountId = currentUser?._id || currentUser?.id || null;
   const currencyActorRef = useRef('guest');
   currencyActorRef.current = token && accountId ? `account:${accountId}` : 'guest';
+  const writeGuestChoice = (choice, isCurrent = () => true, mirrorLegacy = false) => {
+    const write = guestPreferenceWritesRef.current.catch(() => {}).then(async () => {
+      if (!isCurrent()) return;
+      await AsyncStorage.setItem(DEVICE_CURRENCY_CHOICE_KEY, JSON.stringify(choice));
+      if (mirrorLegacy && isCurrent()) {
+        try { await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, choice.currency); } catch (_) {}
+      }
+    });
+    guestPreferenceWritesRef.current = write;
+    return write;
+  };
 
   useEffect(() => {
     fetchExchangeRates();
@@ -357,6 +384,9 @@ export const CurrencyProvider = ({ children }) => {
       const deviceCurrency = supportedCurrency(
         await AsyncStorage.getItem(DEVICE_CURRENCY_KEY)
       );
+      let guestChoice = null;
+      try { guestChoice = JSON.parse(await AsyncStorage.getItem(DEVICE_CURRENCY_CHOICE_KEY)); } catch (_) {}
+      const manualGuestCurrency = guestChoice?.source === 'manual' ? supportedCurrency(guestChoice.currency) : null;
       const cachedAccountCurrency = activeAccountId
         ? supportedCurrency(
           await AsyncStorage.getItem(accountCurrencyKey(activeAccountId))
@@ -398,31 +428,30 @@ export const CurrencyProvider = ({ children }) => {
 
       // Device currency belongs to the guest/device session. Account choices
       // are cached separately so signing out cannot leak another user's choice.
-      if (deviceCurrency) {
+      // Preserve explicit selections, including USD. Unmarked legacy USD may
+      // be the previous locale fallback; give real detection another chance.
+      if (manualGuestCurrency || !guestChoice && deviceCurrency && deviceCurrency !== 'USD') {
         if (loadSequenceRef.current !== sequence) return;
-        setCurrencyState(deviceCurrency);
+        setCurrencyState(manualGuestCurrency || deviceCurrency);
         return;
       }
 
       let detectedCurrency = null;
       try {
-        const detection = await axios.get(`${API_BASE_URL}/api/currency/detect`, {
-          timeout: 8000,
-        });
-        if (detection.data?.success && detection.data?.detected) {
-          detectedCurrency = supportedCurrency(detection.data.currency)
-            || currencyForCountry(detection.data.country);
-        }
+        // Shares the catalog's country lookup, including transport overhead
+        // and its bounded retry. Do not race the server's own 8s timeout.
+        const country = await resolveBuyerCountrySuggestion();
+        detectedCurrency = currencyForCountry(country?.countryCode);
       } catch (_) {}
 
-      // IP detection can be unavailable in development or offline. Locale is
-      // only a fallback; it never replaces an account or saved preference.
-      detectedCurrency = detectedCurrency || currencyForCountry(getDeviceCountryCode());
+      const resolvedCurrency = detectedCurrency || deviceFallbackCurrency();
 
-      if (detectedCurrency) {
+      if (resolvedCurrency) {
         if (loadSequenceRef.current !== sequence) return;
-        setCurrencyState(detectedCurrency);
-        await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, detectedCurrency);
+        setCurrencyState(resolvedCurrency);
+        // An automatic result is not a manual preference. Failed lookups
+        // must not turn a fallback USD value into a permanent selection.
+        await writeGuestChoice({ source: 'automatic', currency: resolvedCurrency }, () => loadSequenceRef.current === sequence);
 
         // Detection is only a display default. Never overwrite an authenticated
         // account preference after a failed/ambiguous account lookup; only an
@@ -481,7 +510,6 @@ export const CurrencyProvider = ({ children }) => {
   const setCurrency = async (newCurrency) => {
     const targetCurrency = supportedCurrency(newCurrency);
     if (!targetCurrency) return false;
-    if (targetCurrency === currency) return true;
     if (currencyPreferenceInFlightRef.current) return false;
 
     currencyPreferenceInFlightRef.current = true;
@@ -505,7 +533,8 @@ export const CurrencyProvider = ({ children }) => {
           await AsyncStorage.setItem(accountCurrencyKey(activeAccountId), targetCurrency);
         } catch (_) {}
       } else {
-        await AsyncStorage.setItem(DEVICE_CURRENCY_KEY, targetCurrency);
+        await writeGuestChoice({ source: 'manual', currency: targetCurrency }, () => currencyActorRef.current === actorKey
+          && currencyPreferenceRequestRef.current === requestId, true);
       }
       if (
         currencyPreferenceRequestRef.current !== requestId
