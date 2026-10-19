@@ -61,4 +61,5 @@ test('actual mobile form validation focuses the name before an order can be subm
   expect(submit.indexOf('if (!validateForm()) {')).toBeLessThan(submit.indexOf("api.post('/api/order/place'"));
   expect(source).toContain('inputRef: fullNameInputRef');
   expect(source).toContain('const billingErrors = getSafepayBillingFieldErrors(error);');
+  expect(source).toMatch(/!savedCards.selectedCardId && !errors.fullName &&/);
 });

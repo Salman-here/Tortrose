@@ -1142,7 +1142,7 @@ export default function CheckoutScreen({ navigation }) {
               )}
             </View>
             {renderInput('fullName', 'Full Name', { icon: 'person-outline', inputRef: fullNameInputRef })}
-            {paymentMethod === 'card' && totalAmount > 0 && savedCards.billingProfileReady === false && !savedCards.selectedCardId && (
+            {paymentMethod === 'card' && totalAmount > 0 && savedCards.billingProfileReady === false && !savedCards.selectedCardId && !errors.fullName && (
               <Text style={styles.fieldHint}>For Safepay, enter your first and last name as shown on your card.</Text>
             )}
             {renderInput('email', 'Email Address', { icon: 'mail-outline', keyboardType: 'email-address', autoCapitalize: 'none' })}
