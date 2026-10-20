@@ -25,6 +25,7 @@ import GlassBackground from './common/GlassBackground';
 import GlassPanel from './common/GlassPanel';
 import GlassBlurFill from './common/GlassBlurFill';
 import RozareLogo from './common/RozareLogo';
+import { getResponsiveLayout } from '../utils/responsiveLayout';
 
 const ONBOARDING_KEY = 'onboarding_completed';
 const WHATSAPP_GREEN = '#22C55E';
@@ -406,8 +407,9 @@ function SlidePreview({ item, palette, styles }) {
 
 export default function OnboardingWalkthrough({ onComplete }) {
   const { palette } = useTheme();
-  const { width, height } = useWindowDimensions();
+  const { width: windowWidth, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const { contentWidth: width } = getResponsiveLayout(windowWidth, insets);
   const compact = height < 760;
   const narrow = width < 360;
   const styles = useMemo(

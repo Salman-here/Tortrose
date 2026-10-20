@@ -34,7 +34,7 @@ export default function NotificationCard({ item, onPress }) {
   const meta = getNotificationMeta(palette)[item.category] || getNotificationMeta(palette).system;
   return (
     <Pressable onPress={() => onPress(item)} style={({ pressed }) => pressed && { opacity: 0.75 }} accessibilityRole="button" accessibilityLabel={`${item.read ? '' : 'Unread. '}${item.title}. ${item.body}`}>
-      <GlassPanel variant="card" style={[styles.card, !item.read && styles.cardUnread]}>
+      <GlassPanel key={`${item.id}:${item.read ? 'read' : 'unread'}`} variant="card" androidBlur={false} style={[styles.card, !item.read && styles.cardUnread]}>
         {!item.read && <View style={styles.unreadDot} />}
         <View style={[styles.icon, { backgroundColor: meta.bg }]}>
           <Ionicons name={meta.icon} size={22} color={meta.color} />

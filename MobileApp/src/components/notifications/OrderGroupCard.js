@@ -32,7 +32,7 @@ export default function OrderGroupCard({ group, onPress, onMarkRead, readIds }) 
   const rotation = rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
 
   return (
-    <GlassPanel variant="card" style={[styles.groupCard, unreadCount > 0 && styles.unreadBorder]}>
+    <GlassPanel key={`${orderId}:${unreadCount}`} variant="card" androidBlur={false} style={[styles.groupCard, unreadCount > 0 && styles.unreadBorder]}>
       <TouchableOpacity style={styles.header} onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={`Order ${displayOrderId}, ${items.length} updates`}>
         {unreadCount > 0 && <View style={styles.unreadDot} />}
         <View style={[styles.icon, { backgroundColor: latestMeta.bg }]}>

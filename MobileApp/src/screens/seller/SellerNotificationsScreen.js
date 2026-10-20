@@ -488,6 +488,8 @@ export default function SellerNotificationsScreen({ navigation }) {
         accessibilityHint={target ? 'Opens the related seller screen' : 'Marks this notification as read'}
       >
         <GlassPanel
+          key={`${item.id}:${item.read ? 'read' : 'unread'}`}
+          androidBlur={false}
           variant="card"
           style={[
             styles.notificationCard,

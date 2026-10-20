@@ -23,6 +23,9 @@ test('notification cards show the complete server-authored body and label subscr
   expect(screen.getByText(item.body).props.numberOfLines).toBeUndefined();
   expect(screen.getByText(item.title).props.numberOfLines).toBeUndefined();
   expect(screen.getByText('Subscription')).toBeTruthy();
+  // Repeated inbox surfaces must not allocate native Android blur layers:
+  // RenderNode/opacity recycling left tapped rows blank on a real device.
+  expect(screen.UNSAFE_getAllByType(require('react-native').View).some(view => view.props.androidBlur === false)).toBe(true);
   fireEvent.press(screen.getByRole('button'));
   expect(onPress).toHaveBeenCalledWith(item);
 });
