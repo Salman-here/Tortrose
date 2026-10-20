@@ -39,6 +39,7 @@ import BuyerCancellationModal from '../components/BuyerCancellationModal';
 import { getBuyerConfirmationMessage, getCancellationPaymentMessage, getConfirmationViaLabel } from '../utils/orderConfirmationPresentation';
 import { shareInvoice } from '../utils/invoiceUtils';
 import { useTheme } from '../contexts/ThemeContext';
+import { getBuyerDeliveryHeading, getBuyerShippingPresentation, getShipmentItemLabel } from '../utils/buyerShipmentPresentation';
 import {
   ORDER_STAGES,
   assertOrderDetailPresentation,
@@ -397,8 +398,9 @@ export default function OrderDetailScreen({ route, navigation }) {
 
           {sellerGroups.length > 0 && (
             <Section
-              title="Seller shipments"
-              subtitle={`One order split into ${sellerGroups.length} store shipment${sellerGroups.length === 1 ? '' : 's'}. Each store controls only its own products, shipping, and status.`}
+              title={getBuyerDeliveryHeading(sellerGroups.length).title}
+              subtitle={getBuyerDeliveryHeading(sellerGroups.length).subtitle}
+              subtitleStyle={styles.deliverySubtitle}
               icon="storefront-outline"
               styles={styles}
             >
@@ -447,7 +449,7 @@ export default function OrderDetailScreen({ route, navigation }) {
           {order.awaitingPayment !== true && <BuyerReturnsSection order={order} formatMoney={orderMoney} />}
           {order.awaitingPayment !== true && <BuyerWarrantySection key={order._id} order={order} formatMoney={orderMoney} />}
 
-          <Section title="Delivery details" subtitle="Where this order is going" icon="location-outline" styles={styles}>
+          <Section title="Delivery address" subtitle="Where this order is going" icon="location-outline" styles={styles}>
             <InfoRow icon="person-outline" label="Recipient" value={order.shippingInfo?.fullName} styles={styles} palette={palette} />
             <InfoRow icon="call-outline" label="Phone" value={order.shippingInfo?.phone} styles={styles} palette={palette} />
             <InfoRow icon="mail-outline" label="Email" value={order.shippingInfo?.email} styles={styles} palette={palette} />
@@ -573,14 +575,14 @@ export default function OrderDetailScreen({ route, navigation }) {
   );
 }
 
-function Section({ title, subtitle, icon, children, styles }) {
+function Section({ title, subtitle, subtitleStyle, icon, children, styles }) {
   return (
     <GlassPanel variant="card" style={styles.section}>
       <View style={styles.sectionHeader}>
         <View style={styles.sectionIcon}><Ionicons name={icon} size={18} color="#6366f1" /></View>
         <View style={{ flex: 1 }}>
           <Text style={styles.sectionTitle}>{title}</Text>
-          {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
+          {!!subtitle && <Text style={[styles.sectionSubtitle, subtitleStyle]}>{subtitle}</Text>}
         </View>
       </View>
       {children}
@@ -596,9 +598,10 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last, curren
   const activeIndex = Math.max(0, ORDER_STAGES.indexOf(group.status));
   const summary = group.summary;
   const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount, order);
+  const shipping = getBuyerShippingPresentation(group.shippingMethod);
 
   return (
-    <View style={[styles.sellerShipment, last && { marginBottom: 0 }]}>
+    <View testID={`buyer-shipment-${group.sellerId}`} style={[styles.sellerShipment, last && { marginBottom: 0 }]}>
       <View style={styles.sellerShipmentHeader}>
         <StoreAvatar
           logo={group.storeLogo}
@@ -612,7 +615,7 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last, curren
         <View style={styles.storeCopy}>
           <Text style={styles.storeName} numberOfLines={1}>{group.storeName}</Text>
           <Text style={styles.storeMeta}>
-            {group.itemCount} product line{group.itemCount === 1 ? '' : 's'} · {group.units} unit{group.units === 1 ? '' : 's'}
+            {getShipmentItemLabel(group.itemCount, group.units)}
           </Text>
         </View>
         <View style={[styles.smallStatus, { backgroundColor: tone.bg }]}>
@@ -650,11 +653,6 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last, curren
         {refund.valid && refund.deduction > 0 && <Text style={styles.paymentSub}>Processing fee: {formatMoney(refund.deduction)}</Text>}
         {!!refund.message && <Text style={styles.paymentSub}>{refund.message}</Text>}
       </GlassPanel>}
-      {group.canCancel === true && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Cancel ${group.storeName} items`}
-        disabled={cancelling} onPress={onCancel} style={[styles.cancelButton, { margin: spacing.sm }]}>
-        <Ionicons name="close-circle-outline" size={18} color={palette.colors.error} />
-        <Text style={styles.cancelTitle}>Cancel this store’s items</Text>
-      </TouchableOpacity>}
       <View style={styles.sellerItems}>
         {group.items.map((item, index) => {
           const options = formatOrderItemOptions(item);
@@ -671,39 +669,38 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last, curren
                 {!!options && <Text style={styles.sellerItemOptions}>{options}</Text>}
                 <Text style={styles.sellerItemQuantity}>Qty {getOrderItemQuantity(item)}</Text>
               </View>
-              <Text style={styles.sellerItemAmount}>{formatMoney(getOrderItemLineSubtotal(item))}</Text>
+              <View style={styles.sellerItemPrice}>
+                <Text style={styles.sellerItemPriceLabel}>Item total</Text>
+                <Text style={styles.sellerItemAmount}>{formatMoney(getOrderItemLineSubtotal(item))}</Text>
+              </View>
             </View>
           );
         })}
       </View>
 
       <View style={styles.sellerShippingCard}>
+        <Ionicons name="car-outline" size={18} color={palette.colors.textSecondary} />
         <View style={styles.sellerShippingCopy}>
-          <Text style={styles.sellerShippingName}>
-            {group.shippingMethod?.name || 'Shipping details unavailable for this legacy order'}
-          </Text>
-          {!!group.shippingMethod?.estimatedDays && (
-            <Text style={styles.sellerShippingMeta}>
-              {group.shippingMethod.estimatedDays} day{group.shippingMethod.estimatedDays === 1 ? '' : 's'} estimated delivery
-            </Text>
-          )}
+          <Text style={styles.sellerShippingName}>{shipping.name}</Text>
+          {!!shipping.estimate && <Text style={styles.sellerShippingMeta}>{shipping.estimate}</Text>}
         </View>
-        {!!group.shippingMethod && (
-          <Text style={styles.sellerShippingAmount}>
-            {group.shippingMethod.price === 0 ? 'Free' : formatMoney(group.shippingMethod.price)}
-          </Text>
-        )}
       </View>
 
       <View style={styles.sellerAllocation}>
-        <Text style={styles.sellerAllocationCaption}>YOUR CHECKOUT BREAKDOWN FOR THIS STORE</Text>
-        <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Products</Text><Text style={styles.groupSummaryValue}>{formatMoney(summary.subtotal)}</Text></View>
+        <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Subtotal</Text><Text style={styles.groupSummaryValue}>{formatMoney(summary.subtotal)}</Text></View>
         <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Shipping</Text><Text style={styles.groupSummaryValue}>{summary.shippingCost === 0 ? 'Free' : formatMoney(summary.shippingCost)}</Text></View>
         {summary.tax > 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Tax</Text><Text style={styles.groupSummaryValue}>{formatMoney(summary.tax)}</Text></View>}
         {summary.couponDiscount > 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Discount</Text><Text style={[styles.groupSummaryValue, { color: palette.colors.success }]}>-{formatMoney(summary.couponDiscount)}</Text></View>}
         {summary.reconciliationAdjustment !== 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Rounding</Text><Text style={styles.groupSummaryValue}>{summary.reconciliationAdjustment > 0 ? '+' : '-'}{formatMoney(Math.abs(summary.reconciliationAdjustment))}</Text></View>}
         <View style={[styles.groupSummaryRow, styles.groupSummaryTotal]}><Text style={styles.groupTotalLabel}>Store total</Text><Text style={styles.groupTotalValue}>{formatMoney(summary.totalAmount)}</Text></View>
       </View>
+      {group.canCancel === true && <View style={styles.sellerCancelFooter}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Cancel ${group.storeName} items`}
+          disabled={cancelling} onPress={onCancel} style={[styles.sellerCancelAction, cancelling && { opacity: 0.5 }]}>
+          <Ionicons name="close-circle-outline" size={16} color={palette.mode === 'dark' ? palette.colors.errorLight : palette.colors.errorDark} />
+          <Text style={styles.sellerCancelText}>Cancel this store’s items</Text>
+        </TouchableOpacity>
+      </View>}
     </View>
   );
 }
@@ -772,6 +769,7 @@ const buildStyles = (p) => StyleSheet.create({
   sectionIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(99,102,241,0.11)', alignItems: 'center', justifyContent: 'center' },
   sectionTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.extrabold, color: p.colors.text, letterSpacing: -0.2 },
   sectionSubtitle: { marginTop: 2, fontSize: 10, color: p.colors.textSecondary },
+  deliverySubtitle: { fontSize: 12, lineHeight: 18, color: p.mode === 'dark' ? p.colors.textSecondary : '#475569' },
   journey: { paddingHorizontal: 2 },
   journeyStep: { minHeight: 52, flexDirection: 'row' },
   journeyRail: { width: 24, alignItems: 'center', marginRight: spacing.md },
@@ -786,12 +784,12 @@ const buildStyles = (p) => StyleSheet.create({
   etaLabel: { fontSize: 9, color: p.colors.textSecondary, fontWeight: fontWeight.semibold },
   etaValue: { marginTop: 2, fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.extrabold },
   etaHint: { maxWidth: 75, textAlign: 'right', fontSize: 8, lineHeight: 12, color: p.colors.textLight },
-  sellerShipment: { marginBottom: spacing.md, overflow: 'hidden', borderRadius: 18, backgroundColor: p.glass.bgSubtle, borderWidth: 1, borderColor: p.glass.borderSubtle },
+  sellerShipment: { marginBottom: spacing.md, overflow: 'hidden', borderRadius: 18, backgroundColor: p.mode === 'dark' ? 'rgba(15,23,42,0.94)' : 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: p.mode === 'dark' ? 'rgba(148,163,184,0.22)' : 'rgba(100,116,139,0.18)' },
   sellerShipmentHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
   storeIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   storeCopy: { flex: 1, minWidth: 0 },
   storeName: { fontSize: fontSize.sm, color: p.colors.text, fontWeight: fontWeight.bold },
-  storeMeta: { marginTop: 3, fontSize: 9, color: p.colors.textSecondary },
+  storeMeta: { marginTop: 3, fontSize: 11, color: p.mode === 'dark' ? p.colors.textSecondary : '#475569' },
   smallStatus: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 5, borderRadius: 10 },
   smallStatusText: { fontSize: 8, fontWeight: fontWeight.bold },
   sellerProgress: { flexDirection: 'row', gap: 4, paddingHorizontal: spacing.md, paddingTop: spacing.md },
@@ -799,27 +797,32 @@ const buildStyles = (p) => StyleSheet.create({
   sellerProgressBar: { width: '100%', height: 4, borderRadius: 3, backgroundColor: p.glass.borderSubtle },
   cancelledShipment: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, margin: spacing.md, padding: spacing.sm, borderRadius: 12, backgroundColor: p.colors.errorSubtle },
   cancelledShipmentText: { flex: 1, color: p.colors.error, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
-  sellerItems: { paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+  sellerItems: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
   sellerItemRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
-  sellerItemImage: { width: 52, height: 52, borderRadius: 14, backgroundColor: p.glass.bgStrong },
+  sellerItemImage: { width: 56, height: 56, borderRadius: 14, backgroundColor: p.glass.bgStrong },
   sellerItemCopy: { flex: 1, minWidth: 0 },
-  sellerItemName: { color: p.colors.text, fontSize: fontSize.xs, lineHeight: 16, fontWeight: fontWeight.bold },
-  sellerItemOptions: { marginTop: 3, color: p.colors.primary, fontSize: 9, lineHeight: 13, fontWeight: fontWeight.semibold },
-  sellerItemQuantity: { marginTop: 3, color: p.colors.textSecondary, fontSize: 9 },
-  sellerItemAmount: { maxWidth: 105, color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.extrabold, textAlign: 'right' },
-  sellerShippingCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, margin: spacing.md, padding: spacing.sm, borderRadius: 13, backgroundColor: p.glass.bgStrong },
+  sellerItemName: { color: p.colors.text, fontSize: 13, lineHeight: 18, fontWeight: fontWeight.bold },
+  sellerItemOptions: { marginTop: 4, color: p.mode === 'dark' ? '#93c5fd' : '#1d4ed8', fontSize: 11, lineHeight: 16, fontWeight: fontWeight.medium },
+  sellerItemQuantity: { marginTop: 4, color: p.mode === 'dark' ? p.colors.textSecondary : '#475569', fontSize: 11 },
+  sellerItemPrice: { maxWidth: '40%', alignItems: 'flex-end', flexShrink: 1 },
+  sellerItemPriceLabel: { marginBottom: 4, color: p.mode === 'dark' ? p.colors.textSecondary : '#475569', fontSize: 10 },
+  sellerItemAmount: { color: p.colors.text, fontSize: 13, fontWeight: fontWeight.semibold, textAlign: 'right' },
+  sellerShippingCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, margin: spacing.md, padding: spacing.md, borderRadius: 13, backgroundColor: p.mode === 'dark' ? 'rgba(30,41,59,0.86)' : '#f1f5f9' },
   sellerShippingCopy: { flex: 1, minWidth: 0 },
   sellerShippingName: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
-  sellerShippingMeta: { marginTop: 2, color: p.colors.textSecondary, fontSize: 9 },
+  sellerShippingMeta: { marginTop: 4, color: p.mode === 'dark' ? p.colors.textSecondary : '#475569', fontSize: 11, lineHeight: 16 },
   sellerShippingAmount: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.extrabold },
-  sellerAllocation: { marginHorizontal: spacing.md, marginBottom: spacing.md, padding: spacing.md, borderRadius: 14, backgroundColor: 'rgba(99,102,241,0.07)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.13)' },
+  sellerAllocation: { marginHorizontal: spacing.md, marginBottom: spacing.md, padding: spacing.md, borderRadius: 14, backgroundColor: p.mode === 'dark' ? 'rgba(30,41,59,0.86)' : '#f1f5f9', borderWidth: 1, borderColor: p.mode === 'dark' ? 'rgba(148,163,184,0.22)' : 'rgba(100,116,139,0.12)' },
   sellerAllocationCaption: { marginBottom: spacing.sm, color: p.colors.textLight, fontSize: 8, letterSpacing: 0.7, fontWeight: fontWeight.extrabold },
-  groupSummaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, paddingVertical: 4 },
-  groupSummaryLabel: { color: p.colors.textSecondary, fontSize: fontSize.xs },
-  groupSummaryValue: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  groupSummaryRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md, paddingVertical: 5 },
+  groupSummaryLabel: { flexShrink: 0, color: p.mode === 'dark' ? p.colors.textSecondary : '#475569', fontSize: fontSize.xs },
+  groupSummaryValue: { flexShrink: 1, color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.medium, textAlign: 'right' },
   groupSummaryTotal: { marginTop: spacing.xs, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
   groupTotalLabel: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
-  groupTotalValue: { color: p.colors.primary, fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
+  groupTotalValue: { flexShrink: 1, textAlign: 'right', color: p.mode === 'dark' ? '#93c5fd' : '#1d4ed8', fontSize: fontSize.md, fontWeight: fontWeight.extrabold },
+  sellerCancelFooter: { borderTopWidth: 1, borderTopColor: p.glass.borderSubtle, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  sellerCancelAction: { minHeight: 44, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm },
+  sellerCancelText: { flexShrink: 1, color: p.mode === 'dark' ? p.colors.errorLight : p.colors.errorDark, fontSize: 11, fontWeight: fontWeight.medium },
   productRow: { flexDirection: 'row', paddingBottom: spacing.md, marginBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: p.glass.borderSubtle },
   productImage: { width: 76, height: 76, borderRadius: 18, backgroundColor: p.glass.bgSubtle },
   productCopy: { flex: 1, minWidth: 0, marginLeft: spacing.md },

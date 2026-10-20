@@ -1,11 +1,12 @@
 import React from 'react';
-import { act, render, waitFor } from '@testing-library/react-native';
-import { AppState } from 'react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { AppState, StyleSheet } from 'react-native';
 import OrderDetailScreen from '../../src/screens/OrderDetailScreen';
 import api from '../../src/config/api';
 
 jest.mock('../../src/config/api', () => ({ __esModule: true, default: { get: jest.fn(), patch: jest.fn(), post: jest.fn() } }));
-jest.mock('../../src/contexts/ThemeContext', () => ({ useTheme: () => ({ palette: require('../../src/styles/palettes').lightPalette }) }));
+let mockPaletteMode = 'light';
+jest.mock('../../src/contexts/ThemeContext', () => ({ useTheme: () => ({ palette: require('../../src/styles/palettes')[mockPaletteMode === 'dark' ? 'darkPalette' : 'lightPalette'] }) }));
 jest.mock('../../src/contexts/CurrencyContext', () => ({ useCurrency: () => ({ formatPrice: (amount, options) => `${options.targetCurrency} ${amount.toFixed(2)}` }) }));
 jest.mock('../../src/contexts/GlobalContext', () => ({ useGlobal: () => ({ fetchCart: jest.fn() }) }));
 jest.mock('../../src/components/common/GlassBackground', () => ({ children }) => children);
@@ -45,7 +46,7 @@ const purchase = {
   ],
 };
 const navigation = { goBack: jest.fn(), navigate: jest.fn() };
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => { jest.clearAllMocks(); mockPaletteMode = 'light'; });
 
 test('My Orders requests the buyer view and renders every seller with the frozen purchase total', async () => {
   api.get.mockResolvedValue({ data: { order: purchase } });
@@ -66,6 +67,36 @@ test('a refused foreign order displays the server error without purchase data', 
   expect(api.get).toHaveBeenCalledWith('/api/order/detail/foreign-order?view=buyer');
   expect(screen.queryByText('Travel Mug')).toBeNull();
   expect(api.patch).not.toHaveBeenCalled();
+});
+
+test('delivery wording, exact options and financial totals stay scoped to each store', async () => {
+  const current = { ...purchase, sellerGroups: purchase.sellerGroups.map((group, i) => ({ ...group, canCancel: i === 0 })) };
+  api.get.mockResolvedValue({ data: { order: current } });
+  const screen = render(<OrderDetailScreen route={{ params: { orderId: 'owned-order' } }} navigation={navigation} />);
+  await screen.findByText('Store deliveries');
+  expect(screen.getByText('Your order includes 2 stores. Track each delivery below.')).toBeTruthy();
+  expect(screen.getByText('Standard delivery')).toBeTruthy(); expect(screen.getByText('Free shipping')).toBeTruthy();
+  expect(screen.getByText('Estimated delivery: 3 days')).toBeTruthy(); expect(screen.getByText('Estimated delivery: 2 days')).toBeTruthy();
+  expect(screen.getAllByText('Store total')).toHaveLength(2);
+  expect(screen.getByText('PKR 1100.00')).toBeTruthy(); expect(screen.getAllByText('PKR 500.00').length).toBeGreaterThan(0);
+  expect(screen.queryByText('Seller total')).toBeNull(); expect(screen.queryByText('Seller shipments')).toBeNull();
+  expect(screen.queryByLabelText('Cancel Store Two items')).toBeNull();
+  fireEvent.press(screen.getByLabelText('Cancel Store One items'));
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/order/cancel/owned-order/preview', { sellerIds: ['seller-a'] }));
+  expect(api.patch).not.toHaveBeenCalled();
+});
+
+test.each(['light', 'dark'])('%s delivery card uses a readable surface and retains its stored total', async mode => {
+  mockPaletteMode = mode;
+  const current = { ...purchase, orderItems: [purchase.orderItems[0]],
+    sellerGroups: [purchase.sellerGroups[0]], orderSummary: { ...purchase.sellerGroups[0].summary } };
+  api.get.mockResolvedValue({ data: { order: current } });
+  const screen = render(<OrderDetailScreen route={{ params: { orderId: 'owned-order' } }} navigation={navigation} />);
+  await screen.findByText('Delivery details');
+  expect(screen.queryByText('Store deliveries')).toBeNull();
+  const surface = StyleSheet.flatten(screen.getByTestId('buyer-shipment-seller-a').props.style);
+  expect(surface.backgroundColor).toBe(mode === 'dark' ? 'rgba(15,23,42,0.94)' : 'rgba(255,255,255,0.9)');
+  expect(screen.getAllByText('PKR 1100.00').length).toBeGreaterThan(0);
 });
 
 test('an active buyer detail quietly replaces a pending refund with the verified completed status', async () => {

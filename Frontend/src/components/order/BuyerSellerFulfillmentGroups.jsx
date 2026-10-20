@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import StoreAvatar from '../common/StoreAvatar';
 import { cancellationRefundPresentation } from '../../utils/orderCancellationPresentation';
+import { getBuyerDeliveryHeading, getBuyerShippingPresentation, getShipmentItemLabel } from '../../utils/buyerShipmentPresentation';
 import {
   getExactOrderItemUnitAmount,
   getOrderItemLineSubtotal,
@@ -88,77 +89,82 @@ export const BuyerSellerStatusChips = ({ order }) => {
 const SellerGroup = ({ group, formatMoney, index, onCancel, currency, order }) => {
   const summary = group.summary;
   const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount, order);
+  const shipping = getBuyerShippingPresentation(group.shippingMethod);
   return (
-    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.06 }} className="glass-inner rounded-2xl overflow-hidden" data-seller-id={group.sellerId}>
-      <div className="p-4 sm:p-5" style={{ borderBottom: '1px solid var(--glass-border-subtle)' }}>
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.06 }} className="buyer-shipment-card rounded-2xl overflow-hidden" data-seller-id={group.sellerId}>
+      <div className="p-4 sm:p-5 border-b buyer-shipment-divider">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <StoreAvatar logo={group.storeLogo} storeName={group.storeName} />
             <div className="min-w-0">
               <h3 className="text-base font-bold truncate" style={{ color: 'hsl(var(--foreground))' }}>{group.storeName}</h3>
-              <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>{group.itemCount} product line{group.itemCount === 1 ? '' : 's'} · {group.units} unit{group.units === 1 ? '' : 's'}</p>
+              <p className="text-xs mt-1 buyer-shipment-secondary">{getShipmentItemLabel(group.itemCount, group.units)}</p>
             </div>
           </div>
           <StatusBadge status={group.status} />
         </div>
         <div className="mt-4"><SellerProgress status={group.status} /></div>
-        {refund && <div className="glass-inner rounded-xl p-3 mt-3 text-sm" role="status">
+        {refund && <div className="buyer-shipment-panel rounded-xl p-3 mt-3 text-sm" role="status">
           <p className="font-semibold">{refund.label}</p>
-          {refund.valid && refund.destination && <p className="text-xs text-muted-foreground mt-1">{formatMoney(refund.amount)} → {refund.destination}</p>}
-          {refund.valid && refund.deduction > 0 && <p className="text-xs text-muted-foreground mt-1">Processing fee: {formatMoney(refund.deduction)}</p>}
-          {refund.message && <p className="text-xs text-muted-foreground mt-1">{refund.message}</p>}
+          {refund.valid && refund.destination && <p className="text-xs buyer-shipment-secondary mt-1">{formatMoney(refund.amount)} → {refund.destination}</p>}
+          {refund.valid && refund.deduction > 0 && <p className="text-xs buyer-shipment-secondary mt-1">Processing fee: {formatMoney(refund.deduction)}</p>}
+          {refund.message && <p className="text-xs buyer-shipment-secondary mt-1">{refund.message}</p>}
         </div>}
-        {group.canCancel === true && onCancel && <button type="button" onClick={() => onCancel(group)}
-          className="glass-button rounded-xl px-4 py-2 mt-3 text-xs font-semibold inline-flex items-center gap-2 text-red-600">
-          <XCircle size={14} /> Cancel this store’s items
-        </button>}
       </div>
 
-      <div className="p-4 sm:p-5 grid grid-cols-1 xl:grid-cols-[1fr_230px] gap-5">
-        <div className="space-y-3">
+      <div className="p-4 sm:p-5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_260px] gap-5 sm:gap-6">
+        <div className="min-w-0 space-y-4">
           {group.items.map((item, itemIndex) => {
             const options = getOrderItemOptionPairs(item);
             const exactUnitAmount = getExactOrderItemUnitAmount(item);
             return (
-              <div key={`${group.itemIndexes[itemIndex]}:${item.productId || item.name}`} className="flex items-start gap-3">
-                <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <div key={`${group.itemIndexes[itemIndex]}:${item.productId || item.name}`} className="flex items-start gap-3 sm:gap-4">
+                <div className="w-14 h-14 sm:w-16 sm:h-16 buyer-shipment-panel rounded-xl overflow-hidden shrink-0 flex items-center justify-center">
                   {item.image ? <img src={item.image} alt={item.name} className="w-full h-full object-cover" /> : <Package className="w-5 h-5" style={{ color: 'hsl(var(--muted-foreground))' }} />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold break-words" style={{ color: 'hsl(var(--foreground))' }}>{item.name}</p>
                   {options.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1.5">
-                      {options.map(option => <span key={`${option.name}:${option.value}`} className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: 'rgba(99, 102, 241, 0.12)', color: 'hsl(220, 70%, 55%)' }}>{option.name}: {option.value}</span>)}
+                      {options.map(option => <span key={`${option.name}:${option.value}`} className="buyer-shipment-option px-2 py-1 rounded-md text-xs font-medium">{option.name}: {option.value}</span>)}
                     </div>
                   )}
-                  <p className="text-xs mt-1.5" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                    {exactUnitAmount !== null ? `${item.quantity} × ${formatMoney(exactUnitAmount)}` : `${item.quantity} unit${item.quantity === 1 ? '' : 's'} · complete line price`}
+                  <p className="text-xs mt-2 buyer-shipment-secondary">
+                    {exactUnitAmount !== null ? `Qty ${item.quantity} · ${formatMoney(exactUnitAmount)} each` : `Qty ${item.quantity} · complete line price`}
                   </p>
                 </div>
-                <span className="text-sm font-bold shrink-0" style={{ color: 'hsl(var(--foreground))' }}>{formatMoney(getOrderItemLineSubtotal(item))}</span>
+                <div className="shrink-0 text-right max-w-[42%]">
+                  <p className="text-[11px] buyer-shipment-secondary mb-1">Item total</p>
+                  <p className="text-sm font-semibold break-words">{formatMoney(getOrderItemLineSubtotal(item))}</p>
+                </div>
               </div>
             );
           })}
 
-          <div className="rounded-xl p-3 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ background: 'rgba(255,255,255,0.035)', color: 'hsl(var(--muted-foreground))' }}>
-            <span className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
-              {group.shippingMethod?.name || 'Shipping details unavailable for this legacy order'}
-            </span>
-            {group.shippingMethod && (
-              <span>{group.shippingMethod.estimatedDays ? `${group.shippingMethod.estimatedDays} day${group.shippingMethod.estimatedDays === 1 ? '' : 's'} · ` : ''}{group.shippingMethod.price === 0 ? 'Free shipping' : formatMoney(group.shippingMethod.price)}</span>
-            )}
+          <div className="buyer-shipment-panel rounded-xl p-3 sm:p-4 flex items-start gap-3">
+            <Truck className="w-4 h-4 mt-0.5 shrink-0 buyer-shipment-secondary" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold break-words">{shipping.name}</p>
+              {shipping.estimate && <p className="text-xs mt-1 buyer-shipment-secondary">{shipping.estimate}</p>}
+            </div>
           </div>
         </div>
 
-        <div className="rounded-xl p-3 h-fit space-y-2 text-xs" style={{ background: 'rgba(255,255,255,0.035)' }}>
-          <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Products</span><span>{formatMoney(summary.subtotal)}</span></div>
-          <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span>{summary.shippingCost === 0 ? 'Free' : formatMoney(summary.shippingCost)}</span></div>
-          {summary.tax > 0 && <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span>{formatMoney(summary.tax)}</span></div>}
-          {summary.couponDiscount > 0 && <div className="flex justify-between gap-3" style={{ color: 'hsl(150, 60%, 40%)' }}><span>Discount</span><span>-{formatMoney(summary.couponDiscount)}</span></div>}
-          {summary.reconciliationAdjustment !== 0 && <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Rounding</span><span>{summary.reconciliationAdjustment > 0 ? '+' : '-'}{formatMoney(Math.abs(summary.reconciliationAdjustment))}</span></div>}
-          <div className="flex justify-between gap-3 pt-2 text-sm font-extrabold" style={{ borderTop: '1px solid var(--glass-border-subtle)', color: 'hsl(var(--foreground))' }}><span>Seller total</span><span>{formatMoney(summary.totalAmount)}</span></div>
-        </div>
+        <dl className="buyer-shipment-panel rounded-xl p-4 h-fit space-y-2.5 text-[13px] min-w-0">
+          <div className="flex justify-between gap-3"><dt className="buyer-shipment-secondary">Subtotal</dt><dd className="text-right font-medium break-words min-w-0">{formatMoney(summary.subtotal)}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="buyer-shipment-secondary">Shipping</dt><dd className="text-right font-medium break-words min-w-0">{summary.shippingCost === 0 ? 'Free' : formatMoney(summary.shippingCost)}</dd></div>
+          {summary.tax > 0 && <div className="flex justify-between gap-3"><dt className="buyer-shipment-secondary">Tax</dt><dd className="text-right font-medium break-words min-w-0">{formatMoney(summary.tax)}</dd></div>}
+          {summary.couponDiscount > 0 && <div className="flex justify-between gap-3"><dt className="buyer-shipment-secondary">Discount</dt><dd className="text-right font-medium break-words min-w-0">-{formatMoney(summary.couponDiscount)}</dd></div>}
+          {summary.reconciliationAdjustment !== 0 && <div className="flex justify-between gap-3"><dt className="buyer-shipment-secondary">Rounding</dt><dd className="text-right font-medium break-words min-w-0">{summary.reconciliationAdjustment > 0 ? '+' : '-'}{formatMoney(Math.abs(summary.reconciliationAdjustment))}</dd></div>}
+          <div className="flex justify-between items-start gap-3 pt-3 mt-3 border-t buyer-shipment-divider"><dt className="text-sm font-bold shrink-0">Store total</dt><dd className="text-base font-extrabold buyer-shipment-total text-right break-words min-w-0">{formatMoney(summary.totalAmount)}</dd></div>
+        </dl>
       </div>
+      {group.canCancel === true && onCancel && <div className="px-4 sm:px-5 py-3 border-t buyer-shipment-divider">
+        <button type="button" onClick={() => onCancel(group)} aria-label={`Cancel ${group.storeName} items`}
+          className="buyer-shipment-cancel min-h-11 rounded-lg px-2.5 py-2 text-xs font-medium inline-flex items-center gap-2">
+          <XCircle size={14} /> Cancel this store’s items
+        </button>
+      </div>}
     </motion.section>
   );
 };
@@ -174,12 +180,13 @@ const BuyerSellerFulfillmentGroups = ({ order, formatMoney, showHeading = true, 
     );
   }
   if (!groups.length) return null;
+  const heading = getBuyerDeliveryHeading(groups.length);
   return (
     <div className="space-y-3">
       {showHeading && (
         <div>
-          <h2 className="text-base sm:text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>Seller shipments</h2>
-          <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>This is one order split into {groups.length} seller shipment{groups.length === 1 ? '' : 's'}. Each store controls only its own status, shipping, and products.</p>
+          <h2 className="text-base sm:text-lg font-semibold" style={{ color: 'hsl(var(--foreground))' }}>{heading.title}</h2>
+          <p className="text-sm mt-1" style={{ color: 'hsl(var(--secondary-foreground))' }}>{heading.subtitle}</p>
         </div>
       )}
       {groups.map((group, index) => <SellerGroup key={group.sellerId} group={group} formatMoney={formatMoney} index={index} currency={order.currency} order={order} onCancel={onCancel} />)}
