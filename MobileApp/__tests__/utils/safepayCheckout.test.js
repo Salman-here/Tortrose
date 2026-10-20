@@ -1,8 +1,54 @@
 jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn() }));
-import { validateSafepayCheckout, normalizeSafepayStatus, openSafepayCheckout, verifySafepayPayment, resumeSafepayCheckout } from '../../src/utils/safepayCheckout';
+import { validateSafepayCheckout, normalizeSafepayStatus, openSafepayCheckout, verifySafepayPayment, resumeSafepayCheckout,
+  retireSafepayCheckout, getSafepayCheckoutChoice, safepayPaymentExpectation } from '../../src/utils/safepayCheckout';
 const paymentId = 'a'.repeat(24);
 const payment = { paymentId, paymentMethod: 'safepay', paymentFlow: 'safepay_hosted', environment: 'sandbox',
   checkoutUrl: 'https://sandbox.api.getsafepay.com/embedded/?tracker=track_fixture', status: 'pending', isPaid: false };
+
+test('new-card and distinct saved-card choices cannot be confused with the original frozen attempt', () => {
+  expect(getSafepayCheckoutChoice('card', '')).toBe('new-card');
+  expect(getSafepayCheckoutChoice('card', 'raast')).toBe('new-card');
+  expect(getSafepayCheckoutChoice('card', 'pm_card-one')).toBe('saved:pm_card-one');
+  expect(getSafepayCheckoutChoice('card', 'pm_card-two')).not.toBe(getSafepayCheckoutChoice('card', 'pm_card-one'));
+  expect(getSafepayCheckoutChoice('wallet')).toBe('wallet');
+});
+test('pending verification expectations contain no provider URL, session ticket or grant', () => {
+  expect(safepayPaymentExpectation({ ...payment, purpose: 'order', currency: 'PKR', amountMinor: 100,
+    checkoutSessionGrant: 'private-grant', user: 'buyerA' })).toEqual({ paymentId, purpose: 'order', environment: 'sandbox', currency: 'PKR', amountMinor: 100 });
+});
+test('retirement closes an explicitly owned idle purchase without falsely confirming financial cancellation', async () => {
+  const pending = { ...payment, purpose: 'order', amountMinor: 100, currency: 'PKR', checkoutRetired: true };
+  const apiClient = { post: jest.fn(async () => ({ data: pending })) };
+  expect(await retireSafepayCheckout({ apiClient, paymentId, expectedPayment: pending })).toMatchObject({ checkoutRetired: true, isPaid: false, status: 'pending' });
+  expect(apiClient.post).toHaveBeenCalledTimes(1);
+  expect(apiClient.post).toHaveBeenCalledWith(`/api/safepay/payments/${paymentId}/retire-checkout`, { clientSurface: 'mobile' });
+});
+test('payment racing a method change is confirmed, never returned as retired permission for a new charge', async () => {
+  const pending = { ...payment, purpose: 'order', amountMinor: 100, currency: 'PKR' };
+  const paid = { ...pending, status: 'paid', isPaid: true, webhookProcessed: true, checkoutRetired: false };
+  const apiClient = { post: jest.fn(async () => ({ data: paid })) };
+  expect(await retireSafepayCheckout({ apiClient, paymentId, expectedPayment: pending })).toMatchObject({ status: 'paid', checkoutRetired: false });
+  apiClient.post.mockResolvedValue({ data: { ...paid, checkoutRetired: true } });
+  await expect(retireSafepayCheckout({ apiClient, paymentId, expectedPayment: pending })).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_INVALID' });
+});
+test('a foreign payment/money response cannot authorize switching the original checkout', async () => {
+  const pending = { ...payment, purpose: 'order', amountMinor: 100, currency: 'PKR' };
+  for (const change of [{ paymentId: 'b'.repeat(24) }, { amountMinor: 101 }, { environment: 'production' }, { purpose: 'wallet_top_up' }]) {
+    await expect(retireSafepayCheckout({ apiClient: { post: async () => ({ data: { ...pending, checkoutRetired: true, ...change } }) },
+      paymentId, expectedPayment: pending })).rejects.toMatchObject({ code: 'SAFEPAY_CHECKOUT_INVALID' });
+  }
+});
+test('aborting a status read cancels the request and removes its bounded timer without reporting a financial outcome', async () => {
+  jest.useFakeTimers();
+  try {
+    const controller = new AbortController(), apiClient = { get: jest.fn(() => new Promise(() => {})) };
+    const promise = verifySafepayPayment({ apiClient, paymentId, signal: controller.signal, attempts: 6 });
+    const rejection = expect(promise).rejects.toMatchObject({ code: 'SAFEPAY_VERIFICATION_ABORTED' });
+    await jest.advanceTimersByTimeAsync(0); controller.abort(); await jest.advanceTimersByTimeAsync(0); await rejection;
+    expect(apiClient.get).toHaveBeenCalledTimes(1); expect(apiClient.get.mock.calls[0][1].signal.aborted).toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  } finally { jest.useRealTimers(); }
+});
 
 test('continue payment reopens the original provider checkout without creating another order', async () => {
   const apiClient = { post: jest.fn().mockResolvedValue({ data: payment }), get: jest.fn().mockResolvedValue({ data: payment }) };

@@ -4,9 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../config/api';
 import { useTheme } from '../contexts/ThemeContext';
 import { useGlobal } from '../contexts/GlobalContext';
+import { useAuth } from '../contexts/AuthContext';
+import { useIsFocused } from '@react-navigation/native';
+import useSafepayPendingVerification from '../hooks/useSafepayPendingVerification';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
-import { openSafepayCheckout, verifySafepayPayment } from '../utils/safepayCheckout';
+import { openSafepayCheckout, safepayPaymentExpectation, verifySafepayPayment } from '../utils/safepayCheckout';
 import { getOriginalPaymentRefundCopy } from '../utils/paymentPresentation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearCheckoutAttempt } from '../utils/checkout';
@@ -14,6 +17,9 @@ import { clearCheckoutAttempt } from '../utils/checkout';
 export default function SafepayReturnScreen({ route, navigation }) {
   const { palette } = useTheme();
   const { fetchCart } = useGlobal();
+  const { currentUser } = useAuth();
+  const owner = String(currentUser?._id || currentUser?.id || '');
+  const focused = useIsFocused();
   const paymentId = route.params?.paymentId;
   const [result, setResult] = useState({ status: 'checking' });
   const [checking, setChecking] = useState(false);
@@ -55,11 +61,13 @@ export default function SafepayReturnScreen({ route, navigation }) {
     } finally { busy.current = false; if (mounted.current) setChecking(false); }
   };
   useEffect(() => { mounted.current = true; check(); return () => { mounted.current = false; }; }, [check]);
+  const automaticallyChecking = useSafepayPendingVerification({ owner, enabled: focused, paused: checking,
+    payment: { ...result, paymentId, safepay: true, owner, expectedPayment: safepayPaymentExpectation(result) }, onVerified: applyResult });
   const paid = result.status === 'paid';
   const authorized = result.status === 'authorized' && result.purpose === 'card_setup';
   const closed = ['cancelled', 'failed', 'refunded', 'reversed'].includes(result.status);
   const title = result.status === 'reversed' ? 'Payment reversed' : result.status === 'refund_pending' ? 'Refund being verified' : result.status === 'refunded' ? 'Payment refunded' : authorized ? 'Card verification complete' : paid ? 'Payment confirmed' : result.status === 'manual_review' ? 'Payment needs review'
-    : closed ? 'Payment not completed' : checking ? 'Checking your payment' : result.status === 'unavailable' ? 'Payment status unavailable' : 'Payment not confirmed';
+    : closed ? 'Payment not completed' : checking || automaticallyChecking ? 'Checking your payment' : result.status === 'unavailable' ? 'Payment status unavailable' : 'Payment not confirmed';
   const message = result.status === 'reversed' ? 'A bank reversal was recorded after review of the final provider decision. Open your account for payment and balance details; do not resume this payment.' : result.status === 'refund_pending' ? `This payment could not complete the purchase. ${getOriginalPaymentRefundCopy(result, result.status)} Do not pay again for this attempt.`
     : result.status === 'refunded' ? getOriginalPaymentRefundCopy(result, result.status)
     : authorized ? 'Return to Saved Cards to review your card. Adding a card does not start a paid subscription.'

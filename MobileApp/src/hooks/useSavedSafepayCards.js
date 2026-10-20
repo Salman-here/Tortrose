@@ -9,10 +9,12 @@ export default function useSavedSafepayCards() {
   const [refreshRevision, setRefreshRevision] = useState(0);
   const refreshCards = useCallback(() => setRefreshRevision(value => value + 1), []);
   const touched = useRef(false);
+  const selectionOwner = useRef(owner);
   useEffect(() => {
     let active = true;
-    touched.current = false;
-    setState({ owner, cards: [], selectedCardId: '', loading: !!owner, billingProfileReady: null });
+    if (selectionOwner.current !== owner) { touched.current = false; selectionOwner.current = owner; }
+    setState(previous => previous.owner === owner
+      ? { ...previous, loading: !!owner } : { owner, cards: [], selectedCardId: '', loading: !!owner, billingProfileReady: null });
     if (owner) api.get('/api/safepay/cards').then(({ data }) => {
       if (!active) return;
       const cards = Array.isArray(data.cards) ? data.cards.filter(card => card.usable === true
@@ -20,10 +22,17 @@ export default function useSavedSafepayCards() {
       setState(previous => ({ owner, cards, loading: false,
         billingProfileReady: typeof data.billingProfileReady === 'boolean' ? data.billingProfileReady : null,
         selectedCardId: touched.current
-        ? previous.selectedCardId : cards.some(card => card.id === data.defaultPaymentMethodId) ? data.defaultPaymentMethodId : '' }));
-    }).catch(() => { if (active) setState({ owner, cards: [], selectedCardId: '', loading: false, billingProfileReady: null }); });
+        ? previous.owner === owner && cards.some(card => card.id === previous.selectedCardId) ? previous.selectedCardId : ''
+        : cards.some(card => card.id === data.defaultPaymentMethodId) ? data.defaultPaymentMethodId : '' }));
+    }).catch(() => { if (active) setState(previous => previous.owner === owner
+      ? { ...previous, loading: false, billingProfileReady: null } : { owner, cards: [], selectedCardId: '', loading: false, billingProfileReady: null }); });
     return () => { active = false; };
   }, [owner, refreshRevision]);
   const current = state.owner === owner ? state : { cards: [], selectedCardId: '', loading: !!owner, billingProfileReady: null };
-  return { ...current, refreshCards, setSelectedCardId: id => { touched.current = true; setState(previous => ({ ...previous, owner, selectedCardId: id })); } };
+  const setSelectedCardId = useCallback(id => {
+    if (selectionOwner.current !== owner) return;
+    touched.current = true;
+    setState(previous => previous.owner === owner ? { ...previous, selectedCardId: id } : previous);
+  }, [owner]);
+  return { ...current, refreshCards, setSelectedCardId };
 }

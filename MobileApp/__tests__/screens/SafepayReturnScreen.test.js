@@ -6,7 +6,10 @@ import { openSafepayCheckout, verifySafepayPayment } from '../../src/utils/safep
 const mockFetchCart = jest.fn();
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Icon' }));
 jest.mock('../../src/config/api', () => ({ get: jest.fn(), post: jest.fn() }));
-jest.mock('../../src/utils/safepayCheckout', () => ({ openSafepayCheckout: jest.fn(), verifySafepayPayment: jest.fn() }));
+jest.mock('../../src/utils/safepayCheckout', () => ({ openSafepayCheckout: jest.fn(), verifySafepayPayment: jest.fn(), safepayPaymentExpectation: p => p }));
+jest.mock('../../src/contexts/AuthContext', () => ({ useAuth: () => ({ currentUser: { id: 'buyer' } }) }));
+jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
+jest.mock('../../src/hooks/useSafepayPendingVerification', () => () => false);
 jest.mock('../../src/utils/checkout', () => ({ clearCheckoutAttempt: jest.fn() }));
 jest.mock('../../src/contexts/GlobalContext', () => ({ useGlobal: () => ({ fetchCart: mockFetchCart }) }));
 jest.mock('../../src/contexts/ThemeContext', () => ({ useTheme: () => ({ palette: { colors: { text: '#111', textSecondary: '#555' } } }) }));

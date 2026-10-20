@@ -4,6 +4,11 @@ const HOSTS = { sandbox: 'sandbox.api.getsafepay.com', production: 'getsafepay.c
 const ID = /^[a-f0-9]{24}$/i;
 const unwrap = response => response?.data || response || {};
 const failure = message => Object.assign(new Error(message), { code: 'SAFEPAY_CHECKOUT_INVALID' });
+const aborted = () => Object.assign(new Error('Payment verification stopped.'), { code: 'SAFEPAY_VERIFICATION_ABORTED' });
+export const getSafepayCheckoutChoice = (method, cardId = '') => method === 'card'
+  ? cardId && cardId !== 'raast' ? `saved:${cardId}` : 'new-card' : method;
+export const safepayPaymentExpectation = payment => Object.fromEntries(
+  ['paymentId', 'environment', 'purpose', 'currency', 'amountMinor', 'paymentRail'].filter(key => payment?.[key] !== undefined).map(key => [key, payment[key]]));
 const hasConfirmedRail = payment => payment?.status === 'paid' && payment.isPaid === true && payment.webhookProcessed === true
   || payment?.purpose === 'card_setup' && payment.status === 'authorized' && payment.cardSaved === true && payment.completed === true
   || ['refund_pending', 'refunded', 'manual_review', 'reversed'].includes(payment?.status) && (
@@ -66,10 +71,11 @@ export function normalizeSafepayStatus(response, expectedPaymentId, expected) {
 
 // Axios' normal timeout also covers unrelated requests and can be retried by
 // interceptors. Bound this read itself so a closed sheet can never trap a button.
-async function readPaymentStatus(apiClient, paymentId, timeoutMs) {
+async function readPaymentStatus(apiClient, paymentId, timeoutMs, signal) {
   const controller = new AbortController();
-  let timer;
+  let timer, onAbort;
   try {
+    if (signal?.aborted) throw aborted();
     return await Promise.race([
       Promise.resolve().then(() => apiClient.get(`/api/safepay/payments/${paymentId}`, {
         timeout: timeoutMs, signal: controller.signal,
@@ -78,26 +84,49 @@ async function readPaymentStatus(apiClient, paymentId, timeoutMs) {
         controller.abort();
         reject(Object.assign(new Error('Payment verification is pending.'), { code: 'SAFEPAY_STATUS_TIMEOUT' }));
       }, timeoutMs); }),
+      ...(signal ? [new Promise((_, reject) => { onAbort = () => { controller.abort(); reject(aborted()); };
+        signal.addEventListener('abort', onAbort, { once: true }); })] : []),
     ]);
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); if (onAbort) signal.removeEventListener('abort', onAbort); }
+}
+
+function waitForVerification(ms, signal) {
+  if (signal?.aborted) return Promise.reject(aborted());
+  return new Promise((resolve, reject) => {
+    const stop = () => { clearTimeout(timer); signal?.removeEventListener('abort', stop); reject(aborted()); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, ms);
+    signal?.addEventListener('abort', stop, { once: true });
+  });
 }
 
 export async function verifySafepayPayment({ apiClient, paymentId, expectedPayment, attempts = 4, delayMs = 1200, requestTimeoutMs = 5000,
-  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  sleep, signal }) {
   if (!ID.test(String(paymentId || ''))) throw failure('A valid payment reference is required.');
   let last = { status: 'pending', paymentId, isPaid: false };
   for (let index = 0; index < Math.max(1, Math.min(attempts, 10)); index++) {
+    if (signal?.aborted) throw aborted();
     try {
       last = normalizeSafepayStatus(await readPaymentStatus(apiClient, paymentId,
-        Math.max(1, Math.min(requestTimeoutMs, 15000))), paymentId, expectedPayment || last);
+        Math.max(1, Math.min(requestTimeoutMs, 15000)), signal), paymentId, expectedPayment || last);
       if (last.status !== 'pending') return last;
     } catch (error) {
+      if (signal?.aborted || error.code === 'SAFEPAY_VERIFICATION_ABORTED') throw aborted();
       if (error.code === 'SAFEPAY_CHECKOUT_INVALID' || [401, 403, 404].includes(error.response?.status)) throw error;
       last = { ...last, status: 'pending', message: 'Payment verification is still pending. Please check again before starting another payment.' };
     }
-    if (index + 1 < attempts) await sleep(delayMs);
+    if (index + 1 < Math.max(1, Math.min(attempts, 10))) await (sleep ? sleep(delayMs) : waitForVerification(delayMs, signal));
   }
   return last;
+}
+
+export async function retireSafepayCheckout({ apiClient, paymentId, expectedPayment }) {
+  if (!ID.test(String(paymentId || ''))) throw failure('A valid payment reference is required.');
+  const response = await apiClient.post(`/api/safepay/payments/${paymentId}/retire-checkout`, { clientSurface: 'mobile' });
+  const data = unwrap(response), verified = normalizeSafepayStatus(data, paymentId, expectedPayment);
+  if (data.checkoutRetired === true && (verified.purpose !== 'order' || !['pending', 'cancelled', 'failed'].includes(verified.status))) {
+    throw failure('Check the previous payment before changing payment methods.');
+  }
+  return { ...verified, checkoutRetired: data.checkoutRetired === true };
 }
 
 export async function openSafepayCheckout({ apiClient, response, openSheet = presentSafepaySheet, openBrowser }) {

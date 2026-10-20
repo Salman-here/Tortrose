@@ -21,6 +21,7 @@ router.patch('/cards/:cardId/default', auth, controller.setDefaultCard);
 router.delete('/cards/:cardId', auth, controller.deleteCard);
 router.get('/payments/:paymentId', auth, paymentStatusPollingLimiter, controller.getPayment);
 router.post('/payments/:paymentId/reopen', auth, orderPaymentCreationLimiter, controller.reopenPayment);
+router.post('/payments/:paymentId/retire-checkout', auth, orderPaymentCreationLimiter, controller.retireCheckout);
 router.post('/subscription/quote', auth, orderPaymentCreationLimiter, billing.quote);
 router.post('/subscription/retry-quote', auth, orderPaymentCreationLimiter, billing.retryQuote);
 router.patch('/subscription/card', auth, billing.changeCard);

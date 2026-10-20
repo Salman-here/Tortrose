@@ -68,6 +68,16 @@ exports.reopenPayment = async (req, res) => {
   } catch (error) { return reportError(res, error); }
 };
 
+exports.retireCheckout = async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (Object.keys(req.body || {}).some(key => key !== 'clientSurface')) throw Object.assign(new Error('Use the existing checkout reference to change payment methods.'),
+      { code: 'SAFEPAY_CARD_SELECTION_INVALID', statusCode: 400 });
+    requireSafepayConfiguration(req.body?.clientSurface || 'mobile');
+    return res.json(await require('../services/safepayCheckoutSwitchService').retireCheckout(req.params.paymentId, req.user.id));
+  } catch (error) { return reportError(res, error); }
+};
+
 exports.listCards = async (req, res) => {
   res.set('Cache-Control', 'no-store');
   try { return res.json(await cards.listCards(req.user.id)); }

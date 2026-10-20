@@ -13,12 +13,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Feedback from '../utils/feedback';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import api, { API_ENDPOINTS } from '../config/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobal } from '../contexts/GlobalContext';
 import { useCurrency } from '../contexts/CurrencyContext';
-import { openSafepayCheckout, resumeSafepayCheckout } from '../utils/safepayCheckout';
+import { getSafepayCheckoutChoice, openSafepayCheckout, resumeSafepayCheckout, retireSafepayCheckout, safepayPaymentExpectation } from '../utils/safepayCheckout';
+import useSafepayPendingVerification from '../hooks/useSafepayPendingVerification';
 import { Loader, InlineLoader } from '../components/common';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -84,6 +85,9 @@ export default function CheckoutScreen({ navigation }) {
   const styles = buildStyles(palette);
 
   const { currentUser } = useAuth();
+  const focused = useIsFocused();
+  const owner = String(currentUser?._id || currentUser?.id || '');
+  const ownerRef = useRef(owner); ownerRef.current = owner;
   const savedCards = useSavedSafepayCards();
   const savedCardFirstFocus = useRef(true);
   useFocusEffect(useCallback(() => {
@@ -162,6 +166,8 @@ export default function CheckoutScreen({ navigation }) {
   const [walletLoading, setWalletLoading] = useState(false);
   const [instructions, setInstructions] = useState('');
   const [paymentNotice, setPaymentNotice] = useState(null);
+  const paymentNoticeRef = useRef(paymentNotice); paymentNoticeRef.current = paymentNotice;
+  const completedPaymentsRef = useRef(new Set());
   const submittingRef = useRef(false);
   const activeCheckoutAttemptRef = useRef(null);
   const summaryRequestRef = useRef({ id: 0, controller: null });
@@ -315,11 +321,14 @@ export default function CheckoutScreen({ navigation }) {
   };
   const taxUnavailable = taxStatus !== 'ready';
   const checkoutBlocked = !isCartReady || taxUnavailable || checkoutRatesUnavailable || !checkoutQuote.ready;
-  const hasPendingSafepayPayment = !!(paymentNotice?.safepay && paymentNotice?.paymentId);
+  const hasPendingSafepayPayment = !!(paymentNotice?.safepay && paymentNotice?.paymentId)
+    && !['cancelled', 'failed', 'refunded'].includes(paymentNotice.status);
+  const paymentChoice = getSafepayCheckoutChoice(paymentMethod, savedCards.selectedCardId);
+  const paymentChoiceChanged = hasPendingSafepayPayment && !!paymentNotice.paymentChoice && paymentNotice.paymentChoice !== paymentChoice;
   const canResumeSafepayPayment = hasPendingSafepayPayment && !['refund_pending', 'manual_review', 'reversed', 'refunded', 'failed', 'cancelled'].includes(paymentNotice.status);
-  const paymentButtonLabel = hasPendingSafepayPayment ? canResumeSafepayPayment ? 'Continue payment' : 'View payment status' : paymentMethod === 'card'
+  const paymentButtonLabel = paymentChoiceChanged && canResumeSafepayPayment ? 'Use selected method' : hasPendingSafepayPayment ? canResumeSafepayPayment ? 'Continue payment' : 'View payment status' : paymentMethod === 'card'
     ? 'Pay with Safepay' : paymentMethod === 'wallet' ? 'Pay with Wallet' : 'Place Order';
-  const paymentButtonDisabled = isProcessing || !hasPendingSafepayPayment
+  const paymentButtonDisabled = isProcessing || paymentMethod === 'card' && savedCards.loading || (!hasPendingSafepayPayment || paymentChoiceChanged)
     && (summaryLoading || !!shippingError || !shippingPricing.valid || checkoutBlocked || !!couponPricing.error);
   const formatShippingOptionPrice = (method, sellerInfo = null) => {
     if (method?.type === 'free') return 'Free';
@@ -687,6 +696,39 @@ export default function CheckoutScreen({ navigation }) {
     }
   };
 
+  const applyPendingSafepayResult = useCallback(async verified => {
+    const pending = paymentNoticeRef.current;
+    if (!pending?.safepay || pending.paymentId !== verified.paymentId || pending.owner !== owner || ownerRef.current !== owner) return;
+    const correlation = { storageKey: pending.checkoutAttemptStorageKey, fingerprint: pending.checkoutAttemptFingerprint, attemptKey: pending.checkoutAttemptKey };
+    if (verified.status === 'paid') {
+      const scope = `${owner}:${pending.paymentId}`;
+      if (completedPaymentsRef.current.has(scope)) return;
+      completedPaymentsRef.current.add(scope);
+      if (correlation.storageKey && correlation.fingerprint && correlation.attemptKey) {
+        await clearCheckoutAttempt(AsyncStorage, correlation.storageKey, correlation.fingerprint, correlation.attemptKey).catch(() => false);
+      }
+      if (ownerRef.current !== owner) return;
+      await Promise.resolve(fetchCart()).catch(() => {});
+      if (ownerRef.current === owner) navigation.replace('PaymentSuccess', { paymentId: pending.paymentId, orderId: pending.orderId,
+        checkoutAttemptStorageKey: correlation.storageKey, checkoutAttemptFingerprint: correlation.fingerprint, checkoutAttemptKey: correlation.attemptKey });
+      return;
+    }
+    if (['cancelled', 'failed', 'refunded'].includes(verified.status) && correlation.storageKey && correlation.fingerprint && correlation.attemptKey) {
+      await clearCheckoutAttempt(AsyncStorage, correlation.storageKey, correlation.fingerprint, correlation.attemptKey).catch(() => false);
+    }
+    if (ownerRef.current !== owner) return;
+    setPaymentNotice(previous => previous?.paymentId !== verified.paymentId || previous.owner !== owner ? previous : {
+      ...previous, status: verified.status,
+      title: verified.status === 'manual_review' ? 'Payment needs review' : verified.status === 'refund_pending' ? 'Refund being verified'
+        : verified.status === 'refunded' ? 'Payment refunded' : ['cancelled', 'failed'].includes(verified.status) ? 'Payment not completed' : 'Payment not confirmed',
+      text: ['manual_review', 'refund_pending', 'reversed', 'refunded'].includes(verified.status)
+        ? 'Open payment status for the latest details.' : ['cancelled', 'failed'].includes(verified.status)
+          ? 'This payment is closed. Your cart is unchanged.' : 'Payment is not confirmed yet. Check its status or continue with Safepay.',
+    });
+  }, [owner, fetchCart, navigation]);
+  const checkingPendingPayment = useSafepayPendingVerification({ payment: paymentNotice, owner,
+    enabled: focused, paused: isProcessing, onVerified: applyPendingSafepayResult });
+
   const buildOrder = (idempotencyKey) => {
     const shoppingLocation = getCachedBuyerLocation();
     const matchesDelivery = shoppingLocation?.mode === 'country'
@@ -783,7 +825,21 @@ export default function CheckoutScreen({ navigation }) {
   const handlePlaceOrder = async () => {
     if (currentStep !== 2) return;
     if (submittingRef.current || isProcessing) return;
-    if (hasPendingSafepayPayment) {
+    if (hasPendingSafepayPayment && paymentChoiceChanged && canResumeSafepayPayment) {
+      const pending = paymentNotice;
+      submittingRef.current = true; setIsProcessing(true);
+      try {
+        const previous = await retireSafepayCheckout({ apiClient: api, paymentId: pending.paymentId, expectedPayment: pending.expectedPayment });
+        if (ownerRef.current !== owner) return;
+        if (!previous.checkoutRetired) { await applyPendingSafepayResult(previous); return; }
+        await resetCheckoutAttempt({ storageKey: pending.checkoutAttemptStorageKey, fingerprint: pending.checkoutAttemptFingerprint, attemptKey: pending.checkoutAttemptKey });
+        if (ownerRef.current !== owner) return;
+        setPaymentNotice(null);
+      } catch (error) {
+        Feedback.show({ type: 'info', text1: 'Check the previous payment', text2: error.response?.data?.msg || 'The previous payment must be verified before changing methods.' });
+        return;
+      } finally { submittingRef.current = false; setIsProcessing(false); }
+    } else if (hasPendingSafepayPayment) {
       const pending = paymentNotice;
       const returnParams = { paymentId: pending.paymentId, orderId: pending.orderId,
         checkoutAttemptStorageKey: pending.checkoutAttemptStorageKey, checkoutAttemptFingerprint: pending.checkoutAttemptFingerprint,
@@ -793,8 +849,7 @@ export default function CheckoutScreen({ navigation }) {
       try {
         const verified = await resumeSafepayCheckout({ apiClient: api, paymentId: pending.paymentId });
         if (verified.status === 'paid') {
-          await resetCheckoutAttempt({ storageKey: pending.checkoutAttemptStorageKey, fingerprint: pending.checkoutAttemptFingerprint, attemptKey: pending.checkoutAttemptKey });
-          await fetchCart(); navigation.replace('PaymentSuccess', returnParams);
+          await applyPendingSafepayResult(verified);
         } else if (['cancelled', 'failed', 'refunded'].includes(verified.status)) {
           await resetCheckoutAttempt({ storageKey: pending.checkoutAttemptStorageKey, fingerprint: pending.checkoutAttemptFingerprint, attemptKey: pending.checkoutAttemptKey });
           setPaymentNotice({ type: 'cancelled', title: 'Payment not completed', orderId: pending.orderId,
@@ -948,7 +1003,8 @@ export default function CheckoutScreen({ navigation }) {
         const payment = res.data || res;
         const orderId = payment.orderId || payment.order?.orderId;
         if (!orderId) throw new Error('Secure checkout did not return an order reference.');
-        paymentAttempt = { orderId, safepay: true, paymentId: payment.paymentId, ...attemptCorrelation };
+        paymentAttempt = { orderId, safepay: true, paymentId: payment.paymentId, owner: actorId,
+          paymentChoice: getSafepayCheckoutChoice(paymentMethod, draftOrder.savedCardId), expectedPayment: safepayPaymentExpectation(payment), ...attemptCorrelation };
         // Safepay cancellation must be verified against its tracker. Never
         // invoke the legacy PaymentSheet cleanup on this payment.
         if (payment.noPaymentRequired === true && payment.isPaid === true) {
@@ -976,6 +1032,7 @@ export default function CheckoutScreen({ navigation }) {
         }
         setPaymentNotice({ type: 'pending', title: verified.status === 'refund_pending' ? 'Refund being verified' : verified.status === 'manual_review' ? 'Payment needs review' : 'Check your payment',
           orderId, paymentId: payment.paymentId, safepay: true, status: verified.status,
+          owner: actorId, paymentChoice: paymentAttempt.paymentChoice, expectedPayment: paymentAttempt.expectedPayment,
           checkoutAttemptStorageKey, checkoutAttemptFingerprint: fingerprint, checkoutAttemptKey: checkoutAttempt.key,
           text: verified.status === 'refund_pending' ? `This order could no longer be fulfilled. ${getOriginalPaymentRefundCopy(verified, verified.status)} Use Check for its status.` : verified.status === 'manual_review'
             ? 'Please contact support with this order reference. Do not pay again while it is being reviewed.'
@@ -1017,7 +1074,10 @@ export default function CheckoutScreen({ navigation }) {
       }
       if (paymentAttempt?.safepay) {
         setPaymentNotice({ type: 'pending', title: 'Check your payment', orderId: paymentAttempt.orderId,
-          paymentId: paymentAttempt.paymentId, safepay: true,
+          paymentId: paymentAttempt.paymentId, safepay: true, status: 'pending', owner: paymentAttempt.owner,
+          paymentChoice: paymentAttempt.paymentChoice, expectedPayment: paymentAttempt.expectedPayment,
+          checkoutAttemptStorageKey: paymentAttempt.storageKey, checkoutAttemptFingerprint: paymentAttempt.fingerprint,
+          checkoutAttemptKey: paymentAttempt.attemptKey,
           text: 'Payment verification was interrupted. Use Check before retrying so you do not create another payment.' });
         return;
       }
@@ -1468,8 +1528,10 @@ export default function CheckoutScreen({ navigation }) {
               <View style={styles.paymentNotice}>
                 <Ionicons name="time-outline" size={19} color={palette.colors.warning} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.paymentNoticeTitle}>{paymentNotice.title || 'Payment status needs confirmation'}</Text>
-                  <Text style={styles.paymentNoticeText}>{paymentNotice.text}</Text>
+                  <Text style={styles.paymentNoticeTitle}>{checkingPendingPayment ? 'Confirming your payment' : paymentNotice.title || 'Payment status needs confirmation'}</Text>
+                  <Text style={styles.paymentNoticeText}>{paymentChoiceChanged && canResumeSafepayPayment
+                    ? 'We’ll check and close the previous unpaid checkout before continuing with your selected method.'
+                    : checkingPendingPayment ? 'We’re checking with Safepay. This screen will update automatically when payment is confirmed.' : paymentNotice.text}</Text>
                 </View>
                 {!!paymentNotice.orderId && (
                   <TouchableOpacity

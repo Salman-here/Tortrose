@@ -8,6 +8,16 @@ jest.mock('../../src/config/api', () => ({ __esModule: true, default: { get: jes
 
 beforeEach(() => { mockUser = { id: 'buyerA' }; api.get.mockReset(); });
 
+test.each(['', 'pm_manual-choice'])('an explicit choice %s survives card-list refresh instead of silently selecting the default', async selected => {
+  const cards = [{ id: 'pm_default-card', last4: '1005', usable: true }, { id: 'pm_manual-choice', last4: '1111', usable: true }];
+  api.get.mockResolvedValue({ data: { cards, defaultPaymentMethodId: cards[0].id } });
+  const hook = renderHook(() => useSavedSafepayCards()); await act(async () => {});
+  expect(hook.result.current.selectedCardId).toBe(cards[0].id);
+  act(() => hook.result.current.setSelectedCardId(selected));
+  await act(async () => { hook.result.current.refreshCards(); });
+  expect(hook.result.current.selectedCardId).toBe(selected); hook.unmount();
+});
+
 test.each([false, true])('retains authoritative profile readiness %s even when no cards exist', async ready => {
   api.get.mockResolvedValue({ data: { cards: [], billingProfileReady: ready } });
   const hook = renderHook(() => useSavedSafepayCards());
