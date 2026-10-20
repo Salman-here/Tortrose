@@ -24,6 +24,7 @@ import LocationAutocomplete from '../../components/common/LocationAutocomplete';
 import PhoneNumberInput from '../../components/common/PhoneNumberInput';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { isValidPhoneNumber } from '../../utils/phoneNumber';
 import {
@@ -71,7 +72,8 @@ const cooldownDaysRemaining = (changedAt, windowDays) => {
 export default function SellerStoreSettingsScreen({ navigation }) {
   const { palette } = useTheme();
   const { currency, currencies } = useCurrency();
-  const styles = buildStyles(palette);
+  const { isTablet } = useResponsiveLayout();
+  const styles = buildStyles(palette, isTablet);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1240,9 +1242,9 @@ export default function SellerStoreSettingsScreen({ navigation }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
   safe: { flex: 1 },
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingTop: spacing.md, paddingBottom: 100 },
+  scroll: { width: '100%', maxWidth: isTablet ? 840 : 680, alignSelf: 'center', paddingTop: spacing.md, paddingBottom: 100 },
   section: { marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.lg },
   sectionTitle: { ...typography.h4, color: p.colors.text, marginBottom: spacing.md },
   helperText: { ...typography.bodySmall, color: p.colors.textSecondary, marginTop: -spacing.xs, marginBottom: spacing.md, lineHeight: 19 },

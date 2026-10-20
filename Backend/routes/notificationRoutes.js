@@ -7,6 +7,7 @@ const ctrl = require('../controllers/notificationController');
 router.get('/me', verifyToken, ctrl.listMine);
 router.patch('/:id/read', verifyToken, ctrl.markRead);
 router.post('/read-all', verifyToken, ctrl.markAllRead);
+router.post('/dismiss', verifyToken, ctrl.dismissMine);
 
 // Admin broadcasts
 router.post('/broadcast', verifyToken, ctrl.createBroadcast);

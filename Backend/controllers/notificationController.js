@@ -617,6 +617,10 @@ exports.listMine = async (req, res) => {
             read: false,
             ...(surface ? { surface } : {}),
         }));
+        const dismissedItems = req.query?.includeDismissals === 'true' ? await Notification.find({
+            ...buildScopedNotificationQuery({ userId: req.user.id, role: req.user.role, ...(surface ? { surface } : {}), includeDismissed: true }),
+            dismissedAt: { $ne: null },
+        }).select('_id eventKey aggregateType aggregateId').sort({ dismissedAt: -1 }).limit(500).lean() : null;
         res.json({
             account: {
                 userId: String(req.user.id),
@@ -625,6 +629,7 @@ exports.listMine = async (req, res) => {
             },
             items,
             unread,
+            ...(dismissedItems ? { dismissedItems } : {}),
         });
     } catch (err) {
         console.error('listMine:', err);
@@ -691,6 +696,34 @@ exports.markAllRead = async (req, res) => {
     } catch (err) {
         console.error('markAllRead:', err);
         res.status(500).json({ msg: 'Failed to mark all read' });
+    }
+};
+
+// Dismiss only explicit recipient-owned rows. No broad delete or clear-all
+// cutoff: a newly arriving notification must not be lost during this action.
+exports.dismissMine = async (req, res) => {
+    try {
+        const requestedSurface = requestedNotificationSurface(req);
+        if (requestedSurface.error) return res.status(400).json(requestedSurface.error);
+        const { surface } = requestedSurface;
+        const ids = req.body?.ids;
+        if (!Array.isArray(ids) || ids.length < 1 || ids.length > 200
+            || ids.some(id => typeof id !== 'string' || !/^[a-f0-9]{24}$/i.test(id))
+            || Object.keys(req.body).some(key => key !== 'ids')) {
+            return res.status(400).json({ msg: 'Choose between 1 and 200 valid notifications.', code: 'NOTIFICATION_DISMISS_INVALID' });
+        }
+        const uniqueIds = [...new Set(ids)];
+        const query = { ...buildScopedNotificationQuery({ userId: req.user.id, role: req.user.role,
+            ...(surface ? { surface } : {}), includeDismissed: true }), _id: { $in: uniqueIds } };
+        const owned = await Notification.find(query).select('_id').lean();
+        if (owned.length !== uniqueIds.length) return res.status(404).json({ msg: 'Notifications are unavailable for this account.' });
+        const now = new Date();
+        const result = await Notification.updateMany(query, { $set: { read: true, readAt: now, dismissedAt: now } });
+        if (result.matchedCount !== uniqueIds.length) return res.status(409).json({ msg: 'The inbox changed. Refresh before trying again.' });
+        return res.json({ ok: true, account: { userId: String(req.user.id), role: req.user.role, ...(surface ? { surface } : {}) }, dismissedIds: uniqueIds });
+    } catch (err) {
+        console.error('dismissMine:', err?.name || 'error');
+        return res.status(500).json({ msg: 'Notifications could not be dismissed. Please try again.' });
     }
 };
 

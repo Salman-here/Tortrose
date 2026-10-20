@@ -16,6 +16,7 @@ import KeyboardAwareFormScrollView from '../../components/common/KeyboardAwareFo
 import { SellerInlineError, SellerScreenHeader, SellerScreenSkeleton } from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -44,7 +45,8 @@ const METHOD_COPY = {
 
 export default function SellerShippingConfigurationScreen({ navigation }) {
   const { palette } = useTheme();
-  const styles = buildStyles(palette);
+  const { isTablet } = useResponsiveLayout();
+  const styles = buildStyles(palette, isTablet);
   const { currentUser } = useAuth();
   const { currency, currencies, formatPrice } = useCurrency();
 
@@ -305,9 +307,9 @@ export default function SellerShippingConfigurationScreen({ navigation }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
   safe: { flex: 1 },
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingTop: spacing.md, paddingBottom: 100 },
+  scroll: { width: '100%', maxWidth: isTablet ? 840 : 680, alignSelf: 'center', paddingTop: spacing.md, paddingBottom: 100 },
   content: { paddingHorizontal: spacing.lg },
   methodCard: { padding: spacing.lg, marginBottom: spacing.md, opacity: 1 },
   methodHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md },

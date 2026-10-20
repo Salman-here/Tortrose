@@ -4,6 +4,11 @@ import SellerNotificationsScreen from '../../../src/screens/seller/SellerNotific
 import api from '../../../src/config/api';
 
 let mockCurrentUser = null;
+jest.mock('react-native-gesture-handler', () => ({ GestureHandlerRootView: ({ children }) => children }));
+jest.mock('../../../src/components/notifications/NotificationSwipeRow', () => ({ children, onDismiss }) => {
+  const R = require('react'), { View, Pressable, Text } = require('react-native');
+  return R.createElement(View, null, children, R.createElement(Pressable, { onPress: onDismiss, accessibilityLabel: 'Dismiss notification' }, R.createElement(Text, null, 'Dismiss')));
+});
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('react-native-safe-area-context', () => ({
@@ -198,7 +203,7 @@ describe('SellerNotificationsScreen account isolation', () => {
 
     const screen = render(<SellerNotificationsScreen navigation={{ navigate: jest.fn() }} />);
     await screen.findByText('Seller withdrawal paid');
-    expect(api.get).toHaveBeenCalledWith('/api/notifications/me?surface=seller');
+    expect(api.get).toHaveBeenCalledWith('/api/notifications/me?surface=seller&includeDismissals=true');
 
     fireEvent.press(screen.getByLabelText('Mark all notifications as read'));
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));

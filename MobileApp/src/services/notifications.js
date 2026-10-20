@@ -11,6 +11,7 @@ import { Platform } from 'react-native';
 import api, { API_BASE_URL } from '../config/api';
 import { getNotificationsModule } from '../utils/notificationRuntime';
 import { secureDel, secureGet, secureSet } from '../utils/secureStorage';
+import { getNotificationSoundProfile, notificationSound, UPDATE_SOUND, NEW_ORDER_SOUND } from '../utils/notificationSound';
 import {
   isNotificationAllowedForRole,
   normalizeNotificationRole,
@@ -210,7 +211,7 @@ export async function setActiveNotificationIdentity(user) {
 }
 
 // ─── Channel (Android) ──────────────────────────────────────────────────────
-async function createChannels() {
+export async function createChannels() {
   if (Platform.OS === 'android' && Notifications) {
     await Notifications.setNotificationChannelAsync('orders', {
       name: 'Order Updates',
@@ -231,6 +232,20 @@ async function createChannels() {
       name: 'General',
       importance: Notifications.AndroidImportance.DEFAULT,
     });
+    if (getNotificationSoundProfile(Constants.nativeAppVersion, Constants.appOwnership) === 1) {
+      await Notifications.setNotificationChannelAsync('rozare-updates-v1', {
+        name: 'Rozare updates', importance: Notifications.AndroidImportance.DEFAULT, sound: UPDATE_SOUND,
+        vibrationPattern: [0, 80], showBadge: true,
+      });
+      await Notifications.setNotificationChannelAsync('rozare-order-updates-v1', {
+        name: 'Order updates', importance: Notifications.AndroidImportance.HIGH, sound: UPDATE_SOUND,
+        vibrationPattern: [0, 80], showBadge: true,
+      });
+      await Notifications.setNotificationChannelAsync('rozare-new-orders-v1', {
+        name: 'New store orders', importance: Notifications.AndroidImportance.HIGH, sound: NEW_ORDER_SOUND,
+        vibrationPattern: [0, 90, 70, 110], showBadge: true,
+      });
+    }
   }
 }
 
@@ -299,6 +314,9 @@ export function savePushTokenToServer(token, registration = {}) {
     if (!identityIsCurrent()) return false;
 
     try {
+      const soundProfileVersion = getNotificationSoundProfile(Constants.nativeAppVersion, Constants.appOwnership);
+      if (soundProfileVersion === 1) await createChannels();
+      if (!identityIsCurrent()) return false;
       const accountIdentity = `${expectedRole}:${String(expectedUserId)}`;
       await pushRegistrationStateMutation.catch(() => {});
       const currentState = await readPushRegistrationState();
@@ -307,7 +325,12 @@ export function savePushTokenToServer(token, registration = {}) {
         && candidate.pushToken === token
         && candidate.accountIdentity === accountIdentity;
 
-      if (canReuseCandidate && candidate.acknowledged === true) return true;
+      if (canReuseCandidate && candidate.acknowledged === true
+        && (candidate.soundProfileVersion || 0) === soundProfileVersion) return true;
+      if (canReuseCandidate && (candidate.soundProfileVersion || 0) !== soundProfileVersion) {
+        candidate = { ...candidate, soundProfileVersion, acknowledged: false };
+        await mutatePushRegistrationState(current => ({ ...current, active: candidate }));
+      }
 
       if (!canReuseCandidate) {
         // The client creates and durably stores the credential before POST. If
@@ -320,6 +343,7 @@ export function savePushTokenToServer(token, registration = {}) {
           revocationCredential,
           accountIdentity,
           acknowledged: false,
+          soundProfileVersion,
         };
 
         await mutatePushRegistrationState((current) => ({
@@ -343,11 +367,12 @@ export function savePushTokenToServer(token, registration = {}) {
       const response = await api.post('/api/user/push-token', {
         pushToken: token,
         revocationCredential: candidate.revocationCredential,
+        soundProfileVersion,
       });
       const legacyCredential = response?.data?.revocationCredential;
       const acknowledged = response?.data?.registered === true
         || REVOCATION_CREDENTIAL_RE.test(String(legacyCredential || ''));
-      if (!acknowledged) {
+      if (!acknowledged || (soundProfileVersion === 1 && response?.data?.soundProfileVersion !== 1)) {
         // Keep the pre-persisted candidate intact. A malformed 200 is treated
         // as an ambiguous commit and can still be revoked during logout/retry.
         return false;
@@ -510,15 +535,16 @@ export async function preparePushTokenLogout({ authToken } = {}) {
 // ─── Schedule a local notification (used for immediate in-app alerts) ────────
 export async function sendLocalNotification({ title, body, data = {}, channelId = 'general' }) {
   if (!Notifications) return null;
+  await createChannels();
+  const audio = notificationSound({ data, channelId }, getNotificationSoundProfile(Constants.nativeAppVersion, Constants.appOwnership));
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
       body,
       data,
-      sound: 'default',
-      ...(Platform.OS === 'android' ? { channelId } : {}),
+      sound: audio.sound,
     },
-    trigger: null, // immediate
+    trigger: Platform.OS === 'android' ? { channelId: audio.channelId } : null,
   });
 }
 

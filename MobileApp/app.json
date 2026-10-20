@@ -2,7 +2,7 @@
   "expo": {
     "name": "Rozare",
     "slug": "rozare",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -28,7 +28,7 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 19,
+      "versionCode": 20,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECORD_AUDIO",
@@ -62,11 +62,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rozare.app",
-      "buildNumber": "17",
+      "buildNumber": "18",
       "associatedDomains": [
         "applinks:rozare.com"
       ],
       "infoPlist": {
+        "UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
         "NSCameraUsageDescription": "Rozare needs camera access to let you take product photos.",
         "NSPhotoLibraryUsageDescription": "Rozare needs photo library access to let you upload product images.",
         "NSMicrophoneUsageDescription": "Rozare needs microphone access so you can send voice notes to the AI assistant."
@@ -96,12 +97,13 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#6366f1",
-          "sounds": [],
+          "sounds": ["./assets/sounds/rozare_update_v1.wav", "./assets/sounds/rozare_new_order_v1.wav"],
           "androidMode": "default",
           "androidCollapsedTitle": "Rozare"
         }
       ],
       "expo-web-browser",
+      "./plugins/with-tablet-orientation.cjs",
       [
         "@sentry/react-native/expo",
         {

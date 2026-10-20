@@ -24,6 +24,7 @@ import GlassPanel from '../../components/common/GlassPanel';
 import AIChatFab from '../../components/common/AIChatFab';
 import { spacing, fontSize, borderRadius, fontWeight } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 import {
@@ -134,7 +135,8 @@ const founderPromotionIsPresentable = (promotion) => (
 export default function SellerDashboardScreen({ navigation }) {
   const { palette } = useTheme();
   const { formatAmount } = useCurrency();
-  const styles = buildStyles(palette);
+  const { isTablet } = useResponsiveLayout();
+  const styles = buildStyles(palette, isTablet);
 
   const { currentUser } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
@@ -692,8 +694,8 @@ export default function SellerDashboardScreen({ navigation }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: 96 },
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
+  scroll: { width: '100%', maxWidth: isTablet ? 1024 : 680, alignSelf: 'center', paddingBottom: 96 },
   unavailableText: { paddingVertical: spacing.lg, textAlign: 'center', fontSize: fontSize.sm, color: p.colors.textSecondary },
 
   founderBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },

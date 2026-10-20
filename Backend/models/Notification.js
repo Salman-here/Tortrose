@@ -47,6 +47,9 @@ const notificationSchema = new mongoose.Schema(
         sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         read: { type: Boolean, default: false, index: true },
         readAt: { type: Date },
+        // Keep delivery/audit history; dismissal only removes the recipient's
+        // inbox entry and unread badge, never the underlying event record.
+        dismissedAt: { type: Date, default: null },
         // Optional event idempotency key for retry-safe system notifications.
         dedupeKey: { type: String, trim: true, select: false },
         // Durable event identity shared with push/email/WhatsApp outbox rows.

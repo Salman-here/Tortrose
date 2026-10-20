@@ -31,6 +31,7 @@ import {
 } from '../../components/seller/SellerUI';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
 import {
   getConfirmationSourceLabel,
@@ -109,7 +110,8 @@ function PrimaryViewTabs({ active, onChange, styles, palette }) {
 export default function OrderManagementScreen({ navigation, route }) {
   const { palette } = useTheme();
   const { formatPrice, currency } = useCurrency();
-  const styles = useMemo(() => buildStyles(palette), [palette]);
+  const { isTablet } = useResponsiveLayout();
+  const styles = useMemo(() => buildStyles(palette, isTablet), [palette, isTablet]);
   const isAdmin = route?.params?.isAdmin === true;
 
   const [primaryView, setPrimaryView] = useState(
@@ -538,10 +540,10 @@ export default function OrderManagementScreen({ navigation, route }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
   safeArea: { flex: 1 },
   fullError: { flex: 1, justifyContent: 'center' },
-  list: { flexGrow: 1, width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 100 },
+  list: { flexGrow: 1, width: '100%', maxWidth: isTablet ? 960 : 680, alignSelf: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 100 },
   primaryTabs: { flexDirection: 'row', gap: 5, padding: 5, marginBottom: spacing.md, borderRadius: borderRadius.xl },
   primaryTab: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, borderRadius: 13 },
   primaryTabActive: { backgroundColor: p.colors.primary },

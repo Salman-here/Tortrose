@@ -24,6 +24,7 @@ import {
 } from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import {
   buildProductListParams,
@@ -59,7 +60,8 @@ const getStockStatus = (presentation, palette) => {
 
 export default function ProductManagementScreen({ navigation, route }) {
   const { palette } = useTheme();
-  const styles = buildStyles(palette);
+  const { isTablet } = useResponsiveLayout();
+  const styles = buildStyles(palette, isTablet);
   const {
     currency,
     exchangeRatesFallback,
@@ -901,7 +903,7 @@ export default function ProductManagementScreen({ navigation, route }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
   safeArea: { flex: 1 },
   headerContainer: { paddingBottom: spacing.sm },
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: borderRadius.xl, paddingHorizontal: spacing.md, marginHorizontal: spacing.lg, marginTop: spacing.lg, marginBottom: spacing.md, height: 44, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
@@ -922,7 +924,7 @@ const buildStyles = (p) => StyleSheet.create({
   selectAllText: { ...typography.bodySmall, color: p.colors.primary, fontWeight: fontWeight.semibold },
   bulkActionsBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: p.colors.primary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: borderRadius.lg },
   bulkActionsBtnText: { ...typography.bodySmall, color: 'white', fontWeight: fontWeight.semibold },
-  list: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: spacing.md, paddingBottom: 120, flexGrow: 1 },
+  list: { width: '100%', maxWidth: isTablet ? 1024 : 680, alignSelf: 'center', paddingHorizontal: spacing.md, paddingBottom: 120, flexGrow: 1 },
   productCard: { marginBottom: spacing.sm },
   productCardSelected: { borderWidth: 2, borderColor: p.colors.primary },
   productCardInner: { flexDirection: 'row', alignItems: 'center', padding: spacing.md },

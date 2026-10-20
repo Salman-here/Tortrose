@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Dimensions, Animated,
+  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,9 +22,7 @@ import {
   hasProductOptions,
 } from '../utils/productOptions';
 import { resolveProductCartLine, getCartProductQuantity } from '../utils/cartProductSelection';
-
-const { width } = Dimensions.get('window');
-const CARD_WIDTH = (width - spacing.lg * 2 - spacing.sm) / 2;
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 // Website's --logo-gradient and --logo-glow (index.css)
 const LOGO_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
@@ -48,7 +46,8 @@ const ShimmerPlaceholder = ({ style }) => {
   return <Animated.View style={[styles.shimmer, style, { opacity: shimmerAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.7] }) }]} />;
 };
 
-function ProductCard({ product, index = 0, onPress, compact = false }) {
+function ProductCard({ product, index = 0, onPress, compact = false, cardWidth }) {
+  const { catalogCardWidth, isTablet } = useResponsiveLayout();
   const navigation = useNavigation();
   const { currentUser } = useAuth();
   const { wishlistItems, handleAddToWishlist, handleDeleteFromWishlist, cartItems, handleAddToCart, handleQtyInc, handleQtyDec, qtyUpdateId, isCartLoading, loadingProductId } = useGlobal();
@@ -128,7 +127,7 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
   };
 
   return (
-    <Animated.View style={[styles.animatedContainer, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
+    <Animated.View style={[styles.animatedContainer, { width: cardWidth || catalogCardWidth, transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
       <TouchableOpacity
         style={[styles.container, { backgroundColor: g.bg, borderColor: g.border }]}
         onPress={onPress}
@@ -186,8 +185,8 @@ function ProductCard({ product, index = 0, onPress, compact = false }) {
           <Text style={[styles.category, { color: c.textSecondary }]} numberOfLines={1}>{category}</Text>
           <Text style={[styles.name, { color: c.text }]} numberOfLines={3}>{name}</Text>
           <View style={styles.ratingContainer}><View style={{ flexDirection: 'row', marginRight: 4 }}>{renderStars()}</View><Text style={[styles.ratingText, { color: c.textSecondary }]}>({rating?.toFixed(1) || '0.0'})</Text></View>
-          <View style={styles.priceContainer}>
-            <Text style={[styles.price, { color: c.text }]}>{formatProductPrice(product, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
+          <View style={[styles.priceContainer, isTablet && { flexWrap: 'wrap' }]}>
+            <Text style={[styles.price, { color: c.text }, isTablet && { flexShrink: 1 }]}>{formatProductPrice(product, { field: hasDiscount ? 'discountedPrice' : 'price' })}</Text>
             {originalDisplayPrice && <Text style={[styles.originalPrice, { color: c.textSecondary }]}>{formatProductPrice(product, { field: 'price' })}</Text>}
           </View>
           {productHasOptions && isInCart ? (
@@ -272,7 +271,7 @@ export function CompactProductCard({ product, onPress }) {
 export default React.memo(ProductCard);
 
 const styles = StyleSheet.create({
-  animatedContainer: { width: CARD_WIDTH },
+  animatedContainer: {},
   container: { width: '100%', backgroundColor: glass.bg, borderRadius: 20, marginBottom: spacing.sm, borderWidth: 1, borderColor: glass.border, overflow: 'hidden' },
   badgesContainer: { position: 'absolute', top: spacing.sm, left: spacing.sm, zIndex: 10, gap: 4 },
   // Website .tag-pill: translucent indigo bg, blue text, subtle indigo border

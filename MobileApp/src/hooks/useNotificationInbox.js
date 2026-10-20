@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { LayoutAnimation } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { impact as hapticImpact, notify as hapticNotify } from '../utils/haptics';
@@ -26,6 +26,7 @@ import {
 import { inferNotificationCategory } from '../utils/notificationRouting';
 import {
   parseNotificationInboxResponse,
+  parseNotificationDismissResponse,
   parseNotificationReadAllResponse,
   parseNotificationReadResponse,
   parseStoredNotificationReadIds,
@@ -230,6 +231,7 @@ export function groupNotifications(notifications) {
 }
 
 export default function useNotificationInbox({ currentUser, onCountChange } = {}) {
+  const focused = useIsFocused();
   const [notifications, setNotifications] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -237,6 +239,9 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const readIds = useRef(new Set());
+  const dismissedIds = useRef(new Set());
+  const serverDismissedIds = useRef(new Set());
+  const serverDismissedBackendIds = useRef(new Set());
   const listenerRef = useRef(null);
   const notificationsRef = useRef([]);
   const accountGenerationRef = useRef(0);
@@ -282,16 +287,22 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
     setLoadError('');
     setActionError('');
     readIds.current = new Set();
+    dismissedIds.current = new Set();
+    serverDismissedIds.current = new Set();
+    serverDismissedBackendIds.current = new Set();
 
     (async () => {
       try {
-        const r = await AsyncStorage.getItem(storageKeys.read);
+        const [r, dismissed] = await Promise.all([
+          AsyncStorage.getItem(storageKeys.read), AsyncStorage.getItem(storageKeys.dismissed),
+        ]);
         if (
           !cancelled
           && activeIdentityRef.current === identity
           && accountGenerationRef.current === accountGeneration
         ) {
           readIds.current = parseStoredNotificationReadIds(r);
+          dismissedIds.current = parseStoredNotificationReadIds(dismissed);
         }
       } catch {
         if (
@@ -333,7 +344,8 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
         data,
         accountScope: identity,
       }], currentUser);
-      if (!newNotif) return;
+      if (!newNotif || dismissedIds.current.has(newNotif.id) || serverDismissedIds.current.has(newNotif.id)
+        || serverDismissedBackendIds.current.has(newNotif.data?.broadcastId)) return;
 
       if (
         activeIdentityRef.current !== identity
@@ -367,15 +379,15 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
     return () => { if (listenerRef.current) listenerRef.current.remove(); };
   }, [commitNotifications, currentUser, identity, role, storageKeys.inbox, storageReady]);
 
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = useCallback(async ({ preserveExisting = false } = {}) => {
     if (!storageReady) return;
     const requestIdentity = identity;
     const requestAccountGeneration = accountGenerationRef.current;
     const requestGeneration = fetchGenerationRef.current + 1;
     fetchGenerationRef.current = requestGeneration;
-    setIsLoading(true);
+    setIsLoading(!preserveExisting || notificationsRef.current.length === 0);
     setLoadError('');
-    commitNotifications([]);
+    if (!preserveExisting) commitNotifications([]);
     try {
       let pushNotifs = [];
       try {
@@ -390,18 +402,22 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
 
       let orderSnapshots = [];
       let broadcastNotifs = [];
+      let dismissedMetadata = [];
       if (currentUser && (role === 'user' || role === 'seller')) {
         try { const res = await api.get('/api/order/user-orders'); orderSnapshots = res.data?.orders || []; } catch {}
       }
       if (currentUser && role !== 'guest') {
-        const res = await api.get('/api/notifications/me');
+        const res = await api.get('/api/notifications/me?includeDismissals=true');
         const snapshot = parseNotificationInboxResponse(res.data, { currentUser });
+        dismissedMetadata = snapshot.dismissedItems;
         broadcastNotifs = snapshot.items
           .map(normalizePersistentInboxNotification)
           .filter(Boolean);
       }
+      const dismissedOrders = [...dismissedIds.current].filter(id => id.startsWith('synthetic-order:'))
+        .map(id => ({ orderId: id.slice('synthetic-order:'.length) }));
       const orderNotifs = buildNotificationsFromOrders(orderSnapshots, {
-        durableNotifications: [...broadcastNotifs, ...pushNotifs],
+        durableNotifications: [...broadcastNotifs, ...pushNotifs, ...dismissedOrders, ...dismissedMetadata],
       });
 
       const mergedScoped = dedupeInboxNotifications(scopeNotificationsForRole(
@@ -410,11 +426,11 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
       ));
       const allMap = new Map(mergedScoped.map((notification) => [notification.id, notification]));
 
-      if (allMap.size === 0 && role === 'user') {
-        allMap.set('welcome', { id: 'welcome', category: 'system', title: 'Welcome to Rozare', body: 'Start shopping to see notifications here.', createdAt: new Date().toISOString(), read: false });
-      }
-
+      const archivedIds = new Set(dismissedMetadata.map(getPersistentNotificationInboxId));
+      const archivedBackendIds = new Set(dismissedMetadata.map(item => item._id));
       const merged = [...allMap.values()]
+        .filter(notification => !dismissedIds.current.has(notification.id) && !archivedIds.has(notification.id)
+          && !archivedBackendIds.has(notification.data?.broadcastId))
         .map((notification) => (
           notification.data?.broadcastId || !readIds.current.has(notification.id)
             ? notification
@@ -427,14 +443,17 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
         || accountGenerationRef.current !== requestAccountGeneration
         || fetchGenerationRef.current !== requestGeneration
       ) return;
+      serverDismissedIds.current = archivedIds;
+      serverDismissedBackendIds.current = archivedBackendIds;
       commitNotifications(merged);
-    } catch {
+    } catch (error) {
       if (
         activeIdentityRef.current === requestIdentity
         && accountGenerationRef.current === requestAccountGeneration
         && fetchGenerationRef.current === requestGeneration
       ) {
-        commitNotifications([]);
+        if (!preserveExisting || error?.code === 'NOTIFICATION_INBOX_RESPONSE_INVALID'
+          || [401, 403].includes(error?.response?.status)) commitNotifications([]);
         setLoadError('Notifications are unavailable. Pull to refresh and try again.');
       }
     }
@@ -450,7 +469,9 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
     }
   }, [commitNotifications, currentUser, identity, role, storageKeys.inbox, storageReady]);
 
-  useEffect(() => { if (storageReady) fetchNotifications(); }, [fetchNotifications, storageReady]);
+  useEffect(() => {
+    if (storageReady && focused) fetchNotifications({ preserveExisting: true });
+  }, [fetchNotifications, focused, storageReady]);
 
   const persistReadIds = useCallback(async () => {
     try {
@@ -632,54 +653,55 @@ export default function useNotificationInbox({ currentUser, onCountChange } = {}
     return true;
   }), [commitNotifications, currentUser, enqueueMutation, notifyCountChanged, persistReadIds, role]);
 
-  const clearAll = useCallback(async () => {
-    const cleared = await markAllRead();
-    if (!cleared || activeIdentityRef.current !== identity) return false;
-    const cacheCleared = await removeCachedInboxItems([], { clear: true });
-    if (!cacheCleared || activeIdentityRef.current !== identity) {
-      setActionError('Notifications were marked as read, but the local inbox could not be cleared.');
+  const dismissItems = useCallback((ids) => enqueueMutation(async ({ isCurrent }) => {
+    if (!isCurrent()) return false;
+    const idSet = new Set(Array.isArray(ids) ? ids : []);
+    const selected = notificationsRef.current.filter(notification => idSet.has(notification.id));
+    if (!selected.length) return true;
+    setActionError('');
+    const beforeDismissed = new Set(dismissedIds.current);
+    selected.forEach(notification => {
+      dismissedIds.current.add(notification.id);
+      // A dismissed durable order event remains authoritative over legacy
+      // order-snapshot fallbacks. Future durable order updates still appear.
+      if (notification.orderId) dismissedIds.current.add(`synthetic-order:${notification.orderId}`);
+    });
+    try {
+      const backendIds = [...new Set(selected.map(notification => notification.data?.broadcastId).filter(Boolean))];
+      if (backendIds.length) {
+        const response = await api.post('/api/notifications/dismiss', { ids: backendIds });
+        parseNotificationDismissResponse(response.data, { currentUser, ids: backendIds });
+        if (!isCurrent()) return false;
+      }
+      await AsyncStorage.setItem(storageKeys.dismissed, JSON.stringify([...dismissedIds.current].slice(-10000)));
+      if (!isCurrent()) return false;
+    } catch {
+      if (!isCurrent()) return false;
+      dismissedIds.current = beforeDismissed;
+      await AsyncStorage.setItem(storageKeys.dismissed, JSON.stringify([...beforeDismissed])).catch(() => {});
+      if (isCurrent()) setActionError('Notifications could not be dismissed. Check your connection and try again.');
       return false;
     }
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    commitNotifications([]);
-    notifyCountChanged();
-    return true;
-  }, [commitNotifications, identity, markAllRead, notifyCountChanged, removeCachedInboxItems]);
-
-  const dismiss = useCallback(async (notifId) => {
-    const marked = await markRead(notifId);
-    if (!marked || activeIdentityRef.current !== identity) return false;
-    const cacheUpdated = await removeCachedInboxItems([notifId]);
-    if (!cacheUpdated || activeIdentityRef.current !== identity) {
-      setActionError('The notification was marked as read, but could not be dismissed from this device.');
-      return false;
-    }
+    if (!isCurrent()) return false;
+    selected.forEach(notification => readIds.current.add(notification.id));
+    await persistReadIds();
+    await removeCachedInboxItems(selected.map(notification => notification.id));
+    if (!isCurrent()) return false;
     hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    commitNotifications((previous) => previous.filter((notification) => notification.id !== notifId));
+    // Fabric's native layout animation can leave recycled Swipeable children
+    // invisible on return. Let the list remove the explicit rows normally.
+    commitNotifications(previous => previous.filter(notification => !idSet.has(notification.id)));
     notifyCountChanged();
     return true;
-  }, [commitNotifications, identity, markRead, notifyCountChanged, removeCachedInboxItems]);
+  }), [commitNotifications, currentUser, enqueueMutation, notifyCountChanged, persistReadIds, removeCachedInboxItems, storageKeys.dismissed]);
 
-  const dismissGroup = useCallback(async (ids) => {
-    const marked = await markRead(ids);
-    if (!marked || activeIdentityRef.current !== identity) return false;
-    const cacheUpdated = await removeCachedInboxItems(ids);
-    if (!cacheUpdated || activeIdentityRef.current !== identity) {
-      setActionError('The notifications were marked as read, but could not be dismissed from this device.');
-      return false;
-    }
-    hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    const idSet = new Set(ids);
-    commitNotifications((previous) => previous.filter((notification) => !idSet.has(notification.id)));
-    notifyCountChanged();
-    return true;
-  }, [commitNotifications, identity, markRead, notifyCountChanged, removeCachedInboxItems]);
+  const clearAll = useCallback(() => dismissItems(notificationsRef.current.map(notification => notification.id)), [dismissItems]);
+  const dismiss = useCallback(id => dismissItems([id]), [dismissItems]);
+  const dismissGroup = useCallback(ids => dismissItems(ids), [dismissItems]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
-    fetchNotifications();
+    fetchNotifications({ preserveExisting: true });
   }, [fetchNotifications]);
 
   return {

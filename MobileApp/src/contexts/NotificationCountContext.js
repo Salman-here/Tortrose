@@ -16,6 +16,7 @@ import {
 import {
   dedupeInboxNotifications,
   getNotificationInboxItemId,
+  getPersistentNotificationInboxId,
   getPushNotificationInboxId,
 } from '../utils/notificationDedupe';
 import {
@@ -59,7 +60,7 @@ export const NotificationCountProvider = ({ children }) => {
       const [storedRaw, readRaw, inboxResponse] = await Promise.all([
         AsyncStorage.getItem(storageKeys.inbox),
         AsyncStorage.getItem(storageKeys.read),
-        api.get('/api/notifications/me'),
+        api.get('/api/notifications/me?includeDismissals=true'),
       ]);
       const snapshot = parseNotificationInboxResponse(inboxResponse.data, { currentUser });
       let cached = [];
@@ -83,6 +84,7 @@ export const NotificationCountProvider = ({ children }) => {
       ) {
         knownInboxIdsRef.current = new Set([
           ...persistentInboxIds(snapshot),
+          ...(snapshot.dismissedItems || []).map(getPersistentNotificationInboxId),
           ...cached.map(getNotificationInboxItemId).filter(Boolean),
         ]);
         setUnreadNotifCount(reconciled);

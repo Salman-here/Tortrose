@@ -7,10 +7,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
-  RefreshControl, Animated, Platform, UIManager,
+  RefreshControl, Animated, Platform, UIManager, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,6 +19,7 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import OrderGroupCard from '../components/notifications/OrderGroupCard';
 import NotificationCard from '../components/notifications/NotificationCard';
+import NotificationSwipeRow from '../components/notifications/NotificationSwipeRow';
 import NotificationSearchField from '../components/notifications/NotificationSearchField';
 import { notificationMatchesSearch } from '../utils/notificationSearch';
 import useNotificationInbox, { groupNotifications } from '../hooks/useNotificationInbox';
@@ -91,43 +92,39 @@ export default function NotificationsScreen({ navigation }) {
         </Animated.View>
       </Animated.View>
     );
-  }, []);
+  }, [palette, styles]);
 
   const renderItem = useCallback(({ item: group }) => {
     if (group.type === 'group' && group.items.length > 1) {
       const ids = group.items.map(i => i.id);
       return (
-        <Swipeable
+        <NotificationSwipeRow
           renderRightActions={renderRightActions}
-          onSwipeableOpen={() => dismissGroup(ids)}
-          rightThreshold={60}
-          overshootRight={false}
+          onDismiss={() => dismissGroup(ids)}
         >
           <OrderGroupCard group={group} onPress={handlePress} onMarkRead={markRead} readIds={readIds} />
-        </Swipeable>
+        </NotificationSwipeRow>
       );
     }
     const item = group.type === 'group' ? group.items[0] : group.item;
     return (
-      <Swipeable
+      <NotificationSwipeRow
         renderRightActions={renderRightActions}
-        onSwipeableOpen={() => dismiss(item.id)}
-        rightThreshold={60}
-        overshootRight={false}
+        onDismiss={() => dismiss(item.id)}
       >
         <NotificationCard item={item} onPress={handlePress} />
-      </Swipeable>
+      </NotificationSwipeRow>
     );
   }, [handlePress, markRead, dismiss, dismissGroup, renderRightActions, readIds]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <GlassBackground>
+      <GlassBackground contentMaxWidth={840}>
         <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
           {/* Header */}
           <GlassPanel variant="floating" style={styles.heroHeader}>
             <LinearGradient colors={NOTIF_SHEEN} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
-            <TouchableOpacity style={styles.heroBackBtn} onPress={() => { refreshUnreadCount(); navigation.goBack(); }} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <TouchableOpacity style={styles.heroBackBtn} onPress={() => { refreshUnreadCount(); if (navigation.canGoBack?.()) navigation.goBack(); else navigation.navigate('MainTabs', { screen: 'Home' }); }} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
               <Ionicons name="arrow-back" size={22} color={palette.colors.text} />
             </TouchableOpacity>
             <View style={styles.heroCenter}>
@@ -148,7 +145,7 @@ export default function NotificationsScreen({ navigation }) {
                 <Ionicons name="settings-outline" size={18} color={palette.colors.text} />
               </TouchableOpacity>
               {notifications.length > 0 && (
-                <TouchableOpacity style={styles.heroActionBtn} onPress={clearAll} accessibilityLabel="Clear all notifications" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <TouchableOpacity style={styles.heroActionBtn} onPress={() => Alert.alert('Clear inbox?', 'Dismiss your current notifications? New updates will still appear.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Clear inbox', style: 'destructive', onPress: clearAll }])} accessibilityLabel="Clear all notifications" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name="trash-outline" size={18} color={palette.colors.error} />
                 </TouchableOpacity>
               )}
@@ -189,6 +186,7 @@ export default function NotificationsScreen({ navigation }) {
             </View>
           ) : (
             <FlatList
+              removeClippedSubviews={false}
               data={grouped}
               keyExtractor={(item) => item.type === 'group' ? `g_${item.orderId}` : `s_${item.item.id}`}
               renderItem={renderItem}

@@ -7,6 +7,7 @@
 const crypto = require('crypto');
 const User = require('../models/User');
 const ExpoPushTokenRegistration = require('../models/ExpoPushTokenRegistration');
+const { notificationSound } = require('./notificationSound');
 
 const EXPO_URL = 'https://exp.host/--/api/v2/push/send';
 const CHUNK_SIZE = 100;
@@ -23,7 +24,7 @@ const hashPushToken = token => crypto.createHash('sha256').update(String(token))
  * writes fail closed: a raw token on an old account is never deliverable after
  * the registry rotates or is revoked.
  */
-async function filterAuthoritativeTokens(tokens, {
+async function authoritativeDestinations(tokens, {
     recipientUserId = null,
 } = {}) {
     const validTokens = [...new Set((tokens || []).filter(isValidExpoToken))];
@@ -42,10 +43,15 @@ async function filterAuthoritativeTokens(tokens, {
         tokenHash: { $in: [...tokenByHash.keys()] },
         revokedAt: null,
         user: ownerId,
-    }).select('tokenHash user').lean();
-    const authorizedHashes = new Set(registrations.map(registration => registration.tokenHash));
+    }).select('tokenHash user soundProfileVersion').lean();
+    const byHash = new Map(registrations.map(registration => [registration.tokenHash, registration]));
 
-    return validTokens.filter(token => authorizedHashes.has(hashPushToken(token)));
+    return validTokens.filter(token => byHash.has(hashPushToken(token)))
+        .map(token => ({ token, soundProfileVersion: byHash.get(hashPushToken(token)).soundProfileVersion || 0 }));
+}
+
+async function filterAuthoritativeTokens(tokens, scope = {}) {
+    return (await authoritativeDestinations(tokens, scope)).map(destination => destination.token);
 }
 
 const chunk = (arr, size) => {
@@ -68,7 +74,7 @@ const expoDeliveryError = (message, code = 'EXPO_PUSH_DELIVERY_FAILED') => {
 };
 
 async function deliverExpoPush(tokens, payload, ownershipScope = {}, { strict = false } = {}) {
-    const valid = await filterAuthoritativeTokens(tokens, ownershipScope);
+    const valid = await authoritativeDestinations(tokens, ownershipScope);
     if (!valid.length) return { invalidTokens: [], sentCount: 0, ticketIds: [] };
 
     const recipientUserId = String(ownershipScope.recipientUserId);
@@ -78,13 +84,12 @@ async function deliverExpoPush(tokens, payload, ownershipScope = {}, { strict = 
         recipientUserId,
     };
 
-    const messages = valid.map((to) => ({
+    const messages = valid.map(({ token: to, soundProfileVersion }) => ({
         to,
         title: payload.title,
         body: payload.body,
         data: scopedData,
-        sound: payload.sound === null ? null : 'default',
-        channelId: payload.channelId || 'general',
+        ...notificationSound(payload, soundProfileVersion),
         priority: 'high',
         ...(payload.badge != null ? { badge: payload.badge } : {}),
     }));

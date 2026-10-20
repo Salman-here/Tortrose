@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, Animated, LayoutAnimation, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, Animated, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import GlassPanel from '../common/GlassPanel';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -25,7 +25,6 @@ export default function OrderGroupCard({ group, onPress, onMarkRead, readIds }) 
   const latestMeta = META[latestItem.category] || META.system;
 
   const toggle = () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setExpanded(!expanded);
     Animated.timing(rotateAnim, { toValue: expanded ? 0 : 1, duration: 200, useNativeDriver: true }).start();
   };
@@ -62,15 +61,15 @@ export default function OrderGroupCard({ group, onPress, onMarkRead, readIds }) 
             const meta = META[item.category] || META.system;
             const isRead = item.read || readIds.has(item.id);
             return (
-              <TouchableOpacity key={item.id} style={[styles.item, idx < items.length - 1 && styles.itemBorder, !isRead && styles.itemUnread]} onPress={() => onPress(item)} activeOpacity={0.7}>
+              <Pressable key={item.id} style={({ pressed }) => [styles.item, idx < items.length - 1 && styles.itemBorder, !isRead && styles.itemUnread, pressed && { opacity: 0.7 }]} onPress={() => onPress(item)} accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.body}`}>
                 <View style={[styles.timelineDot, { backgroundColor: meta.color }]} />
                 {idx < items.length - 1 && <View style={styles.timelineLine} />}
-                <View style={{ flex: 1 }}>
+                <View collapsable={false} style={{ flex: 1 }}>
                   <Text style={[styles.itemTitle, !isRead && { fontWeight: fontWeight.bold }]}>{item.title}</Text>
                   <Text style={styles.itemBody}>{item.body}</Text>
                   <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
                 </View>
-              </TouchableOpacity>
+              </Pressable>
             );
           })}
           {unreadCount > 0 && (

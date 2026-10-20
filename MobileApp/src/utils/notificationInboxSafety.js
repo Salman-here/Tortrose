@@ -69,6 +69,32 @@ function requireAccountEnvelope(account, { currentUser, expectedSurface = null }
   return { role, userId, ...(expectedSurface ? { surface: expectedSurface } : {}) };
 }
 
+export function parseNotificationDismissResponse(payload, { currentUser, ids, expectedSurface = null } = {}) {
+  requireAccountEnvelope(payload?.account, { currentUser, expectedSurface });
+  if (payload?.ok !== true || !Array.isArray(payload.dismissedIds) || !Array.isArray(ids)
+    || payload.dismissedIds.length !== ids.length || new Set(payload.dismissedIds).size !== ids.length
+    || payload.dismissedIds.some(id => typeof id !== 'string' || !ids.includes(id))) {
+    throw inboxContractError('Notification dismissal was not confirmed for the requested rows.');
+  }
+  return payload.dismissedIds;
+}
+
+export function parseDismissedNotificationItems(items = []) {
+  if (!Array.isArray(items) || items.length > 500) throw inboxContractError('Dismissed notification metadata is invalid.');
+  return items.map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+      || Object.keys(item).some(key => !['_id', 'eventKey', 'aggregateType', 'aggregateId'].includes(key))) {
+      throw inboxContractError('Dismissed notification identity is invalid.');
+    }
+    requireExactString(item._id, 'Dismissed notification id', { max: 200 });
+    const key = requireOptionalExactString(item.eventKey, 'Dismissed event key', 300);
+    if (key && normalizeNotificationEventKey(key) !== key) throw inboxContractError('Dismissed event identity is invalid.');
+    requireOptionalExactString(item.aggregateType, 'Dismissed aggregate type', 80);
+    requireOptionalExactString(item.aggregateId, 'Dismissed aggregate id', 200);
+    return item;
+  });
+}
+
 function notificationMatchesSellerSurface(notification) {
   if (notification.targetRole === 'seller') return true;
   if (notification.targetRole != null) return false;
@@ -180,6 +206,7 @@ export function parseNotificationInboxResponse(payload, { currentUser } = {}) {
       inspectPersistentInboxNotification(notification, { currentUser })
     )),
     unread: payload.unread,
+    dismissedItems: parseDismissedNotificationItems(payload.dismissedItems),
   };
 }
 
@@ -234,6 +261,8 @@ export function reconcileNotificationUnreadCount({
     throw inboxContractError('Authoritative notification unread count is invalid.');
   }
   const persistentIds = new Set(snapshot.items.map(getPersistentNotificationInboxId));
+  const archivedIds = new Set((snapshot.dismissedItems || []).map(getPersistentNotificationInboxId));
+  const archivedBackendIds = new Set((snapshot.dismissedItems || []).map(item => item._id));
   const localReadIds = readIds instanceof Set ? readIds : new Set();
   const seenLocalIds = new Set();
   let localOnlyUnread = 0;
@@ -244,6 +273,8 @@ export function reconcileNotificationUnreadCount({
       !id
       || seenLocalIds.has(id)
       || persistentIds.has(id)
+      || archivedIds.has(id)
+      || archivedBackendIds.has(notification.data?.broadcastId)
       || localReadIds.has(id)
       || notification.read === true
     ) return;

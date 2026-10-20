@@ -8,8 +8,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../contexts/ThemeContext';
 import { spacing, borderRadius } from '../../styles/theme';
 import { ProductCardSkeleton, Skeleton } from './Skeleton';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 
 export default function HomeCatalogSkeleton({ count = 6 }) {
+  const { catalogColumns, isTablet } = useResponsiveLayout();
   const { palette } = useTheme();
   const styles = makeStyles(palette);
 
@@ -39,7 +41,7 @@ export default function HomeCatalogSkeleton({ count = 6 }) {
 
       <View style={styles.grid}>
         {Array.from({ length: count }).map((_, index) => (
-          <View key={index} style={styles.cardCell}>
+          <View key={index} style={[styles.cardCell, isTablet && { width: `${100 / catalogColumns}%` }]}>
             <ProductCardSkeleton />
           </View>
         ))}

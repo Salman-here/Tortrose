@@ -29,6 +29,7 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import { useTheme } from '../contexts/ThemeContext';
 import { shareWishlistAsLink, shareWishlistAsPdf } from '../utils/shareWishlist';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 import { borderRadius, fontSize, fontWeight, shadows, spacing } from '../styles/theme';
 
 const FAVORITES_SHEEN = [
@@ -38,6 +39,7 @@ const FAVORITES_SHEEN = [
 ];
 
 export default function WishlistScreen({ navigation, route }) {
+  const { catalogColumns } = useResponsiveLayout();
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { currentUser } = useAuth();
@@ -396,7 +398,7 @@ export default function WishlistScreen({ navigation, route }) {
   }
 
   const data = activeTab === 'products' ? (wishlistItems || []) : trustedStores;
-  const numColumns = activeTab === 'products' ? 2 : 1;
+  const numColumns = activeTab === 'products' ? catalogColumns : 1;
 
   return (
     <GlassBackground>
@@ -407,7 +409,7 @@ export default function WishlistScreen({ navigation, route }) {
           numColumns={numColumns}
           keyExtractor={(item) => item._id}
           renderItem={activeTab === 'products' ? renderProduct : renderStore}
-          columnWrapperStyle={numColumns === 2 ? styles.productRow : undefined}
+          columnWrapperStyle={numColumns > 1 ? styles.productRow : undefined}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={heroHeader}
           ListEmptyComponent={isLoading ? renderLoading : renderEmpty}

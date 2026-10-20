@@ -91,6 +91,7 @@ export function getNotificationStorageKeys(user) {
   return {
     inbox: `notification_inbox:v2:${identity}`,
     read: `notifications_read_ids:v2:${identity}`,
+    dismissed: `notifications_dismissed_ids:v1:${identity}`,
   };
 }
 

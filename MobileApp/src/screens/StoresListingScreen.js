@@ -22,6 +22,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useBuyerLocation } from '../contexts/BuyerLocationContext';
 import ShoppingLocationFields from '../components/common/ShoppingLocationFields';
 import { shoppingLocationIsValid } from '../utils/shoppingLocation';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 const SORT_OPTIONS = [
   { key: 'newest', label: 'Newest', icon: 'time-outline' },
@@ -45,6 +46,7 @@ export const filterStores = (stores, { query, verifiedOnly, minTrust }) => {
 };
 
 export default function StoresListingScreen({ navigation }) {
+  const { catalogColumns } = useResponsiveLayout();
   const { palette } = useTheme();
   const styles = buildStyles(palette);
 
@@ -160,9 +162,10 @@ export default function StoresListingScreen({ navigation }) {
     <GlassBackground>
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <FlatList
+          key={`stores-${catalogColumns}`}
           data={isLoading ? [] : filteredStores}
           keyExtractor={(item) => item._id}
-          numColumns={2}
+          numColumns={catalogColumns}
           columnWrapperStyle={styles.row}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={
@@ -278,7 +281,7 @@ export default function StoresListingScreen({ navigation }) {
             </View>
           }
           renderItem={({ item, index }) => (
-            <View style={styles.cardWrapper}>
+            <View style={[styles.cardWrapper, { maxWidth: `${100 / catalogColumns}%` }]}>
               <StoreCard animateEntrance={false} store={{ _id: item._id, storeName: item.storeName, storeSlug: item.storeSlug, sellerType: item.sellerType || 'store', description: item.storeDescription || item.description, logo: item.storeLogo || item.logo, banner: item.storeBanner || item.banner, trustCount: item.trustCount || 0, verification: { isVerified: item.isVerified || item.verification?.isVerified }, productCount: item.productCount || 0, views: item.views || 0, ratingAverage: item.ratingAverage || 0, ratingCount: item.ratingCount || 0 }} index={index} showTrustButton={!!currentUser} showDescription={true} showStats={true} />
             </View>
           )}

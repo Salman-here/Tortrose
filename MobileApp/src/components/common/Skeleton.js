@@ -5,6 +5,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { spacing } from '../../styles/theme';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 
 export function Skeleton({ width, height = 16, radius = 8, style }) {
   const { palette } = useTheme();
@@ -69,9 +70,10 @@ export function CartItemSkeleton() {
 }
 
 export function StoreGridSkeleton({ count = 6 }) {
+  const { catalogColumns } = useResponsiveLayout();
   const { palette } = useTheme();
   return <View testID="store-grid-skeleton" accessibilityLabel="Loading stores" accessibilityState={{ busy: true }} style={skeletonStyles.grid}>
-    {Array.from({ length: count }, (_, index) => <View key={index} style={{ width: '50%', padding: 5 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    {Array.from({ length: count }, (_, index) => <View key={index} style={{ width: `${100 / catalogColumns}%`, padding: 5 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <View style={{ minHeight: 224, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: palette.glass.border, backgroundColor: palette.glass.bg }}>
         <Skeleton width="100%" height={72} radius={0} />
         <View style={{ padding: 12, gap: 9 }}>

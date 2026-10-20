@@ -6,7 +6,7 @@ import api from '../../src/config/api';
 
 let mockUser = { _id: 'seller-a', role: 'seller' };
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
-jest.mock('react-native-safe-area-context', () => ({ SafeAreaView: ({ children }) => children }));
+jest.mock('react-native-safe-area-context', () => ({ SafeAreaView: ({ children }) => children, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('../../src/components/common/GlassPanel', () => ({ children }) => children);
 jest.mock('../../src/components/common/GlassBackground', () => ({ children }) => children);
 jest.mock('../../src/contexts/AuthContext', () => ({ useAuth: () => ({ currentUser: mockUser }) }));

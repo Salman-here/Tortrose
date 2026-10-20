@@ -30,6 +30,19 @@ describe('Expo push audience ownership', () => {
     global.fetch = originalFetch;
   });
 
+  test('mixed old and new APKs receive only their registered sound profile', async () => {
+    const tokens = ['ExpoPushToken[legacy-install]', 'ExpoPushToken[new-install]'];
+    ExpoPushTokenRegistration.find.mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(
+      tokens.map((token, index) => ({ tokenHash: hashPushToken(token), user: 'seller-one', soundProfileVersion: index })),
+    ) }) });
+    global.fetch.mockResolvedValue({ json: jest.fn().mockResolvedValue({ data: [{ status: 'ok' }, { status: 'ok' }] }) });
+    await sendExpoPush(tokens, { title: 'New order', body: 'A new order arrived.', channelId: 'seller', data: { type: 'paid_order_received' } }, { recipientUserId: 'seller-one' });
+    const messages = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(messages[0]).toMatchObject({ channelId: 'seller', sound: 'default' });
+    expect(messages[1]).toMatchObject({ channelId: 'rozare-new-orders-v1', sound: 'rozare_new_order_v1.wav' });
+    expect(messages.every(message => message.data.recipientUserId === 'seller-one')).toBe(true);
+  });
+
   test('direct sends inject the database user and role, overriding caller hints', async () => {
     User.findById.mockReturnValue({
       select: jest.fn().mockResolvedValue({

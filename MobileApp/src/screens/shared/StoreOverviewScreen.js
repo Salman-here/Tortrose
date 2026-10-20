@@ -27,6 +27,7 @@ import { fetchCompleteSellerCatalog, getProductImage } from '../../utils/sellerC
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { getStorefrontHost } from '../../utils/storefrontUrl';
 import {
   isRecognizedSellerOrder,
@@ -80,7 +81,8 @@ export const calculateStoreOverview = (
 
 export default function StoreOverviewScreen({ navigation }) {
   const { palette } = useTheme();
-  const styles = buildStyles(palette);
+  const { isTablet } = useResponsiveLayout();
+  const styles = buildStyles(palette, isTablet);
   const { formatAmount } = useCurrency();
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState(null);
@@ -419,10 +421,10 @@ export default function StoreOverviewScreen({ navigation }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
   safe: { flex: 1 },
   emptyStoreWrap: { flex: 1, justifyContent: 'center', paddingHorizontal: spacing.lg },
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 100 },
+  scroll: { width: '100%', maxWidth: isTablet ? 1024 : 680, alignSelf: 'center', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 100 },
   hero: { overflow: 'hidden', padding: 0 },
   banner: { width: '100%', height: 128 },
   bannerFallback: { height: 128, alignItems: 'center', justifyContent: 'center' },

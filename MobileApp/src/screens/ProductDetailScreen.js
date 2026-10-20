@@ -47,6 +47,7 @@ import {
 import { findProductCartLine, resolveProductCartLine, getCartProductQuantity } from '../utils/cartProductSelection';
 import { getModalTokens } from '../styles/modalTheme';
 import { productShareContent } from '../utils/shareLinks';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 const PRODUCT_TOPBAR_SHEEN = [
   'rgba(14,165,233,0.12)',
@@ -58,11 +59,16 @@ export default function ProductDetailScreen({ route, navigation }) {
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { width: viewportWidth } = useWindowDimensions();
+  const { isTablet, contentWidth: canvasWidth } = useResponsiveLayout();
   const insets = useSafeAreaInsets();
-  const contentWidth = Math.max(280, Math.min(viewportWidth - (spacing.md * 2), 720));
+  const contentWidth = Math.max(280, isTablet ? canvasWidth - spacing.md * 2 : Math.min(viewportWidth - (spacing.md * 2), 720));
+  const twoPane = isTablet && contentWidth >= 920;
+  const mediaWidth = twoPane ? Math.floor(contentWidth * 0.44) : contentWidth;
+  const infoWidth = twoPane ? contentWidth - mediaWidth - spacing.lg : contentWidth;
+  const relatedColumns = isTablet ? Math.max(2, Math.floor(contentWidth / 220)) : 2;
   // GlassPanel's width includes its 1px borders and spacing.sm padding.
   // Keep each native page exactly equal to the visible inner gallery width.
-  const galleryWidth = Math.max(256, contentWidth - (spacing.sm * 2) - 2);
+  const galleryWidth = Math.max(256, mediaWidth - (spacing.sm * 2) - 2);
   const galleryHeight = Math.min(500, Math.max(300, galleryWidth * 0.78));
   // GlassBackground already accounts for Android's status bar.
   const topInset = Platform.OS === 'android' ? 0 : insets.top;
@@ -82,7 +88,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   const [selectedOptions, setSelectedOptions] = useState({});
   const [optionError, setOptionError] = useState('');
   const selectionTouched = useRef(false);
-  const scrollRef = useRef(null), optionLayout = useRef({ column: 0, card: 0, options: 0 });
+  const scrollRef = useRef(null), optionLayout = useRef({ row: 0, column: 0, card: 0, options: 0 });
   const [storeData, setStoreData] = useState(null);
   const [storeProductCount, setStoreProductCount] = useState(null);
   const [storePolicy, setStorePolicy] = useState(null);
@@ -269,7 +275,7 @@ export default function ProductDetailScreen({ route, navigation }) {
     if (!selectionValidation.ok) {
       const message = 'Choose every required option above before adding to cart.';
       setOptionError(message); Feedback.show({ type: 'info', text1: 'Select your options', text2: message });
-      scrollRef.current?.scrollTo({ y: Math.max(0, optionLayout.current.column + optionLayout.current.card + optionLayout.current.options - 20), animated: true });
+      scrollRef.current?.scrollTo({ y: Math.max(0, optionLayout.current.row + optionLayout.current.column + optionLayout.current.card + optionLayout.current.options - 20), animated: true });
       return;
     }
     selectionTouched.current = true; setOptionError('');
@@ -468,7 +474,8 @@ export default function ProductDetailScreen({ route, navigation }) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.colors.primary} />}
         >
         {/* Premium media gallery */}
-        <GlassPanel variant="strong" style={[styles.galleryCard, { width: contentWidth }]}>
+        <View style={{ width: contentWidth, flexDirection: twoPane ? 'row' : 'column', gap: twoPane ? spacing.lg : 0, alignItems: 'flex-start' }} onLayout={event => { optionLayout.current.row = event.nativeEvent.layout.y; }}>
+        <GlassPanel variant="strong" style={[styles.galleryCard, { width: mediaWidth }]}>
           <View
             style={[styles.imageSection, { width: galleryWidth, height: galleryHeight }]}
             {...galleryPanResponder.panHandlers}
@@ -553,7 +560,7 @@ export default function ProductDetailScreen({ route, navigation }) {
         </GlassPanel>
 
         {/* Product Info */}
-        <View style={[styles.contentColumn, { width: contentWidth }]} onLayout={event => { optionLayout.current.column = event.nativeEvent.layout.y; }}>
+        <View style={[styles.contentColumn, { width: infoWidth, alignSelf: 'flex-start' }]} onLayout={event => { optionLayout.current.column = event.nativeEvent.layout.y; }}>
           <GlassPanel variant="card" style={styles.infoCard} onLayout={event => { optionLayout.current.card = event.nativeEvent.layout.y; }}>
             <View style={styles.eyebrowRow}>
               <View style={styles.categoryPill}>
@@ -789,6 +796,9 @@ export default function ProductDetailScreen({ route, navigation }) {
           </GlassPanel>
 
           {/* Store Card */}
+          </View>
+          </View>
+          <View style={[styles.contentColumn, { width: contentWidth }]}>
           {storeData && (
             <GlassPanel variant="card" style={styles.storeCard}>
               <TouchableOpacity
@@ -900,8 +910,8 @@ export default function ProductDetailScreen({ route, navigation }) {
               </View>
               <View style={styles.relatedGrid}>
                 {relatedProducts.map((p, idx) => (
-                  <View key={p._id} style={styles.relatedItem}>
-                    <ProductCard product={p} index={idx} onPress={() => navigation.push('ProductDetail', { productId: p._id })} />
+                  <View key={p._id} style={[styles.relatedItem, isTablet && { width: `${100 / relatedColumns - 1}%` }]}>
+                    <ProductCard product={p} index={idx} cardWidth={isTablet ? (contentWidth / relatedColumns - 12) : undefined} onPress={() => navigation.push('ProductDetail', { productId: p._id })} />
                   </View>
                 ))}
               </View>

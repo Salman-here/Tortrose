@@ -1142,7 +1142,7 @@ export default function CheckoutScreen({ navigation }) {
   }
 
   return (
-    <GlassBackground>
+    <GlassBackground contentMaxWidth={840}>
       <View style={{ flex: 1 }}>
         {/* Glass Header */}
         <GlassPanel variant="floating" style={styles.header}>

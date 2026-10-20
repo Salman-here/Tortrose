@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tap as hapticTap } from '../utils/haptics';
 import { getBottomTabTheme } from '../utils/bottomTabTheme';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 // Website --logo-gradient — same as the Add to Cart / CTA buttons
 const CTA_GRADIENT = ['#14B8A6', '#0EA5E9', '#6366F1'];
@@ -334,6 +335,7 @@ function SlidingTabBar({
   isDark,
   bottomInset,
 }) {
+  const { isTablet, windowWidth } = useResponsiveLayout();
   const activeIndex = useRef(new Animated.Value(state.index)).current;
   const [barWidth, setBarWidth] = useState(0);
   const tabTheme = getBottomTabTheme(palette, isDark);
@@ -364,9 +366,10 @@ function SlidingTabBar({
       onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
       style={[
         styles.tabBar,
+        isTablet && { left: (windowWidth - Math.min(560, windowWidth - 48)) / 2, right: (windowWidth - Math.min(560, windowWidth - 48)) / 2 },
         {
           bottom: Math.max(bottomInset, spacing.md),
-          height: 66,
+          height: isTablet ? 78 : 66,
           shadowColor: tabTheme.shadowColor,
           shadowOpacity: tabTheme.shadowOpacity,
         },
@@ -449,6 +452,7 @@ function SlidingTabBar({
                 color,
                 size: 22,
               })}
+              {isTablet && <Text style={{ marginTop: 4, fontSize: 11, fontWeight: '600', color: isFocused ? palette.colors.primary : tabTheme.inactiveIconColor }}>{options.title || route.name}</Text>}
             </Pressable>
           );
         })}

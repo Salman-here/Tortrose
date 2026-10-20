@@ -377,6 +377,12 @@ const OrderDetail = () => {
                                 <p className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order?.shippingInfo.city}, {order?.shippingInfo.state} {order?.shippingInfo.postalCode}</p>
                                 <p className="text-sm font-medium" style={{ color: 'hsl(var(--foreground))' }}>{order?.shippingInfo.country}</p>
                             </div>
+                            {typeof order?.instructions === 'string' && order.instructions.trim() ? (
+                                <div className="pt-3" style={{ borderTop: '1px solid var(--glass-border-subtle)' }}>
+                                    <p className="text-xs font-semibold mb-1.5" style={{ color: 'hsl(var(--muted-foreground))' }}>Delivery instructions</p>
+                                    <p className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]" style={{ color: 'hsl(var(--foreground))' }}>{order.instructions.trim()}</p>
+                                </div>
+                            ) : null}
                         </div>
                     </div>
                 </div>

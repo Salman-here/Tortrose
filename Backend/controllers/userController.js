@@ -689,7 +689,10 @@ exports.setDefaultAddress = async (req, res) => {
 // Register / save an Expo push token for the authenticated user
 exports.savePushToken = async (req, res) => {
     const { id: userId } = req.user;
-    const { pushToken, revocationCredential } = req.body || {};
+    const { pushToken, revocationCredential, soundProfileVersion } = req.body || {};
+    if (soundProfileVersion !== undefined && ![0, 1].includes(soundProfileVersion)) {
+        return res.status(400).json({ msg: 'Invalid notification sound profile' });
+    }
     if (!pushToken || typeof pushToken !== 'string') {
         return res.status(400).json({ msg: 'pushToken is required' });
     }
@@ -704,11 +707,13 @@ exports.savePushToken = async (req, res) => {
         const { credential, clientProvidedCredential } = await registerPushToken(
             userId,
             normalizedToken,
-            revocationCredential
+            revocationCredential,
+            ...(soundProfileVersion !== undefined ? [{ soundProfileVersion }] : [])
         )
         res.status(200).json({
             msg: 'Push token saved',
             registered: true,
+            ...(soundProfileVersion !== undefined ? { soundProfileVersion } : {}),
             // Legacy clients can still migrate by persisting the generated
             // credential. New clients supply their own before making the
             // request, so a lost response is never an ambiguous commit.

@@ -26,6 +26,7 @@ import {
 } from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { getOrderPaymentLabel } from '../../utils/paymentPresentation';
 import { getPaymentReviewPresentation } from '../../utils/safepayPaymentReviewPresentation';
@@ -73,7 +74,8 @@ const getItemName = (item) => item?.name || item?.product?.name || item?.product
 export default function OrderDetailManagementScreen({ route, navigation }) {
   const { palette } = useTheme();
   const { formatPrice } = useCurrency();
-  const styles = useMemo(() => buildStyles(palette), [palette]);
+  const { isTablet } = useResponsiveLayout();
+  const styles = useMemo(() => buildStyles(palette, isTablet), [palette, isTablet]);
   const STATUS_CONFIG = useMemo(() => getStatusConfig(palette), [palette]);
 
   const { orderId, isAdmin } = route.params || {};
@@ -176,6 +178,7 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   const statusConfig = STATUS_CONFIG[orderStatus] || STATUS_CONFIG.pending;
   const orderItems = order.orderItems || order.items || [];
   const shippingInfo = order.shippingInfo || order.shippingAddress || {};
+  const deliveryInstructions = typeof order.instructions === 'string' ? order.instructions.trim() : '';
   const orderCurrency = getOrderCurrency(order);
   const sellerCurrencyMoney = getSellerCurrencyMoney(order);
   const onlineDeduction = sellerCurrencyMoney ? getSellerOnlineDeduction(order,sellerCurrencyMoney) : null;
@@ -382,6 +385,16 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
           </View>
         </GlassPanel>
 
+        {deliveryInstructions ? (
+          <GlassPanel variant="card" style={styles.section}>
+            <View style={styles.infoRow}>
+              <Ionicons name="chatbox-ellipses-outline" size={20} color={palette.colors.primary} />
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Delivery instructions</Text>
+            </View>
+            <Text selectable style={[styles.infoText, { flex: 0, marginTop: spacing.md, lineHeight: 22 }]}>{deliveryInstructions}</Text>
+          </GlassPanel>
+        ) : null}
+
         <GlassPanel variant="card" style={styles.section}>
           <Text style={styles.sectionTitle}>Items ({orderItems.length})</Text>
           {orderItems.map((item, index) => {
@@ -514,9 +527,9 @@ export default function OrderDetailManagementScreen({ route, navigation }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
   safeArea: { flex: 1 },
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: spacing.xxl },
+  scroll: { width: '100%', maxWidth: isTablet ? 900 : 680, alignSelf: 'center', paddingBottom: spacing.xxl },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xxl },
   errorTitle: { ...typography.h3, color: p.colors.text, marginTop: spacing.lg, marginBottom: spacing.xl },
   backButton: { backgroundColor: p.colors.primary, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: borderRadius.lg },

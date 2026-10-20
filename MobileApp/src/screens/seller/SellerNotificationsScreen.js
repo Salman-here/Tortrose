@@ -8,6 +8,7 @@ import React, {
 import {
   FlatList,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -17,6 +18,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useIsFocused } from '@react-navigation/native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import NotificationSwipeRow from '../../components/notifications/NotificationSwipeRow';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../../config/api';
 import GlassBackground from '../../components/common/GlassBackground';
@@ -46,6 +50,8 @@ import {
 import {
   parseNotificationReadAllResponse,
   parseNotificationReadResponse,
+  parseNotificationDismissResponse,
+  parseDismissedNotificationItems,
 } from '../../utils/notificationInboxSafety';
 
 const getNotificationVisuals = (palette) => ({
@@ -94,11 +100,14 @@ const getNotificationVisuals = (palette) => ({
 });
 
 export default function SellerNotificationsScreen({ navigation }) {
+  const focused = useIsFocused();
   const { palette } = useTheme();
   const { currentUser } = useAuth();
   const styles = useMemo(() => buildStyles(palette), [palette]);
   const notificationVisuals = useMemo(() => getNotificationVisuals(palette), [palette]);
   const analyticReadKeys = useRef(new Set());
+  const dismissedKeys = useRef(new Set());
+  const dismissalQueue = useRef(Promise.resolve(true));
   const accountGenerationRef = useRef(0);
   const fetchGenerationRef = useRef(0);
   const sellerId = useMemo(() => {
@@ -128,6 +137,8 @@ export default function SellerNotificationsScreen({ navigation }) {
     fetchGenerationRef.current += 1;
     sellerIdRef.current = sellerId;
     analyticReadKeys.current = new Set();
+    dismissedKeys.current = new Set();
+    dismissalQueue.current = Promise.resolve(true);
     setNotifications([]);
     setNotificationOwner('');
     setReadStateIdentity('');
@@ -145,8 +156,8 @@ export default function SellerNotificationsScreen({ navigation }) {
 
     setLoading(true);
     let active = true;
-    AsyncStorage.getItem(readStorageKey)
-      .then((stored) => {
+    Promise.all([AsyncStorage.getItem(readStorageKey), AsyncStorage.getItem(`${readStorageKey}:dismissed`)])
+      .then(([stored, dismissed]) => {
         if (
           !active
           || accountGenerationRef.current !== accountGeneration
@@ -154,6 +165,8 @@ export default function SellerNotificationsScreen({ navigation }) {
         ) return;
         const parsed = stored ? JSON.parse(stored) : [];
         analyticReadKeys.current = new Set(Array.isArray(parsed) ? parsed.filter(Boolean).slice(-500) : []);
+        const hidden = dismissed ? JSON.parse(dismissed) : [];
+        dismissedKeys.current = new Set(Array.isArray(hidden) ? hidden.filter(key => typeof key === 'string').slice(-10000) : []);
       })
       .catch(() => {
         if (
@@ -191,7 +204,7 @@ export default function SellerNotificationsScreen({ navigation }) {
 
     const [analyticsResult, inboxResult] = await Promise.allSettled([
       api.get('/api/analytics/notifications'),
-      api.get('/api/notifications/me?surface=seller'),
+      api.get('/api/notifications/me?surface=seller&includeDismissals=true'),
     ]);
 
     if (
@@ -202,6 +215,7 @@ export default function SellerNotificationsScreen({ navigation }) {
 
     let analyticsItems = null;
     let inboxItems = null;
+    let serverArchived = [];
     if (analyticsResult.status === 'fulfilled') {
       try {
         analyticsItems = parseSellerAnalyticsNotificationsResponse(analyticsResult.value?.data, {
@@ -213,12 +227,19 @@ export default function SellerNotificationsScreen({ navigation }) {
     if (inboxResult.status === 'fulfilled') {
       try {
         inboxItems = parseSellerInboxNotificationsResponse(inboxResult.value?.data, { sellerId });
+        serverArchived = parseDismissedNotificationItems(inboxResult.value?.data?.dismissedItems);
+        serverArchived.forEach(item => {
+          dismissedKeys.current.add(`persistent:${item._id}`);
+          if (String(item.aggregateType).toLowerCase() === 'order' && item.aggregateId) dismissedKeys.current.add(`synthetic-order:${item.aggregateId}`);
+        });
       } catch {}
     }
     const analyticsLoaded = Array.isArray(analyticsItems);
     const inboxLoaded = Array.isArray(inboxItems);
 
-    setNotifications(mergeNormalizedSellerNotifications(analyticsItems || [], inboxItems || []));
+    setNotifications(mergeNormalizedSellerNotifications(analyticsItems || [], inboxItems || []).filter(item =>
+      !dismissedKeys.current.has(item.id)
+      && !(item.source === 'analytics' && item.orderId && dismissedKeys.current.has(`synthetic-order:${item.orderId}`))));
     setNotificationOwner(sellerId);
 
     if (!analyticsLoaded && !inboxLoaded) {
@@ -234,8 +255,8 @@ export default function SellerNotificationsScreen({ navigation }) {
   }, [sellerId]);
 
   useEffect(() => {
-    if (sellerId && readStateIdentity === sellerId) fetchNotifications({ initial: true });
-  }, [fetchNotifications, readStateIdentity, sellerId]);
+    if (sellerId && readStateIdentity === sellerId && focused) fetchNotifications();
+  }, [fetchNotifications, focused, readStateIdentity, sellerId]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -316,6 +337,38 @@ export default function SellerNotificationsScreen({ navigation }) {
     const target = resolveSellerNotificationTarget(notification);
     if (target) navigation.navigate(target.screen, target.params);
   }, [markNotificationRead, navigation]);
+
+  const dismissNotification = useCallback(notification => {
+    const operation = dismissalQueue.current.catch(() => false).then(async () => {
+    if (!sellerId || sellerIdRef.current !== sellerId) return false;
+    const generation = accountGenerationRef.current;
+    const current = () => sellerIdRef.current === sellerId && accountGenerationRef.current === generation;
+    const before = new Set(dismissedKeys.current);
+    dismissedKeys.current.add(notification.id);
+    if (notification.orderId) dismissedKeys.current.add(`synthetic-order:${notification.orderId}`);
+    try {
+      if (notification.persisted) {
+        if (!notification.backendId) throw new Error('Missing notification id');
+        const ids = [notification.backendId];
+        const response = await api.post('/api/notifications/dismiss?surface=seller', { ids });
+        parseNotificationDismissResponse(response.data, { currentUser, ids, expectedSurface: 'seller' });
+      }
+      await AsyncStorage.setItem(`${readStorageKey}:dismissed`, JSON.stringify([...dismissedKeys.current].slice(-10000)));
+      if (!current()) return false;
+      setNotifications(items => items.filter(item => item.id !== notification.id));
+      setActionError('');
+      return true;
+    } catch {
+      if (!current()) return false;
+      dismissedKeys.current = before;
+      await AsyncStorage.setItem(`${readStorageKey}:dismissed`, JSON.stringify([...before])).catch(() => {});
+      if (current()) setActionError('The notification could not be dismissed. Check your connection and try again.');
+      return false;
+    }
+    });
+    dismissalQueue.current = operation.catch(() => false);
+    return operation;
+  }, [currentUser, readStorageKey, sellerId]);
 
   const markAllRead = useCallback(async () => {
     if (
@@ -422,9 +475,14 @@ export default function SellerNotificationsScreen({ navigation }) {
     const target = resolveSellerNotificationTarget(item);
     const critical = item.severity === 'critical';
     return (
-      <TouchableOpacity
+      <NotificationSwipeRow onDismiss={() => dismissNotification(item)} renderRightActions={() => (
+        <View style={{ width: 90, height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: palette.colors.error, borderRadius: 18 }}>
+          <Ionicons name="trash-outline" size={22} color="#fff" /><Text style={{ color: '#fff', marginTop: 6 }}>Dismiss</Text>
+        </View>
+      )}>
+      <Pressable
         onPress={() => handleNotificationPress(item)}
-        activeOpacity={0.78}
+        style={({ pressed }) => pressed && { opacity: 0.78 }}
         accessibilityRole="button"
         accessibilityLabel={`${item.read ? '' : 'Unread. '}${item.title}. ${item.body}`}
         accessibilityHint={target ? 'Opens the related seller screen' : 'Marks this notification as read'}
@@ -444,7 +502,7 @@ export default function SellerNotificationsScreen({ navigation }) {
               color={critical ? palette.colors.error : visual.color}
             />
           </View>
-          <View style={styles.notificationContent}>
+          <View collapsable={false} style={styles.notificationContent}>
             <View style={styles.notificationMetaRow}>
               <View style={[styles.categoryPill, { backgroundColor: visual.background }]}>
                 <Text style={[styles.categoryPillText, { color: visual.color }]}>{visual.label}</Text>
@@ -467,9 +525,10 @@ export default function SellerNotificationsScreen({ navigation }) {
             </View>
           </View>
         </GlassPanel>
-      </TouchableOpacity>
+      </Pressable>
+      </NotificationSwipeRow>
     );
-  }, [handleNotificationPress, notificationVisuals, palette.colors.error, palette.colors.primary, styles]);
+  }, [dismissNotification, handleNotificationPress, notificationVisuals, palette.colors.error, palette.colors.primary, styles]);
 
   if (loading) {
     return (
@@ -538,7 +597,8 @@ export default function SellerNotificationsScreen({ navigation }) {
           </ScrollView>
         </View>
 
-        <FlatList
+        <GestureHandlerRootView style={{ flex: 1 }}><FlatList
+          removeClippedSubviews={false}
           data={filteredNotifications}
           renderItem={renderNotification}
           keyExtractor={({ id }) => id}
@@ -565,7 +625,7 @@ export default function SellerNotificationsScreen({ navigation }) {
               {!!actionError && (
                 <SellerInlineError
                   compact
-                  title="Read status was not saved"
+                  title="Notification action was not saved"
                   message={actionError}
                   onRetry={onRefresh}
                 />
@@ -590,7 +650,7 @@ export default function SellerNotificationsScreen({ navigation }) {
               onAction={loadError ? onRefresh : searchQuery.trim() ? () => setSearchQuery('') : undefined}
             />
           )}
-        />
+        /></GestureHandlerRootView>
       </SafeAreaView>
     </GlassBackground>
   );

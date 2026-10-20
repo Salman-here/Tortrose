@@ -27,6 +27,7 @@ import {
 } from '../../components/seller/SellerUI';
 import { spacing, fontSize, borderRadius, fontWeight, typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { PRESET_CATEGORIES, isPresetCategory, MAX_TAGS, MAX_DESCRIPTION_LENGTH } from '../../utils/categories';
 import {
@@ -60,7 +61,8 @@ const getImageMimeType = (uri) => {
 
 export default function ProductFormScreen({ navigation, route }) {
   const { palette } = useTheme();
-  const styles = buildStyles(palette);
+  const { isTablet } = useResponsiveLayout();
+  const styles = buildStyles(palette, isTablet);
   const { currency: accountCurrency, currencies, normalizeCurrency } = useCurrency();
 
   const { product, isAdmin } = route.params || {};
@@ -999,9 +1001,9 @@ export default function ProductFormScreen({ navigation, route }) {
   );
 }
 
-const buildStyles = (p) => StyleSheet.create({
+const buildStyles = (p, isTablet = false) => StyleSheet.create({
   safeArea: { flex: 1 },
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingBottom: spacing.xxl },
+  scroll: { width: '100%', maxWidth: isTablet ? 840 : 680, alignSelf: 'center', paddingBottom: spacing.xxl },
   inlineErrorWrap: { marginHorizontal: spacing.lg, marginTop: spacing.md },
   header: { alignItems: 'center', margin: spacing.lg, padding: spacing.xl },
   headerIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(99,102,241,0.12)', justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md },

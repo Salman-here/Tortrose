@@ -27,7 +27,8 @@ const registrationMatches = (registration, { userId, revocationHash }) => (
     && !registration.revokedAt
 );
 
-async function registerPushToken(userId, pushToken, requestedCredential = null) {
+async function registerPushToken(userId, pushToken, requestedCredential = null, { soundProfileVersion = 0 } = {}) {
+    if (![0, 1].includes(soundProfileVersion)) throw new Error('Unsupported notification sound profile.');
     // The token-hash unique index is the ownership mutex. Await it before the
     // first production write so a cold deployment cannot accept two owners
     // while Mongoose is still creating indexes in the background.
@@ -47,6 +48,7 @@ async function registerPushToken(userId, pushToken, requestedCredential = null) 
             user: userId,
             revokedAt: null,
             rotatedAt: now,
+            soundProfileVersion,
         },
         $setOnInsert: { tokenHash },
     };

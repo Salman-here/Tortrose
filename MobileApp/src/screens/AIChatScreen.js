@@ -21,7 +21,7 @@ export default function AIChatScreen({ navigation, route }) {
   };
 
   return (
-    <GlassBackground>
+    <GlassBackground contentMaxWidth={900}>
       <SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
         <ChatBot
           embedded={true}

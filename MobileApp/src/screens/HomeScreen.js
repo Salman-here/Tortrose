@@ -44,6 +44,7 @@ import { spacing, fontSize, borderRadius, shadows, fontWeight } from '../styles/
 import { useTheme } from '../contexts/ThemeContext';
 import { PRESET_CATEGORIES, isPresetCategory } from '../utils/categories';
 import HomeCatalogSkeleton from '../components/common/HomeCatalogSkeleton';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 import { ProductCardSkeleton } from '../components/common/Skeleton';
 import { getModalTokens } from '../styles/modalTheme';
 
@@ -62,6 +63,7 @@ const PRODUCT_SORT_OPTIONS = [
 ];
 
 export default function HomeScreen({ navigation }) {
+  const { catalogColumns } = useResponsiveLayout();
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { height: viewportHeight } = useWindowDimensions();
@@ -1212,10 +1214,11 @@ export default function HomeScreen({ navigation }) {
     <GlassBackground>
       <SafeAreaView style={{ flex: 1 }} edges={Platform.OS === 'android' ? [] : ['top']}>
       <FlatList
+        key={`catalog-${catalogColumns}`}
         keyboardShouldPersistTaps="handled"
         data={isLoading ? [] : products}
         keyExtractor={(item) => item._id}
-        numColumns={2}
+        numColumns={catalogColumns}
         columnWrapperStyle={styles.row}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={renderHeader()}

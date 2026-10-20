@@ -196,9 +196,9 @@ describe('native branding assets', () => {
       (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-splash-screen',
     );
 
-    expect(appConfig.version).toBe('1.0.13');
-    expect(appConfig.android.versionCode).toBeGreaterThanOrEqual(19);
-    expect(appConfig.ios.buildNumber).toBe('17');
+    expect(appConfig.version).toBe('1.0.14');
+    expect(appConfig.android.versionCode).toBeGreaterThanOrEqual(20);
+    expect(appConfig.ios.buildNumber).toBe('18');
     expect(appConfig.android.blockedPermissions).toEqual(
       expect.arrayContaining([
         'android.permission.CAMERA',

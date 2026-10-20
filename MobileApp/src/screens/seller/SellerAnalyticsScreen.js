@@ -10,6 +10,7 @@ import { SellerInlineError, SellerScreenHeader } from '../../components/seller/S
 import SellerRevenueOverview from '../../components/seller/SellerRevenueOverview';
 import SellerAnalyticsCharts from '../../components/seller/SellerAnalyticsCharts';
 import { useTheme } from '../../contexts/ThemeContext';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import { useCurrency } from '../../contexts/CurrencyContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { inspectSellerProductCurrencyState } from '../../utils/productCurrencyState';
@@ -22,7 +23,8 @@ function SellerAnalyticsScreen({ navigation }) {
   const { palette } = useTheme();
   const { formatAmount } = useCurrency();
   const { width, fontScale } = useWindowDimensions();
-  const styles = useMemo(() => buildStyles(palette), [palette]);
+  const { isTablet } = useResponsiveLayout();
+  const styles = useMemo(() => buildStyles(palette, isTablet), [palette, isTablet]);
   const [timeRange, setTimeRange] = useState('30');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -124,9 +126,9 @@ function SellerAnalyticsScreen({ navigation }) {
   </GlassBackground>;
 }
 
-const buildStyles = palette => StyleSheet.create({
+const buildStyles = (palette, isTablet = false) => StyleSheet.create({
   safeArea: { flex: 1 },
-  scroll: { width: '100%', maxWidth: 680, alignSelf: 'center', paddingTop: spacing.sm, paddingBottom: 100 },
+  scroll: { width: '100%', maxWidth: isTablet ? 1024 : 680, alignSelf: 'center', paddingTop: spacing.sm, paddingBottom: 100 },
   periodHeader: { marginHorizontal: spacing.lg, marginTop: spacing.xl, marginBottom: spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
   periodTitle: { flex: 1, fontSize: fontSize.sm, color: palette.colors.text, fontWeight: fontWeight.bold },
   periodNote: { fontSize: 10, color: palette.colors.textSecondary },

@@ -13,6 +13,7 @@ const expoPushTokenRegistrationSchema = new mongoose.Schema({
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     revokedAt: { type: Date, default: null },
     rotatedAt: { type: Date, default: Date.now },
+    soundProfileVersion: { type: Number, enum: [0, 1], default: 0 },
 }, {
     timestamps: true,
     versionKey: false,

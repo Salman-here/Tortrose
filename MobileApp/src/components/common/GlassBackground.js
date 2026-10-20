@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Animated, Dimensions, Platform, StatusBar } from 'react-native';
+import { View, StyleSheet, Animated, useWindowDimensions, Platform, StatusBar } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurTargetView } from 'expo-blur';
 import Svg, { Defs, RadialGradient, Stop, Circle } from 'react-native-svg';
@@ -14,8 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexts/ThemeContext';
 import { GlassBlurTargetProvider } from '../../contexts/GlassBlurContext';
 import FeedbackHost from './FeedbackHost';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 
 const Orb = ({ id, size, color, opacity, initialX, initialY, duration, animate = true }) => {
   const translateX = useRef(new Animated.Value(0)).current;
@@ -67,8 +66,10 @@ const Orb = ({ id, size, color, opacity, initialX, initialY, duration, animate =
   );
 };
 
-export default function GlassBackground({ children, style, variant = 'default' }) {
+export default function GlassBackground({ children, style, variant = 'default', contentMaxWidth }) {
   const { palette, isDark } = useTheme();
+  const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();
+  const { isTablet, maxWidth } = useResponsiveLayout(contentMaxWidth ? { maxWidth: contentMaxWidth } : {});
   const blurTargetRef = useRef(null);
   const [blurTargetReady, setBlurTargetReady] = useState(false);
   const gradientColors = palette.gradients.background;
@@ -111,7 +112,9 @@ export default function GlassBackground({ children, style, variant = 'default' }
       <GlassBlurTargetProvider targetRef={blurTargetReady ? blurTargetRef : null}>
         <View style={[styles.contentFrame, Platform.OS === 'android' && styles.androidSafeTop]}>
           <SafeAreaView style={styles.content} edges={['bottom', 'left', 'right']}>
-            {children}
+            <View style={[styles.content, isTablet && { width: '100%', maxWidth, alignSelf: 'center' }]}>
+              {children}
+            </View>
           </SafeAreaView>
         </View>
         <FeedbackHost />

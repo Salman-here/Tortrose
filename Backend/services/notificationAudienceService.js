@@ -168,9 +168,10 @@ function buildNotificationRoleFilter(value) {
   };
 }
 
-function buildScopedNotificationQuery({ userId, role, read, surface } = {}) {
+function buildScopedNotificationQuery({ userId, role, read, surface, includeDismissed = false } = {}) {
   const query = {
     user: userId,
+    ...(!includeDismissed ? { dismissedAt: null } : {}),
     ...(surface === undefined || surface === null
       ? buildNotificationRoleFilter(role)
       : buildNotificationSurfaceFilter(role, surface)),

@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import GlassPanel from '../common/GlassPanel';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -33,13 +33,13 @@ export default function NotificationCard({ item, onPress }) {
   const styles = makeStyles(palette);
   const meta = getNotificationMeta(palette)[item.category] || getNotificationMeta(palette).system;
   return (
-    <TouchableOpacity onPress={() => onPress(item)} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel={`${item.read ? '' : 'Unread. '}${item.title}. ${item.body}`}>
+    <Pressable onPress={() => onPress(item)} style={({ pressed }) => pressed && { opacity: 0.75 }} accessibilityRole="button" accessibilityLabel={`${item.read ? '' : 'Unread. '}${item.title}. ${item.body}`}>
       <GlassPanel variant="card" style={[styles.card, !item.read && styles.cardUnread]}>
         {!item.read && <View style={styles.unreadDot} />}
         <View style={[styles.icon, { backgroundColor: meta.bg }]}>
           <Ionicons name={meta.icon} size={22} color={meta.color} />
         </View>
-        <View style={styles.content}>
+        <View collapsable={false} style={styles.content}>
           <Text style={[styles.title, !item.read && { fontWeight: fontWeight.bold }]}>{item.title}</Text>
           <Text style={styles.body}>{item.body}</Text>
           <View style={styles.footer}>
@@ -50,7 +50,7 @@ export default function NotificationCard({ item, onPress }) {
           </View>
         </View>
       </GlassPanel>
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 

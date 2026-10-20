@@ -35,6 +35,7 @@ import SafetyActionsSheet from '../components/common/SafetyActionsSheet';
 import { spacing, fontSize, borderRadius, fontWeight } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { storeShareContent } from '../utils/shareLinks';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 const PRODUCTS_PER_PAGE = 12; // matches website
 
@@ -69,6 +70,7 @@ async function getStoreVisitorId() {
 }
 
 export default function StoreScreen({ route, navigation }) {
+  const { catalogColumns, isTablet } = useResponsiveLayout();
   const { palette } = useTheme();
   const styles = buildStyles(palette);
   const { formatPrice, currency } = useCurrency();
@@ -222,10 +224,10 @@ export default function StoreScreen({ route, navigation }) {
   }, []);
 
   const renderProduct = useCallback(({ item, index }) => (
-    <View style={styles.productWrapper}>
+    <View style={[styles.productWrapper, isTablet && { maxWidth: `${100 / catalogColumns}%` }]}>
       <ProductCard product={item} index={index} onPress={() => navigation.navigate('ProductDetail', { productId: item._id })} />
     </View>
-  ), [navigation]);
+  ), [navigation, catalogColumns, isTablet]);
 
   if (isLoading) return <GlassBackground><View style={styles.center}><Loader fullScreen message="Loading store..." /></View></GlassBackground>;
 
@@ -480,7 +482,8 @@ export default function StoreScreen({ route, navigation }) {
       </GlassPanel>
 
       <FlatList
-        data={productsLoading ? [] : products} keyExtractor={(item) => item._id} numColumns={2}
+        key={`store-products-${catalogColumns}`}
+        data={productsLoading ? [] : products} keyExtractor={(item) => item._id} numColumns={catalogColumns}
         columnWrapperStyle={styles.row} contentContainerStyle={styles.listContent}
         ListHeaderComponent={renderHeader()} renderItem={renderProduct}
         ListFooterComponent={!productsLoading && totalPages > 1 ? (
