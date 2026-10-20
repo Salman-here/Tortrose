@@ -14,6 +14,9 @@ jest.mock('@react-native-community/netinfo', () => ({
 }));
 
 // Mock expo-secure-store
+jest.mock('expo-application', () => ({ nativeApplicationVersion: null, nativeBuildVersion: null }));
+
+// Mock expo-secure-store
 jest.mock('expo-secure-store', () => ({
   getItemAsync: jest.fn(),
   setItemAsync: jest.fn(),

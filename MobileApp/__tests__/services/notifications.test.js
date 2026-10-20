@@ -1,6 +1,8 @@
 const mockSecureGet = jest.fn();
 const mockSecureSet = jest.fn();
 const mockSecureDel = jest.fn();
+let mockNativeApplicationVersion = null;
+jest.mock('expo-application', () => ({ get nativeApplicationVersion() { return mockNativeApplicationVersion; } }));
 
 jest.mock('expo-constants', () => ({
   __esModule: true,
@@ -32,6 +34,7 @@ import {
   setActiveNotificationIdentity,
   unregisterPushTokenFromServer,
   waitForPushTokenRegistrations,
+  createChannels,
 } from '../../src/services/notifications';
 
 const mockApi = require('../../src/config/api').default;
@@ -71,6 +74,7 @@ const readState = () => JSON.parse(secureValues.get(STATE_KEY) || '{"active":nul
 describe('notification runtime isolation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockNativeApplicationVersion = null;
     secureValues = new Map();
     mockSecureGet.mockImplementation(async key => secureValues.get(key) ?? null);
     mockSecureSet.mockImplementation(async (key, value) => { secureValues.set(key, value); });
@@ -492,5 +496,48 @@ describe('notification runtime isolation', () => {
     }, 'seller', 'seller-1');
     expect(result.shouldShowBanner).toBe(true);
     expect(result.shouldSetBadge).toBe(true);
+  });
+
+  it('uses the native application version, not removed Constants fields, to upgrade an existing installation', async () => {
+    mockNativeApplicationVersion = '1.0.14';
+    mockNotifications.setNotificationChannelAsync = jest.fn().mockResolvedValue({});
+    mockNotifications.AndroidImportance = { DEFAULT: 3, HIGH: 4 };
+    const user = { id: 'sound-profile-seller', role: 'seller' };
+    const generation = await setActiveNotificationIdentity(user);
+    writeState({ active: { pushToken: 'ExpoPushToken[native-version]', revocationCredential: CREDENTIAL,
+      accountIdentity: 'seller:sound-profile-seller', acknowledged: true, soundProfileVersion: 0 } });
+    mockApi.post.mockResolvedValue({ data: { registered: true, soundProfileVersion: 1 } });
+    expect(await savePushTokenToServer('ExpoPushToken[native-version]', { user, generation })).toBe(true);
+    expect(mockApi.post).toHaveBeenCalledWith('/api/user/push-token', expect.objectContaining({ soundProfileVersion: 1, revocationCredential: CREDENTIAL }));
+    expect(readState().active.soundProfileVersion).toBe(1);
+    expect(readState().active.acknowledged).toBe(true);
+    await setActiveNotificationIdentity(null);
+  });
+
+  it('does not falsely acknowledge custom sounds before the backend confirms the capability', async () => {
+    mockNativeApplicationVersion = '1.0.14';
+    const user = { id: 'sound-profile-seller', role: 'seller' }, generation = await setActiveNotificationIdentity(user);
+    mockApi.post.mockResolvedValue({ data: { registered: true } });
+    expect(await savePushTokenToServer('ExpoPushToken[unconfirmed-sounds]', { user, generation })).toBe(false);
+    expect(readState().active.acknowledged).toBe(false);
+    mockApi.post.mockResolvedValue({ data: { registered: true, soundProfileVersion: 1 } });
+    expect(await savePushTokenToServer('ExpoPushToken[unconfirmed-sounds]', { user, generation })).toBe(true);
+    await setActiveNotificationIdentity(null);
+  });
+
+  it('creates the custom Android channels only for a native build containing the sound files', async () => {
+    const platform = require('react-native').Platform, original = platform.OS;
+    platform.OS = 'android';
+    mockNotifications.setNotificationChannelAsync = jest.fn().mockResolvedValue({});
+    mockNotifications.AndroidImportance = { DEFAULT: 3, HIGH: 4 };
+    try {
+      mockNativeApplicationVersion = '1.0.13'; await createChannels();
+      expect(mockNotifications.setNotificationChannelAsync).toHaveBeenCalledTimes(4);
+      mockNotifications.setNotificationChannelAsync.mockClear();
+      mockNativeApplicationVersion = '1.0.14'; await createChannels();
+      expect(mockNotifications.setNotificationChannelAsync).toHaveBeenCalledTimes(7);
+      expect(mockNotifications.setNotificationChannelAsync).toHaveBeenCalledWith('rozare-new-orders-v1', expect.objectContaining({ sound: 'rozare_new_order_v1.wav' }));
+      expect(mockNotifications.setNotificationChannelAsync).toHaveBeenCalledWith('rozare-updates-v1', expect.objectContaining({ sound: 'rozare_update_v1.wav' }));
+    } finally { platform.OS = original; }
   });
 });

@@ -5,6 +5,7 @@
  */
 
 import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 import axios from 'axios';
 import * as Crypto from 'expo-crypto';
 import { Platform } from 'react-native';
@@ -232,7 +233,7 @@ export async function createChannels() {
       name: 'General',
       importance: Notifications.AndroidImportance.DEFAULT,
     });
-    if (getNotificationSoundProfile(Constants.nativeAppVersion, Constants.appOwnership) === 1) {
+    if (getNotificationSoundProfile(Application.nativeApplicationVersion, Constants.appOwnership) === 1) {
       await Notifications.setNotificationChannelAsync('rozare-updates-v1', {
         name: 'Rozare updates', importance: Notifications.AndroidImportance.DEFAULT, sound: UPDATE_SOUND,
         vibrationPattern: [0, 80], showBadge: true,
@@ -314,7 +315,7 @@ export function savePushTokenToServer(token, registration = {}) {
     if (!identityIsCurrent()) return false;
 
     try {
-      const soundProfileVersion = getNotificationSoundProfile(Constants.nativeAppVersion, Constants.appOwnership);
+      const soundProfileVersion = getNotificationSoundProfile(Application.nativeApplicationVersion, Constants.appOwnership);
       if (soundProfileVersion === 1) await createChannels();
       if (!identityIsCurrent()) return false;
       const accountIdentity = `${expectedRole}:${String(expectedUserId)}`;
@@ -536,7 +537,7 @@ export async function preparePushTokenLogout({ authToken } = {}) {
 export async function sendLocalNotification({ title, body, data = {}, channelId = 'general' }) {
   if (!Notifications) return null;
   await createChannels();
-  const audio = notificationSound({ data, channelId }, getNotificationSoundProfile(Constants.nativeAppVersion, Constants.appOwnership));
+  const audio = notificationSound({ data, channelId }, getNotificationSoundProfile(Application.nativeApplicationVersion, Constants.appOwnership));
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
