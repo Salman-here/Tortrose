@@ -8,6 +8,27 @@ const cart = () => [{ product: { _id: 'p1', seller: 's1', price: 100, priceCurre
 const identity = (items = cart(), currency = 'PKR', owner = 'buyerA') => createCheckoutReviewIdentity(items, currency, owner);
 const source = readFileSync(require.resolve('../../src/screens/CheckoutScreen.js'), 'utf8');
 
+test('empty checkout returns to the nested Home tab instead of an unregistered root screen', () => {
+  const ast = parse(source, { sourceType: 'module', plugins: ['jsx'] });
+  let handler;
+  const walk = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'JSXElement' && node.openingElement.name?.name === 'TouchableOpacity'
+      && source.slice(node.start, node.end).includes('Continue Shopping')) {
+      handler = node.openingElement.attributes.find(attribute => attribute.name?.name === 'onPress')?.value?.expression;
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value && typeof value === 'object') walk(value);
+    }
+  };
+  walk(ast);
+  expect(handler).toBeDefined();
+  const navigation = { navigate: jest.fn() };
+  new Function('navigation', `return (${source.slice(handler.start, handler.end)});`)(navigation)();
+  expect(navigation.navigate).toHaveBeenCalledWith('MainTabs', { screen: 'Home' });
+});
+
 test('review progress is stable across object/order replacement, but changes in the exact order require cart review', () => {
   const initial = identity(), progress = { identity: initial, step: 2 };
   const equivalent = cart(); equivalent[0].selectedOptions = { Size: 'M', Color: 'Blue' };

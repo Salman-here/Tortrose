@@ -1132,7 +1132,7 @@ export default function CheckoutScreen({ navigation }) {
           <GlassPanel variant="panel" style={styles.emptyCard}>
             <Ionicons name="cart-outline" size={64} color="rgba(255,255,255,0.4)" />
             <Text style={styles.emptyTitle}>Your cart is empty</Text>
-            <TouchableOpacity style={styles.shopButton} onPress={() => navigation.navigate('Home')}>
+            <TouchableOpacity style={styles.shopButton} onPress={() => navigation.navigate('MainTabs', { screen: 'Home' })}>
               <Text style={styles.shopButtonText}>Continue Shopping</Text>
             </TouchableOpacity>
           </GlassPanel>
