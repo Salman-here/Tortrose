@@ -85,7 +85,17 @@ export const BuyerSellerStatusChips = ({ order }) => {
   );
 };
 
-const SellerGroup = ({ group, formatMoney, index, onCancel, currency, order }) => {
+const shippingSummary = (group, formatMoney) => {
+  const method = group.shippingMethod?.name || '';
+  const methodLabel = ['free', 'free shipping'].includes(method.toLowerCase()) ? '' : method;
+  const days = group.shippingMethod?.estimatedDays;
+  const estimate = Number.isSafeInteger(days) && days > 0 ? `${days} day${days === 1 ? '' : 's'}` : '';
+  const delivery = [methodLabel, estimate].filter(Boolean).join(' - ');
+  const charge = group.summary.shippingCost === 0 ? 'Free' : formatMoney(group.summary.shippingCost);
+  return delivery ? `${delivery} · ${charge}` : charge;
+};
+
+const SellerGroup = ({ group, formatMoney, index, onCancel, currency, order, showSummary }) => {
   const summary = group.summary;
   const refund = cancellationRefundPresentation(group.cancellation, currency, summary.totalAmount, order);
   return (
@@ -114,7 +124,7 @@ const SellerGroup = ({ group, formatMoney, index, onCancel, currency, order }) =
         </button>}
       </div>
 
-      <div className="p-4 sm:p-5 grid grid-cols-1 xl:grid-cols-[1fr_230px] gap-5">
+      <div className={`p-4 sm:p-5 grid grid-cols-1 gap-5${showSummary ? ' xl:grid-cols-[1fr_230px]' : ''}`}>
         <div className="space-y-3">
           {group.items.map((item, itemIndex) => {
             const options = getOrderItemOptionPairs(item);
@@ -140,24 +150,16 @@ const SellerGroup = ({ group, formatMoney, index, onCancel, currency, order }) =
             );
           })}
 
-          <div className="rounded-xl p-3 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ background: 'rgba(255,255,255,0.035)', color: 'hsl(var(--muted-foreground))' }}>
-            <span className="font-semibold" style={{ color: 'hsl(var(--foreground))' }}>
-              {group.shippingMethod?.name || 'Shipping details unavailable for this legacy order'}
-            </span>
-            {group.shippingMethod && (
-              <span>{group.shippingMethod.estimatedDays ? `${group.shippingMethod.estimatedDays} day${group.shippingMethod.estimatedDays === 1 ? '' : 's'} · ` : ''}{group.shippingMethod.price === 0 ? 'Free shipping' : formatMoney(group.shippingMethod.price)}</span>
-            )}
-          </div>
         </div>
 
-        <div className="rounded-xl p-3 h-fit space-y-2 text-xs" style={{ background: 'rgba(255,255,255,0.035)' }}>
+        {showSummary && <div data-seller-summary={group.sellerId} className="rounded-xl p-3 h-fit space-y-2 text-xs" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid var(--glass-border)' }}>
           <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Products</span><span>{formatMoney(summary.subtotal)}</span></div>
-          <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span>{summary.shippingCost === 0 ? 'Free' : formatMoney(summary.shippingCost)}</span></div>
+          <div className="flex justify-between gap-3"><span className="shrink-0" style={{ color: 'hsl(var(--muted-foreground))' }}>Shipping</span><span className="min-w-0 text-right break-words">{shippingSummary(group, formatMoney)}</span></div>
           {summary.tax > 0 && <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Tax</span><span>{formatMoney(summary.tax)}</span></div>}
           {summary.couponDiscount > 0 && <div className="flex justify-between gap-3" style={{ color: 'hsl(150, 60%, 40%)' }}><span>Discount</span><span>-{formatMoney(summary.couponDiscount)}</span></div>}
           {summary.reconciliationAdjustment !== 0 && <div className="flex justify-between gap-3"><span style={{ color: 'hsl(var(--muted-foreground))' }}>Rounding</span><span>{summary.reconciliationAdjustment > 0 ? '+' : '-'}{formatMoney(Math.abs(summary.reconciliationAdjustment))}</span></div>}
-          <div className="flex justify-between gap-3 pt-2 text-sm font-extrabold" style={{ borderTop: '1px solid var(--glass-border-subtle)', color: 'hsl(var(--foreground))' }}><span>Seller total</span><span>{formatMoney(summary.totalAmount)}</span></div>
-        </div>
+          <div className="flex justify-between gap-3 pt-2 text-sm font-extrabold" style={{ borderTop: '1px solid var(--glass-border-subtle)', color: 'hsl(var(--foreground))' }}><span>Total</span><span>{formatMoney(summary.totalAmount)}</span></div>
+        </div>}
       </div>
     </motion.section>
   );
@@ -182,7 +184,7 @@ const BuyerSellerFulfillmentGroups = ({ order, formatMoney, showHeading = true, 
           <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>This is one order split into {groups.length} seller shipment{groups.length === 1 ? '' : 's'}. Each store controls only its own status, shipping, and products.</p>
         </div>
       )}
-      {groups.map((group, index) => <SellerGroup key={group.sellerId} group={group} formatMoney={formatMoney} index={index} currency={order.currency} order={order} onCancel={onCancel} />)}
+      {groups.map((group, index) => <SellerGroup key={group.sellerId} group={group} formatMoney={formatMoney} index={index} currency={order.currency} order={order} onCancel={onCancel} showSummary={groups.length > 1} />)}
     </div>
   );
 };
