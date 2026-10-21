@@ -158,41 +158,6 @@ h1, h2, h3, h4, h5, h6 {
     hyphens: none;
 }
 
-/* Buyer delivery cards: readable surfaces without changing status/progress tokens. */
-.buyer-shipment-card {
-    --shipment-secondary: #475569;
-    --shipment-accent: #1d4ed8;
-    --shipment-surface: rgba(255, 255, 255, 0.88);
-    --shipment-inset: rgba(241, 245, 249, 0.82);
-    --shipment-border: rgba(100, 116, 139, 0.18);
-    background: var(--shipment-surface);
-    border: 1px solid var(--shipment-border);
-    box-shadow: 0 8px 28px rgba(15, 23, 42, 0.045);
-    color: hsl(var(--foreground));
-}
-
-.dark .buyer-shipment-card {
-    --shipment-secondary: #cbd5e1;
-    --shipment-accent: #93c5fd;
-    --shipment-surface: rgba(15, 23, 42, 0.94);
-    --shipment-inset: rgba(30, 41, 59, 0.86);
-    --shipment-border: rgba(148, 163, 184, 0.22);
-}
-
-.buyer-shipment-secondary { color: var(--shipment-secondary); }
-.buyer-shipment-panel { background: var(--shipment-inset); border: 1px solid var(--shipment-border); }
-.buyer-shipment-divider { border-color: var(--shipment-border); }
-.buyer-shipment-option { background: rgba(99, 102, 241, 0.09); color: var(--shipment-accent); }
-.buyer-shipment-total { color: var(--shipment-accent); }
-
-.buyer-shipment-cancel {
-    color: #b91c1c;
-    border: 1px solid transparent;
-}
-.buyer-shipment-cancel:hover { background: rgba(239, 68, 68, 0.06); border-color: rgba(239, 68, 68, 0.18); }
-.buyer-shipment-cancel:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
-.dark .buyer-shipment-cancel { color: #fca5a5; }
-
 /* ====================
    Links
 ==================== */
