@@ -134,6 +134,16 @@ const couponPresentationText = (coupon, formatMoney) => {
   return 'Discount included in the order total';
 };
 
+const sellerShippingSummary = (group, formatMoney) => {
+  const method = group.shippingMethod?.name || '';
+  const methodLabel = ['free', 'free shipping'].includes(method.toLowerCase()) ? '' : method;
+  const days = group.shippingMethod?.estimatedDays;
+  const estimate = Number.isSafeInteger(days) && days > 0 ? `${days} day${days === 1 ? '' : 's'}` : '';
+  const delivery = [methodLabel, estimate].filter(Boolean).join(' - ');
+  const charge = group.summary.shippingCost === 0 ? 'Free' : formatMoney(group.summary.shippingCost);
+  return delivery ? `${delivery} · ${charge}` : charge;
+};
+
 export { canCancelOrder };
 
 export default function OrderDetailScreen({ route, navigation }) {
@@ -410,6 +420,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                   palette={palette}
                   styles={styles}
                   last={index === sellerGroups.length - 1}
+                  showSummary={sellerGroups.length > 1}
                   currency={getOrderCurrency(order)}
                   order={order}
                   onCancel={() => handleCancelOrder(group.sellerId)}
@@ -588,7 +599,7 @@ function Section({ title, subtitle, icon, children, styles }) {
   );
 }
 
-function SellerShipmentGroup({ group, formatMoney, palette, styles, last, currency, order, onCancel, cancelling }) {
+function SellerShipmentGroup({ group, formatMoney, palette, styles, last, showSummary, currency, order, onCancel, cancelling }) {
   const meta = STATUS_META[group.status] || STATUS_META.pending;
   const tone = group.status === 'confirmed'
     ? { solid: palette.colors.info, bg: palette.colors.infoLight }
@@ -677,33 +688,15 @@ function SellerShipmentGroup({ group, formatMoney, palette, styles, last, curren
         })}
       </View>
 
-      <View style={styles.sellerShippingCard}>
-        <View style={styles.sellerShippingCopy}>
-          <Text style={styles.sellerShippingName}>
-            {group.shippingMethod?.name || 'Shipping details unavailable for this legacy order'}
-          </Text>
-          {!!group.shippingMethod?.estimatedDays && (
-            <Text style={styles.sellerShippingMeta}>
-              {group.shippingMethod.estimatedDays} day{group.shippingMethod.estimatedDays === 1 ? '' : 's'} estimated delivery
-            </Text>
-          )}
-        </View>
-        {!!group.shippingMethod && (
-          <Text style={styles.sellerShippingAmount}>
-            {group.shippingMethod.price === 0 ? 'Free' : formatMoney(group.shippingMethod.price)}
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.sellerAllocation}>
+      {showSummary && <View style={styles.sellerAllocation}>
         <Text style={styles.sellerAllocationCaption}>YOUR CHECKOUT BREAKDOWN FOR THIS STORE</Text>
         <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Products</Text><Text style={styles.groupSummaryValue}>{formatMoney(summary.subtotal)}</Text></View>
-        <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Shipping</Text><Text style={styles.groupSummaryValue}>{summary.shippingCost === 0 ? 'Free' : formatMoney(summary.shippingCost)}</Text></View>
+        <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Shipping</Text><Text style={[styles.groupSummaryValue, styles.groupShippingValue]}>{sellerShippingSummary(group, formatMoney)}</Text></View>
         {summary.tax > 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Tax</Text><Text style={styles.groupSummaryValue}>{formatMoney(summary.tax)}</Text></View>}
         {summary.couponDiscount > 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Discount</Text><Text style={[styles.groupSummaryValue, { color: palette.colors.success }]}>-{formatMoney(summary.couponDiscount)}</Text></View>}
         {summary.reconciliationAdjustment !== 0 && <View style={styles.groupSummaryRow}><Text style={styles.groupSummaryLabel}>Rounding</Text><Text style={styles.groupSummaryValue}>{summary.reconciliationAdjustment > 0 ? '+' : '-'}{formatMoney(Math.abs(summary.reconciliationAdjustment))}</Text></View>}
-        <View style={[styles.groupSummaryRow, styles.groupSummaryTotal]}><Text style={styles.groupTotalLabel}>Store total</Text><Text style={styles.groupTotalValue}>{formatMoney(summary.totalAmount)}</Text></View>
-      </View>
+        <View style={[styles.groupSummaryRow, styles.groupSummaryTotal]}><Text style={styles.groupTotalLabel}>Total</Text><Text style={styles.groupTotalValue}>{formatMoney(summary.totalAmount)}</Text></View>
+      </View>}
     </View>
   );
 }
@@ -807,16 +800,12 @@ const buildStyles = (p) => StyleSheet.create({
   sellerItemOptions: { marginTop: 3, color: p.colors.primary, fontSize: 9, lineHeight: 13, fontWeight: fontWeight.semibold },
   sellerItemQuantity: { marginTop: 3, color: p.colors.textSecondary, fontSize: 9 },
   sellerItemAmount: { maxWidth: 105, color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.extrabold, textAlign: 'right' },
-  sellerShippingCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, margin: spacing.md, padding: spacing.sm, borderRadius: 13, backgroundColor: p.glass.bgStrong },
-  sellerShippingCopy: { flex: 1, minWidth: 0 },
-  sellerShippingName: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.bold },
-  sellerShippingMeta: { marginTop: 2, color: p.colors.textSecondary, fontSize: 9 },
-  sellerShippingAmount: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.extrabold },
   sellerAllocation: { marginHorizontal: spacing.md, marginBottom: spacing.md, padding: spacing.md, borderRadius: 14, backgroundColor: 'rgba(99,102,241,0.07)', borderWidth: 1, borderColor: 'rgba(99,102,241,0.13)' },
   sellerAllocationCaption: { marginBottom: spacing.sm, color: p.colors.textLight, fontSize: 8, letterSpacing: 0.7, fontWeight: fontWeight.extrabold },
   groupSummaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, paddingVertical: 4 },
   groupSummaryLabel: { color: p.colors.textSecondary, fontSize: fontSize.xs },
   groupSummaryValue: { color: p.colors.text, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  groupShippingValue: { flexShrink: 1, textAlign: 'right' },
   groupSummaryTotal: { marginTop: spacing.xs, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: p.glass.borderSubtle },
   groupTotalLabel: { color: p.colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
   groupTotalValue: { color: p.colors.primary, fontSize: fontSize.sm, fontWeight: fontWeight.extrabold },
