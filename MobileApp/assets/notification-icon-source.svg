@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="10.2635 9.6635 32.2977 32.2977">
+  <!-- The existing Rozare mark, enlarged uniformly within Android's 96px notification canvas. -->
+  <!-- Keep a 1px vertical safety margin; do not resize the system status-bar slot. -->
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M37 14 a15 15 0 0 1 -25 21" stroke-width="1.6"/>
+    <path d="M15 14 h11 a7 7 0 0 1 0 14 h-7 l9 6 M19 14 v20" stroke-width="3.4"/>
+    <circle cx="35" cy="12" r="2" fill="#FFFFFF" stroke="none"/>
+  </g>
+</svg>

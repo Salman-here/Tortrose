@@ -97,7 +97,7 @@ describe('native branding assets', () => {
     expect(source).toContain('translate(50 61) scale(17.5)');
   });
 
-  test('notification icon keeps the approved white mark large and centered on transparency', () => {
+  test('notification icon maximizes the same white mark with a transparent anti-clipping margin', () => {
     const notificationIcon = readPng('assets/notification-icon.png');
     const bounds = alphaBounds(notificationIcon);
     let coloredVisiblePixels = 0;
@@ -120,10 +120,31 @@ describe('native branding assets', () => {
       width: 96,
       height: 96,
     });
-    expect(bounds).toEqual({ minX: 19, minY: 18, maxX: 76, maxY: 77 });
+    expect(bounds).toEqual({ minX: 2, minY: 1, maxX: 93, maxY: 94 });
+    expect(bounds.maxY - bounds.minY + 1).toBe(94);
+    expect(bounds.maxX - bounds.minX + 1).toBe(92);
+    for (let coordinate = 0; coordinate < 96; coordinate += 1) {
+      expect(alphaAt(notificationIcon, coordinate, 0)).toBeLessThanOrEqual(8);
+      expect(alphaAt(notificationIcon, coordinate, 95)).toBeLessThanOrEqual(8);
+      expect(alphaAt(notificationIcon, 0, coordinate)).toBeLessThanOrEqual(8);
+      expect(alphaAt(notificationIcon, 95, coordinate)).toBeLessThanOrEqual(8);
+    }
     expect(alphaAt(notificationIcon, 0, 0)).toBe(0);
     expect(alphaAt(notificationIcon, 95, 95)).toBe(0);
     expect(coloredVisiblePixels).toBe(0);
+  });
+
+  test('notification artwork preserves the original mark paths instead of changing the design', () => {
+    const source = fs.readFileSync(path.join(projectRoot, 'assets/notification-icon-source.svg'), 'utf8');
+    const approved = fs.readFileSync(path.join(projectRoot, 'assets/adaptive-icon-foreground-source.svg'), 'utf8');
+    const paths = text => [...text.matchAll(/<path d="([^"]+)"/g)].map(match => match[1]);
+    expect(paths(source)).toEqual(paths(approved));
+    expect(source).toContain('<circle cx="35" cy="12" r="2"');
+    expect(source).toContain('stroke="#FFFFFF"');
+    expect(source).not.toMatch(/stroke-opacity|<rect|<linearGradient/);
+    expect(require('../../app.json').expo.plugins).toContainEqual([
+      'expo-notifications', expect.objectContaining({ icon: './assets/notification-icon.png' }),
+    ]);
   });
 
   test('adaptive background is a full-bleed version of the favicon brand gradient', () => {
