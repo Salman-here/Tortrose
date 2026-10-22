@@ -271,15 +271,8 @@ function buildFixedWhatsAppGalleryEntries({ includeLegacy = true, includeBefore 
     if (!definition) throw new Error(`Missing message-builder export: ${method}`);
     add('Orders', name, units.buyer, { node: definition.node }, payload, { activity, before: oldMap.get(name) || null });
   };
-  const usesSecureConfirmationLink = typeof buyer.buildOrderConfirmationLinkMessage === 'function';
-  if (usesSecureConfirmationLink) {
-    pureBuyer('COD order: secure confirmation link', 'buildOrderConfirmationLinkMessage', buyer.buildOrderConfirmationLinkMessage(
-      buyer.buildOrderButtonsPayload(sampleOrder), 'preview-confirmation-token-0000000000000000',
-    ));
-  }
-  const interactiveActivity = usesSecureConfirmationLink ? 'legacy' : 'active';
-  pureBuyer('COD order: confirm or cancel buttons', 'buildOrderButtonsPayload', buyer.buildOrderButtonsPayload(sampleOrder), interactiveActivity);
-  pureBuyer('COD order: interactive list', 'buildOrderListPayload', buyer.buildOrderListPayload(sampleOrder), interactiveActivity);
+  pureBuyer('COD order: confirm or cancel buttons', 'buildOrderButtonsPayload', buyer.buildOrderButtonsPayload(sampleOrder));
+  pureBuyer('COD order: interactive list', 'buildOrderListPayload', buyer.buildOrderListPayload(sampleOrder));
   pureBuyer('Paid order information', 'buildOrderPlacedInfoMessage', buyer.buildOrderPlacedInfoMessage({ ...sampleOrder, paymentMethod: 'safepay' }));
   pureBuyer('Reconfirm a cancelled COD order', 'buildReconfirmButtonsPayload', buyer.buildReconfirmButtonsPayload(sampleOrder, ''));
   covered.add(siteKey(units.webhook, reconfirmSend));

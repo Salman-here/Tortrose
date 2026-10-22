@@ -1,6 +1,6 @@
 // Builds the WhatsApp message we send to the buyer to confirm an order.
 //
-// Legacy interactive flow (kept for existing messages and reply handling):
+// Flow (button/list only):
 //   1. Send an interactive "native flow" message with 2 reply buttons:
 //        [✅ Confirm order]   [❌ Cancel order]
 //      Each button carries a stable id of the form
@@ -14,10 +14,9 @@
 //        - listResponseMessage.singleSelectReply     (list fallback)
 //      Interactive paths are handled in webhookHandler.extractDecision.
 //
-// New COD requests use a normal text message with a secure Rozare review link.
-// Evolution can accept interactive messages without displaying them on the
-// recipient's device. A link preserves explicit buyer consent without relying
-// on those unsupported envelopes. Typed replies are still NOT order decisions.
+//   3. Text replies are intentionally not accepted as order decisions. If
+//      interactive messages fail, the queue records a send failure instead of
+//      falling back to a typed-reply flow.
 
 const {
     formatOrderMoney,
@@ -277,48 +276,6 @@ exports.buildOrderConfirmationMessage = (order) => {
         ``,
         `Use the Confirm order or Cancel order buttons in your latest order message.`,
     ].join('\n');
-};
-
-// Render from the durable interactive snapshot, not a later mutable Order.
-// Keep the original product/variant/amount text while replacing the legacy
-// instruction to use WhatsApp buttons with an explicit, token-protected page.
-exports.buildOrderConfirmationLinkMessage = (payload, token, frontendUrl = 'https://rozare.com') => {
-    if (!/^[A-Za-z0-9_-]{32,256}$/.test(String(token || ''))) {
-        throw new Error('A valid order confirmation token is required.');
-    }
-    if (!payload || typeof payload.title !== 'string' || typeof payload.description !== 'string'
-        || !payload.title.trim() || !payload.description.trim()) {
-        throw new Error('The frozen order confirmation message is invalid.');
-    }
-    const frontend = new URL(frontendUrl);
-    if (frontend.username || frontend.password || (frontend.protocol !== 'https:'
-        && !(frontend.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(frontend.hostname)))) {
-        throw new Error('Order confirmation links require a secure frontend URL.');
-    }
-    const link = new URL(`/orders/confirm/${encodeURIComponent(token)}`, frontend.origin).href;
-    const description = payload.description.trim().replace(
-        /\nReview the details, then choose Confirm order or Cancel order below\.$/, '',
-    ).trim();
-    let message = [
-        `*${inlineText(payload.title, 180)}*`, '', description, '',
-        'Review your order and choose Confirm order or Cancel order securely on Rozare:',
-        link,
-        'Opening the link does not confirm or cancel your order.',
-    ].join('\n');
-    if (message.length > 4000) {
-        // Large multi-store orders still need a deliverable confirmation.
-        // Shorten the item summary, never the frozen order total or capability.
-        const totalLine = description.split('\n').find(line => /^💰 Total: \*[^\r\n]+\*$/.test(line));
-        if (!totalLine) throw new Error('The frozen order confirmation message is too long.');
-        message = [
-            `*${inlineText(payload.title, 180)}*`, '',
-            'Please review and confirm your cash on delivery order.', totalLine, '',
-            'View all products and choose Confirm order or Cancel order securely on Rozare:', link,
-            'Opening the link does not confirm or cancel your order.',
-        ].join('\n');
-        if (message.length > 4000) throw new Error('The frozen order confirmation message is too long.');
-    }
-    return message;
 };
 
 // ──────────────────────────────────────────────────────────────────────────
