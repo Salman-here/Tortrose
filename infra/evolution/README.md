@@ -7,7 +7,8 @@ the upstream image directly:
 
 - Base: `evoapicloud/evolution-api:v2.3.7`
 - Baileys: upgraded to `7.0.0-rc13`
-- Patch: preserve explicit `@lid` reply targets in the Baileys send path
+- Patch: preserve explicit `@lid` reply targets before phone-number lookup in
+  every executable bundle, including both `dist/main` entry points
 - Patch: release Baileys' inbound event queue immediately after the
   `MESSAGES_UPSERT` webhook so contact/profile sync cannot delay the next
   inbound message
@@ -64,6 +65,27 @@ For a contact that has no valid `tctoken`, the first attempted outbound may stil
 return `463`; a fresh inbound message from that contact is the safest way to
 refresh token state. Official WhatsApp Cloud API is the long-term fully supported
 path for cold outbound buyer notifications.
+
+## Reply-address correction
+
+The LID patch covers all compiled bundles, not just the component files. The
+earlier component-only patch left `dist/main.js` and `dist/main.mjs` using the
+phone lookup result as the reply destination. A LID is not a phone number, and
+that result can point to a different phone JID. Explicit, syntactically valid
+LIDs now skip that lookup and are passed unchanged to Baileys. Existing phone,
+group and broadcast lookup/validation remains unchanged; backend order-owner
+authorization is not changed or bypassed.
+
+The patch validates every bundle and requires coverage of all four main and
+component entries before writing anything. It upgrades the old partial patch
+and can be safely re-run. Unknown compiled builds fail instead of receiving a
+guessed replacement.
+
+`tests/check-lid-reply-routing.js` executes those actual entry-point methods
+with network sends stubbed, using the installed Baileys helpers. It covers both
+Confirm and Cancel reply text, device/uppercase LIDs, normal phone lookup and
+invalid addresses. It does not send a message or replay an order action. The
+separate COD envelope check must still pass, preserving the original buttons.
 
 ## COD reply-button envelope correction
 
