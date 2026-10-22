@@ -20,19 +20,19 @@ const find = name => entries().find(entry => entry.name === name);
 
 test('every direct WhatsApp send site has fixed-source coverage or an explicit transport/outbox classification', () => {
   const audit = auditFixedWhatsAppSendSites();
-  expect(audit).toHaveLength(36);
+  expect(audit).toHaveLength(35);
   expect(audit.every(site => site.classification !== 'Unaccounted')).toBe(true);
   expect(new Set(audit.map(site => site.sourcePath)).size).toBe(7);
   expect(audit.filter(site => site.classification.startsWith('Shared text/chunk'))).toHaveLength(2);
   expect(audit.filter(site => site.classification.startsWith('Frozen outbox'))).toHaveLength(1);
-  expect(audit.filter(site => site.classification.startsWith('Pure'))).toHaveLength(4);
+  expect(audit.filter(site => site.classification.startsWith('Pure'))).toHaveLength(3);
 });
 
 test('fixed entries carry genuine source provenance and normalized render payloads', () => {
   const all = entries();
-  expect(all).toHaveLength(77);
-  expect(all.filter(entry => entry.activity === 'active')).toHaveLength(48);
-  expect(all.filter(entry => entry.activity === 'legacy')).toHaveLength(29);
+  expect(all).toHaveLength(78);
+  expect(all.filter(entry => entry.activity === 'active')).toHaveLength(47);
+  expect(all.filter(entry => entry.activity === 'legacy')).toHaveLength(31);
   for (const entry of all) {
     expect(entry.channel).toBe('whatsapp');
     expect(entry.sourcePath).toMatch(/^Backend\//);
@@ -50,6 +50,11 @@ test('OTP and interactive order previews are exact source expressions with dummy
   expect(find('Change seller WhatsApp number').after.message).toContain('confirm your new seller WhatsApp number');
   expect(find('COD order: confirm or cancel buttons').after.buttons).toEqual(['✅ Confirm order', '❌ Cancel order']);
   expect(find('COD order: interactive list').after.buttons).toEqual(['✅ Confirm order', '❌ Cancel order']);
+  expect(find('COD order: confirm or cancel buttons').activity).toBe('legacy');
+  expect(find('COD order: interactive list').activity).toBe('legacy');
+  expect(find('COD order: secure confirmation link').activity).toBe('active');
+  expect(find('COD order: secure confirmation link').after.message).toContain('/orders/confirm/preview-confirmation-token-');
+  expect(find('COD order: secure confirmation link').after.buttons).toEqual([]);
   expect(find('Paid order information').after.message).toContain('Total paid: *Rs1,200.00 PKR*');
   expect(find('Reconfirm a cancelled COD order').after.buttons).toEqual(['✅ Yes, confirm again', '❌ No, keep cancelled']);
   expect(find('Legacy COD poll (not sent)').activity).toBe('legacy');

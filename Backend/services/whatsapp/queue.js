@@ -12,6 +12,7 @@ const {
     buildOrderButtonsPayload,
     buildOrderListPayload,
     buildOrderPlacedInfoMessage,
+    buildOrderConfirmationLinkMessage,
     normalizePhone,
 } = require('./messageBuilder');
 const Order = require('../../models/Order');
@@ -455,12 +456,24 @@ const processOne = async () => {
             return;
         }
 
-        // Skip if order was already confirmed/declined via another channel.
+        // Skip stale requests, including a rotated/expired token or an order
+        // cancelled/paid while its notification was waiting on the queue.
         // Info-type messages (post-payment notifications) are an exception —
         // those are SENT precisely because the order was just auto-confirmed
         // by the Stripe webhook, so we never skip them on this guard.
-        if (job.messageType === 'confirmation' &&
-            (order.confirmation?.confirmedAt || order.confirmation?.declinedAt)) {
+        if (job.messageType === 'confirmation' && (
+            order.paymentMethod !== 'cash_on_delivery'
+            || order.isPaid === true
+            || !['pending', 'confirmed'].includes(order.orderStatus)
+            || order.confirmation?.confirmedAt
+            || order.confirmation?.declinedAt
+            || !order.confirmation?.token
+            || job.confirmationToken !== order.confirmation.token
+            || (order.confirmation.tokenExpiresAt && (
+                !Number.isFinite(new Date(order.confirmation.tokenExpiresAt).getTime())
+                || new Date(order.confirmation.tokenExpiresAt).getTime() <= Date.now()
+            ))
+        )) {
             await finishClaimedJob(job, { status: 'expired' });
             return;
         }
@@ -488,26 +501,11 @@ const processOne = async () => {
             return;
         }
 
-        // ── Tiered send strategy ──
-        //
-        // Priority 1 — TWO INLINE REPLY BUTTONS via sendButtons.
-        //   On the Evolution homolog image, sendButtons produces an
-        //   interactiveMessage (NOT the old viewOnceMessage wrapper), which
-        //   WhatsApp now relays to regular Baileys-linked devices. The buyer
-        //   sees "✅ Confirm order" and "❌ Cancel order" buttons directly
-        //   below the message — no menu, no extra tap.
-        //
-        // Priority 2 — LIST message via sendList.
-        //   If Meta tightens the rules later or the button send fails, a
-        //   list menu (one tap-to-open button → 2-row SINGLE_SELECT menu)
-        //   is the next-most-friendly form and still delivers reliably.
-        //
-        // If both interactive formats fail, mark the job failed. Buyer order
-        // confirmation decisions must come from WhatsApp UI payloads only.
-        //
-        // Rich reply envelopes (button click / list reply) are
-        // all handled by webhookHandler.extractDecision, keyed on the
-        // confirm_ORD-xxx / cancel_ORD-xxx id scheme.
+        // Text is the supported delivery path for this linked-device gateway.
+        // Interactive sends can return 201 + a message id yet remain invisible
+        // to the recipient, so an HTTP-error-only buttons/list fallback is not
+        // sufficient. Existing rich-message replies remain handled by the
+        // webhook; new requests use the same secure review page as other links.
 
         const recipient = toPhoneJid(job.phone) || job.phone;
         let sendRes;
@@ -522,35 +520,19 @@ const processOne = async () => {
             strategy = 'info-text';
             sendRes = await evolution.sendText(recipient, buildOrderPlacedInfoMessage(order));
         } else {
-            // COD: tiered confirm/cancel send (buttons → list). No text
-            // fallback is allowed for buyer decisions.
+            // COD: one reliable message, with immutable purchase details and
+            // an explicit buyer action on the secure order-confirmation page.
             const buttonsPayload = parseInteractivePayload(
                 job.interactiveButtonsPayloadJson,
                 () => buildOrderButtonsPayload(order),
                 'Interactive WhatsApp buttons snapshot',
             );
-            strategy = 'buttons';
-            try {
-                sendRes = await evolution.sendButtons(recipient, buttonsPayload);
-            } catch (btnErr) {
-                console.warn(
-                    `[whatsapp] sendButtons failed for order ${order.orderId}, trying list:`,
-                    btnErr.response?.data || btnErr.message
-                );
-                strategy = 'list';
-                try {
-                    sendRes = await evolution.sendList(recipient, parseInteractivePayload(
-                        job.interactiveListPayloadJson,
-                        () => buildOrderListPayload(order),
-                        'Interactive WhatsApp list snapshot',
-                    ));
-                } catch (listErr) {
-                    console.warn(
-                        `[whatsapp] sendList also failed for order ${order.orderId}; no text fallback will be sent:`,
-                        listErr.response?.data || listErr.message
-                    );
-                    throw listErr;
-                }
+            strategy = 'confirmation-text-link';
+            sendRes = await evolution.sendText(recipient, buildOrderConfirmationLinkMessage(
+                buttonsPayload, job.confirmationToken, process.env.FRONTEND_URL || 'https://rozare.com',
+            ));
+            if (typeof sendRes?.messageId !== 'string' || !sendRes.messageId.trim()) {
+                throw new Error('WhatsApp did not acknowledge the order confirmation message.');
             }
         }
         const completed = await finishClaimedJob(job, {
@@ -578,6 +560,7 @@ const processOne = async () => {
         if (!['custom_info', 'generic_info'].includes(job.messageType)) {
             order.confirmation.whatsappSentAt = new Date();
             order.confirmation.whatsappSentSuccess = true;
+            order.confirmation.whatsappError = '';
             await order.save();
         }
 
@@ -667,6 +650,7 @@ exports.stopQueueProcessor = () => {
 exports._claimNextDueJob = claimNextDueJob;
 exports._finishClaimedJob = finishClaimedJob;
 exports._terminalizeExhaustedStaleLeases = terminalizeExhaustedStaleLeases;
+exports._processOne = processOne;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Reply matching — called by webhook handler.
