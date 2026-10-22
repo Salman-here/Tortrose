@@ -4,17 +4,20 @@ const path=require('path');
 const source=fs.readFileSync(path.resolve(__dirname,'../../services/whatsapp/webhookHandler.js'),'utf8');
 const section=source.slice(source.indexOf('const sendResponseMessage ='),source.indexOf('const sendLockedMessage ='));
 
-test.each([true,false])('decision reply %s reports the decision without inventing cart or fulfillment state',async confirmed=>{
+test('confirmation reply reports the decision without inventing cart or fulfillment state',async()=>{
   const sendText=jest.fn().mockResolvedValue({});
   const send=new Function('evolution','console',section.replace('const sendResponseMessage =','return'))({sendText},{log:()=>{},error:()=>{}});
-  await send('+12025550116',confirmed,'ORD-123','Test Buyer');
+  await send('+12025550116',true,'ORD-123','Test Buyer');
   expect(sendText).toHaveBeenCalledTimes(1);
   const text=sendText.mock.calls[0][1];
-  expect(text).toContain(confirmed?'is confirmed':'has been cancelled');
+  expect(text).toContain('is confirmed');
   expect(text).not.toMatch(/cart is still saved|nothing is charged|packing it up now/);
-  if(confirmed)expect(text).toContain('updates as your items are prepared and shipped');
-  else {
-    expect(text).toContain('Track your order: https://rozare.com/track-order');
-    expect(text).not.toMatch(/paid online|refund update/);
-  }
+  expect(text).toContain('updates as your items are prepared and shipped');
+});
+
+test('successful cancellation leaves delivery to the durable status notice without a duplicate acknowledgement',async()=>{
+  const sendText=jest.fn().mockResolvedValue({});
+  const send=new Function('evolution','console',section.replace('const sendResponseMessage =','return'))({sendText},{log:()=>{},error:()=>{}});
+  await send('+12025550116',false,'ORD-123','Test Buyer');
+  expect(sendText).not.toHaveBeenCalled();
 });

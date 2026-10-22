@@ -36,6 +36,7 @@ const evolution = require('../../services/whatsapp/evolutionClient');
 const queue = require('../../services/whatsapp/queue');
 const { confirmCodOrderByBuyer } = require('../../services/orderStatusTransitionService');
 const { cancelOrderSafely } = require('../../services/orderCancellationService');
+const { getBuyerCancellationBlock } = require('../../services/orderFulfillmentService');
 const { processIncomingWhatsAppMessage } = require('../../services/whatsapp/whatsappAIChatService');
 const { handleEvolutionWebhook } = require('../../services/whatsapp/webhookHandler');
 const PHONE = '15550000001', PN = PHONE + '@s.whatsapp.net', PEER_LID = '155500000000001@lid';
@@ -62,6 +63,7 @@ beforeEach(() => {
   Object.defineProperty(mongoose.connection, 'readyState', { configurable: true, get: () => 0 });
   queue.findPendingJobByPhone.mockResolvedValue(null);
   queue.findPendingJobByOrderId.mockResolvedValue(null);
+  getBuyerCancellationBlock.mockReturnValue(null);
   processIncomingWhatsAppMessage.mockImplementation(async (_phone, _text, _scope, _attachments, options) => {
     await evolution.sendText(options.replyTo, 'QA mocked AI response');
   });
@@ -74,7 +76,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-test.each(['confirm', 'cancel'])('full %s button path changes only the mocked order and replies to the buyer, not quoted bot', async action => {
+test.each(['confirm', 'cancel'])('full %s button path preserves the decision and avoids duplicate cancellation acknowledgement', async action => {
   const order = { _id: 'qa-order', orderId: 'ORD-QA', orderStatus: 'pending',
     confirmation: { token: 'qa-token', tokenExpiresAt: new Date(Date.now() + 60000) },
     shippingInfo: { fullName: 'QA Buyer' } };
@@ -84,10 +86,40 @@ test.each(['confirm', 'cancel'])('full %s button path changes only the mocked or
   confirmCodOrderByBuyer.mockResolvedValue({ status: 'confirmed', newlyConfirmed: true, order });
   cancelOrderSafely.mockResolvedValue({ status: 'cancelled', order });
   await deliver(message({ templateButtonReplyMessage: { selectedId: action + '_ORD-QA' } }));
-  expect(evolution.sendText).toHaveBeenCalledWith(PN, expect.stringContaining(action === 'confirm' ? 'is confirmed' : 'has been cancelled'));
+  if(action === 'confirm') expect(evolution.sendText).toHaveBeenCalledWith(PN, expect.stringContaining('is confirmed'));
+  else expect(evolution.sendText).not.toHaveBeenCalled();
   expect(queue.applyVote).toHaveBeenCalledWith(job, action === 'confirm' ? 'yes' : 'no');
   expect(action === 'confirm' ? confirmCodOrderByBuyer : cancelOrderSafely).toHaveBeenCalledTimes(1);
   expect(action === 'confirm' ? cancelOrderSafely : confirmCodOrderByBuyer).not.toHaveBeenCalled();
+});
+
+test('a keep-cancel action that actually cancels also relies on its durable status notice', async () => {
+  const order={_id:'qa-order',orderId:'ORD-QA',orderStatus:'confirmed',confirmation:{token:'qa-token',confirmedAt:new Date(),decidedVia:'whatsapp'},shippingInfo:{fullName:'QA Buyer'}};
+  const job={order:'qa-order',orderId:'ORD-QA',confirmationToken:'qa-token',phone:PHONE};
+  queue.findPendingJobByOrderId.mockResolvedValue(job);Order.findById.mockResolvedValue(order);
+  cancelOrderSafely.mockResolvedValue({status:'cancelled',order});
+  await deliver(message({templateButtonReplyMessage:{selectedId:'keepcancel_ORD-QA'}}));
+  expect(cancelOrderSafely).toHaveBeenCalledTimes(1);
+  expect(queue.applyVote).toHaveBeenCalledWith(job,'no');
+  expect(evolution.sendText).not.toHaveBeenCalled();
+});
+
+test('blocked cancellation still explains why the action was not performed', async () => {
+  const order={_id:'qa-order',orderId:'ORD-QA',orderStatus:'pending',confirmation:{token:'qa-token'},shippingInfo:{fullName:'QA Buyer'}};
+  queue.findPendingJobByOrderId.mockResolvedValue({order:'qa-order',orderId:'ORD-QA',confirmationToken:'qa-token',phone:PHONE});Order.findById.mockResolvedValue(order);
+  getBuyerCancellationBlock.mockReturnValue({message:'Shipment already started.'});
+  await deliver(message({templateButtonReplyMessage:{selectedId:'cancel_ORD-QA'}}));
+  expect(evolution.sendText).toHaveBeenCalledWith(PN,expect.stringContaining('Shipment already started.'));
+  expect(cancelOrderSafely).not.toHaveBeenCalled();expect(queue.applyVote).not.toHaveBeenCalled();
+});
+
+test('expired cancellation buttons still provide actionable guidance', async () => {
+  const order={_id:'qa-order',orderId:'ORD-QA',orderStatus:'pending',confirmation:{token:'qa-token',tokenExpiresAt:new Date(0)},shippingInfo:{fullName:'QA Buyer'}};
+  const job={order:'qa-order',orderId:'ORD-QA',confirmationToken:'qa-token',phone:PHONE,save:jest.fn()};
+  queue.findPendingJobByOrderId.mockResolvedValue(job);Order.findById.mockResolvedValue(order);
+  await deliver(message({templateButtonReplyMessage:{selectedId:'cancel_ORD-QA'}}));
+  expect(evolution.sendText).toHaveBeenCalledWith(PN,expect.stringContaining('expired or was replaced'));
+  expect(cancelOrderSafely).not.toHaveBeenCalled();expect(job.save).toHaveBeenCalled();
 });
 
 test('cancel after confirmed still returns the existing-order explanation to the buyer', async () => {

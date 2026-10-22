@@ -12,7 +12,7 @@
 //
 // Side-effects on CANCEL:
 //   1. order.orderStatus = 'cancelled', confirmation.declinedAt set
-//   2. Friendly "got it, cancelled" reply sent
+//   2. Buyer receives the durable order-status notification (no duplicate acknowledgement)
 //   3. Seller notified the buyer backed out
 
 const Order = require('../../models/Order');
@@ -162,29 +162,25 @@ const markOutboundDeliveryFailure = async (msg = {}, singletonKey = 'seller') =>
 // Outgoing friendly replies
 // ──────────────────────────────────────────────────────────────────────────
 const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName) => {
+    // Successful cancellations already notify the buyer through the durable
+    // order lifecycle event. Do not send a second button acknowledgement.
+    // Error/expired/locked-decision guidance is handled separately below.
+    if (!isConfirmed) return;
     try {
         const firstName = buyerName?.split(' ')[0] || 'there';
 
-        const message = isConfirmed
-            ? [
-                `Hi ${firstName},`,
-                ``,
-                `Your order *#${orderId}* is confirmed.`,
-                ``,
-                `You'll receive updates as your items are prepared and shipped.`,
-                ``,
-                `Track your order: https://rozare.com/track-order`,
-            ].join('\n')
-            : [
-                `Hi ${firstName},`,
-                ``,
-                `Order *#${orderId}* has been cancelled.`,
-                ``,
-                `Track your order: https://rozare.com/track-order`,
-            ].join('\n');
+        const message = [
+            `Hi ${firstName},`,
+            ``,
+            `Your order *#${orderId}* is confirmed.`,
+            ``,
+            `You'll receive updates as your items are prepared and shipped.`,
+            ``,
+            `Track your order: https://rozare.com/track-order`,
+        ].join('\n');
 
         await evolution.sendText(phone, message);
-        console.log(`[whatsapp] Gateway accepted ${isConfirmed ? 'confirmation' : 'cancellation'} reply to ${phone}; delivery awaits receipt`);
+        console.log(`[whatsapp] Gateway accepted confirmation reply to ${phone}; delivery awaits receipt`);
     } catch (err) {
         console.error('[whatsapp] Failed to send response message:', err.message);
     }
