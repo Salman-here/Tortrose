@@ -11,3 +11,8 @@ RUN node /tmp/patch-baileys-lid-send.js && rm /tmp/patch-baileys-lid-send.js
 
 COPY patches/patch-rozare-fast-inbound-webhook.js /tmp/patch-rozare-fast-inbound-webhook.js
 RUN node /tmp/patch-rozare-fast-inbound-webhook.js && rm /tmp/patch-rozare-fast-inbound-webhook.js
+
+COPY patches/patch-cod-reply-envelope.js /tmp/patch-cod-reply-envelope.js
+COPY tests/check-cod-reply-envelope.js /tmp/check-cod-reply-envelope.js
+RUN node /tmp/patch-cod-reply-envelope.js && node /tmp/check-cod-reply-envelope.js \
+    && rm /tmp/patch-cod-reply-envelope.js /tmp/check-cod-reply-envelope.js

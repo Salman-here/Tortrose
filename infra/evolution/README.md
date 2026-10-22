@@ -14,6 +14,8 @@ the upstream image directly:
 - Patch: bypass normal `MESSAGES_UPDATE` work in Rozare transport mode so
   delivery/read receipts cannot block subsequent inbound messages in the same
   serial Baileys event queue
+- Patch: relay existing quick-reply buttons without the obsolete view-once
+  wrapper and with the interactive business node required by WhatsApp
 
 Why: WhatsApp started returning outbound ack error `463` for some linked-device
 sends when the sender was missing or not reusing the right LID/tctoken state.
@@ -62,3 +64,29 @@ For a contact that has no valid `tctoken`, the first attempted outbound may stil
 return `463`; a fresh inbound message from that contact is the safest way to
 refresh token state. Official WhatsApp Cloud API is the long-term fully supported
 path for cold outbound buyer notifications.
+
+## COD reply-button envelope correction
+
+`patches/patch-cod-reply-envelope.js` narrowly backports the interactive relay
+correction documented in Evolution's `2.4.0-rc1` release. It does not upgrade
+Evolution, change licensing, or replace confirmation buttons with links.
+
+Only wrapped `quick_reply` messages are changed: their original interactive
+content is relayed directly, with the required `biz/interactive/native_flow`
+node and the generated message id. Titles, descriptions, amounts, button
+labels, action ids and native-flow parameters are preserved. Text, existing
+list fallback, media, CTA and PIX messages retain their previous paths.
+
+The patch validates the compiled build before modifying it, syntax-checks all
+changed bundles, and is safe to re-run. A mismatch fails the build instead of
+applying a guessed replacement. The Dockerfile includes it for future builds.
+
+Before release, run the backend `evolutionCodReplyEnvelope.test.js` tests and,
+inside the candidate gateway image, `tests/check-cod-reply-envelope.js`. The
+latter uses the actual installed Baileys protobuf encoder with network sends
+stubbed; it does not contact a real phone or confirm/cancel any order. A real
+recipient delivery check remains separate and must not be inferred from an
+HTTP success response.
+
+Upstream reference:
+https://github.com/evolution-foundation/evolution-api/releases/tag/2.4.0-rc1
