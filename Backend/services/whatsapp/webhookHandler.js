@@ -79,13 +79,10 @@ const unwrapMessageContent = (message = {}) => {
 const latestMessageUpdateStatus = (msg = {}) => {
     const updates = msg.MessageUpdate || msg.messageUpdate || msg.updates || [];
     const latest = Array.isArray(updates) ? updates[updates.length - 1] : updates;
-    return String(
-        msg.status ||
-        msg.update?.status ||
-        msg.message?.status ||
-        latest?.status ||
-        ''
-    ).toUpperCase();
+    const value = msg.status ?? msg.update?.status ?? msg.message?.status ?? latest?.status ?? '';
+    // Baileys uses 0 for ERROR; `||` used to silently discard that failure.
+    const statuses = ['ERROR', 'PENDING', 'SERVER_ACK', 'DELIVERY_ACK', 'READ', 'PLAYED'];
+    return /^[0-5]$/.test(String(value)) ? statuses[Number(value)] : String(value).toUpperCase();
 };
 
 const messageKeyFromUpdate = (msg = {}) => (
@@ -187,7 +184,7 @@ const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName) => {
             ].join('\n');
 
         await evolution.sendText(phone, message);
-        console.log(`[whatsapp] Sent ${isConfirmed ? 'confirmation' : 'cancellation'} reply to ${phone}`);
+        console.log(`[whatsapp] Gateway accepted ${isConfirmed ? 'confirmation' : 'cancellation'} reply to ${phone}; delivery awaits receipt`);
     } catch (err) {
         console.error('[whatsapp] Failed to send response message:', err.message);
     }
@@ -613,7 +610,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 const messages = Array.isArray(body.data) ? body.data : [body.data].filter(Boolean);
                 for (const msg of messages) {
                     if (isFromMeMessage(msg)) continue;
-                    const address = resolveInboundAddress(msg);
+                    const address = resolveInboundAddress(msg, { ownerPhone: body.sender });
                     const { remoteJid, identityPhone: phone, replyTo } = address;
                     // Skip group messages — only process 1:1 private chats
                     if (isGroupOrBroadcastJid(remoteJid)) continue;
@@ -622,7 +619,9 @@ exports.handleEvolutionWebhook = async (req, res) => {
                         instanceType: 'seller',
                         instanceName: incomingInstance || sellerInstanceName,
                     });
-                    const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: 'seller' });
+                    const outboundTo = await resolveOutboundRecipient(phone, replyTo, {
+                        instanceType: 'seller', instanceName: incomingInstance || sellerInstanceName,
+                    });
                     const ageMs = inboundMessageAgeMs(msg);
                     console.log(`[whatsapp] route seller phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''} messageId=${msg?.key?.id || ''} ageMs=${ageMs || 'unknown'}`);
                     markInboundConversationWindowOpen(phone);
@@ -661,7 +660,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                 // Never process messages we sent
                 if (isFromMeMessage(msg)) continue;
 
-                const address = resolveInboundAddress(msg);
+                const address = resolveInboundAddress(msg, { ownerPhone: body.sender });
                 const { remoteJid, identityPhone: phone, replyTo } = address;
                 if (isGroupOrBroadcastJid(remoteJid)) continue;
                 if (!phone) continue;
@@ -673,7 +672,9 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     instanceType: routeScope,
                     instanceName: effectiveInstanceName,
                 });
-                const outboundTo = await resolveOutboundRecipient(phone, replyTo, { instanceType: routeScope });
+                const outboundTo = await resolveOutboundRecipient(phone, replyTo, {
+                    instanceType: routeScope, instanceName: effectiveInstanceName,
+                });
                 const ageMs = inboundMessageAgeMs(msg);
                 console.log(`[whatsapp] route ${routeLabel} phone=${phone} lid=${address.lidJid || ''} requested=${replyTo || ''} outbound=${outboundTo || ''} messageId=${msg?.key?.id || ''} ageMs=${ageMs || 'unknown'}`);
                 markInboundConversationWindowOpen(phone);
@@ -1154,6 +1155,7 @@ exports.__private = {
     extractMessageText,
     findWebhookBase64,
     isFromMeMessage,
+    latestMessageUpdateStatus,
     orderConfirmationTokenExpired,
     pendingJobMatchesInboundPhone,
     pendingJobMatchesOrderConfirmation,

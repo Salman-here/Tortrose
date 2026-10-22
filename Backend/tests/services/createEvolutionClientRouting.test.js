@@ -54,7 +54,7 @@ describe('Evolution client recipient routing', () => {
     expect(sentPayload.delay).toBe(0);
   });
 
-  test('routes a bare phone to the recent LID chat before sending text', async () => {
+  test('never mines message history to redirect a bare phone to a quoted author', async () => {
     let sentPayload;
     axios.create.mockReturnValue({
       post: jest.fn(async (url, payload) => {
@@ -85,8 +85,38 @@ describe('Evolution client recipient routing', () => {
     const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
     await client.sendText('923499166402', 'hello');
 
-    expect(sentPayload.number).toBe('39767790104698@lid');
+    expect(sentPayload.number).toBe('923499166402@s.whatsapp.net');
     expect(sentPayload.delay).toBe(0);
+    expect(axios.create().post).toHaveBeenCalledTimes(1);
+    expect(axios.create().post.mock.calls[0][0]).toBe('/message/sendText/rozare-seller');
+  });
+
+  test.each([
+    ['sendText', ['hello']],
+    ['sendMedia', ['https://example.test/image.png', 'hello']],
+    ['sendPoll', [{ name: 'test', values: ['A', 'B'] }]],
+    ['sendList', [{ title: 'test', buttonText: 'Choose', sections: [{ title: 'test', rows: [{ title: 'A', rowId: 'a' }] }] }]],
+    ['sendButtons', [{ title: 'test', buttons: [{ type: 'reply', id: 'qa_no_order_action', displayText: 'Test' }] }]],
+    ['sendChatPresence', [{ presence: 'composing', delay: 0 }]],
+  ])('%s shares safe normalization with no historical chat lookup', async (method, args) => {
+    const post = jest.fn().mockResolvedValue({ data: { key: { id: 'qa-no-network' } } });
+    axios.create.mockReturnValue({ post });
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+    await client[method]('+1 (555) 000-0001', ...args);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0][0]).not.toContain('/chat/findMessages/');
+    expect(post.mock.calls[0][1].number).toBe('15550000001@s.whatsapp.net');
+  });
+
+  test('normalizes device and case suffixes, and rejects arbitrary text as a recipient', async () => {
+    const post = jest.fn().mockResolvedValue({ data: { key: { id: 'qa-no-network' } } });
+    axios.create.mockReturnValue({ post });
+    const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+    await client.sendText('15550000001:2@S.WHATSAPP.NET', 'hello');
+    expect(post.mock.calls[0][1].number).toBe('15550000001@s.whatsapp.net');
+    post.mockClear();
+    await expect(client.sendText('contact 15550000001', 'hello')).rejects.toThrow('valid WhatsApp recipient');
+    expect(post).not.toHaveBeenCalled();
   });
 
   test('sends per-chat typing presence without changing message delivery delay', async () => {

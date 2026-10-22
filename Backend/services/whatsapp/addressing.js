@@ -1,217 +1,109 @@
 'use strict';
 
-const uniqueNonEmpty = (items = []) => [...new Set(items.filter(Boolean))];
-const recentLidByPhone = new Map();
+const ROUTE_SOURCE = 'sender-envelope-v2';
 const LID_MAPPING_TTL_MS = 24 * 60 * 60 * 1000;
-
-const phoneFromJid = (jid) => {
-    if (!jid || typeof jid !== 'string') return '';
-    const at = jid.indexOf('@');
-    const raw = at > 0 ? jid.slice(0, at) : jid;
-    return raw.replace(/[^\d]/g, '');
+const recentLidByPhone = new Map();
+const uniqueNonEmpty = (items = []) => [...new Set(items.filter(Boolean))];
+const isLidJid = value => typeof value === 'string' && /^\d+(?::\d+)?@lid$/i.test(value.trim());
+const isPhoneJid = value => typeof value === 'string' && /^\d+(?::\d+)?@s\.whatsapp\.net$/i.test(value.trim());
+const canonicalJid = value => typeof value === 'string' ? value.trim().toLowerCase().replace(/:\d+(?=@)/, '') : '';
+const phoneFromJid = value => typeof value === 'string' ? value.split('@')[0].split(':')[0].replace(/\D/g, '') : '';
+const canonicalPhone = value => {
+    if (typeof value !== 'string' || isLidJid(value)) return '';
+    if (value.includes('@') && !isPhoneJid(value)) return '';
+    if (!value.includes('@') && !/^\+?[\d()\s-]+$/.test(value)) return '';
+    const digits = phoneFromJid(value);
+    return digits.length >= 8 && digits.length <= 15 ? digits : '';
 };
-
-const isGroupOrBroadcastJid = (jid = '') => (
-    jid.endsWith('@g.us') ||
-    jid.includes('@broadcast') ||
-    jid === 'status@broadcast'
+const toPhoneJid = value => {
+    const phone = canonicalPhone(value);
+    return phone ? phone + '@s.whatsapp.net' : '';
+};
+const isGroupOrBroadcastJid = value => typeof value === 'string' && (
+    value.toLowerCase().endsWith('@g.us') || value.toLowerCase().includes('@broadcast')
 );
-
-const isLidJid = (jid = '') => jid.endsWith('@lid');
-const isPhoneJid = (jid = '') => jid.endsWith('@s.whatsapp.net');
-const toPhoneJid = (phone) => {
-    const digits = phoneFromJid(phone);
-    return digits ? `${digits}@s.whatsapp.net` : '';
-};
-const JID_PATTERN = /\b\d{5,}@(lid|s\.whatsapp\.net)\b/g;
-const ADDRESS_PATH_PATTERN = /(jid|phone|number|sender|remote|participant|author|from|user)/i;
-// Evolution/Baileys envelopes may contain both the message author and the
-// connected instance owner. The latter is routing metadata, never the person
-// who sent the inbound message. Treating owner/wuid/instance fields as generic
-// address hints can make the bot reply to its own WhatsApp number.
-const OWNER_PATH_PATTERN = /(^|\.)(owner(?:jid|pn|phone|number)?|instance(?:owner)?(?:jid|pn|phone|number)?|wuid|me|self(?:jid|pn|phone|number)?|connected(?:owner)?(?:jid|pn|phone|number)?)(\.|\[|$)/i;
-
-const memoryKey = (phone, scope = 'global') => {
-    const digits = phoneFromJid(phone);
-    return digits ? `${scope || 'global'}:${digits}` : '';
-};
-
-const rememberPhoneLid = (phone, lidJid, scope = 'global') => {
+const memoryKey = (phone, scope) => canonicalPhone(phone) ? (scope || 'global') + ':' + canonicalPhone(phone) : '';
+const rememberPhoneLid = (phone, lid, scope = 'global', { verified = false } = {}) => {
     const key = memoryKey(phone, scope);
-    if (!key || !isLidJid(lidJid)) return;
-    recentLidByPhone.set(key, { lidJid, seenAt: Date.now() });
+    if (!verified || !key || !isLidJid(lid)) return false;
+    recentLidByPhone.set(key, { lidJid: canonicalJid(lid), seenAt: Date.now(), source: ROUTE_SOURCE });
+    return true;
 };
-
 const getRememberedLid = (phone, scope = 'global') => {
-    const key = memoryKey(phone, scope);
-    if (!key) return '';
-    const mapped = recentLidByPhone.get(key);
-    if (!mapped) return '';
-    if (Date.now() - mapped.seenAt > LID_MAPPING_TTL_MS) {
+    const key = memoryKey(phone, scope), value = recentLidByPhone.get(key);
+    if (!value) return '';
+    if (value.source !== ROUTE_SOURCE || Date.now() - value.seenAt > LID_MAPPING_TTL_MS) {
         recentLidByPhone.delete(key);
         return '';
     }
-    return mapped.lidJid;
+    return value.lidJid;
+};
+const resolveReplyTo = (phone, requested, scope = 'global') => {
+    const pn = toPhoneJid(phone), cached = getRememberedLid(phone, scope);
+    if (isPhoneJid(requested) && canonicalPhone(requested) === canonicalPhone(phone)) return pn;
+    if (isLidJid(requested)) return cached === canonicalJid(requested) ? cached : pn;
+    return cached || pn;
 };
 
-const resolveReplyTo = (phone, requestedRecipient, scope = 'global') => {
-    if (isLidJid(requestedRecipient)) return requestedRecipient;
-    return getRememberedLid(phone, scope) || getRememberedLid(phone) || requestedRecipient || phone;
-};
+const ownerValues = (message, context) => [
+    context?.ownerPhone, context?.ownerLid,
+    message?.owner, message?.ownerJid, message?.ownerPn, message?.ownerPhone, message?.ownerNumber,
+    message?.wuid, message?.selfJid, message?.selfPhone,
+    message?.instance?.ownerJid, message?.instance?.owner, message?.instance?.wuid,
+    message?.me?.id, message?.me?.lid,
+].flatMap(value => value && typeof value === 'object'
+    ? [value.id, value.jid, value.phone, value.lid] : [value]);
 
-const collectAddressHints = (
-    value,
-    path = '',
-    out = { lidJids: [], phoneJids: [], phoneNumbers: [], excludedOwnerPhones: [] },
-    seen = new WeakSet(),
-    depth = 0
-) => {
-    if (value == null || depth > 8) return out;
-
-    if (typeof value === 'string') {
-        const ownerMetadata = OWNER_PATH_PATTERN.test(path);
-        const matches = value.match(JID_PATTERN) || [];
-        for (const jid of matches) {
-            if (ownerMetadata) {
-                const digits = phoneFromJid(jid);
-                if (digits) out.excludedOwnerPhones.push(digits);
-                continue;
-            }
-            if (isLidJid(jid)) out.lidJids.push(jid);
-            if (isPhoneJid(jid)) out.phoneJids.push(jid);
-        }
-
-        if (ownerMetadata) {
-            const digits = value.replace(/\D/g, '');
-            if (digits.length >= 8 && digits.length <= 15) out.excludedOwnerPhones.push(digits);
-        } else if (ADDRESS_PATH_PATTERN.test(path) && !value.includes('@lid')) {
-            const digits = value.replace(/\D/g, '');
-            if (digits.length >= 8 && digits.length <= 15) out.phoneNumbers.push(digits);
-        }
-        return out;
-    }
-
-    if (typeof value !== 'object') return out;
-    if (seen.has(value)) return out;
-    seen.add(value);
-
-    if (Array.isArray(value)) {
-        value.forEach((item, index) => collectAddressHints(item, `${path}[${index}]`, out, seen, depth + 1));
-        return out;
-    }
-
-    for (const [key, child] of Object.entries(value)) {
-        collectAddressHints(child, path ? `${path}.${key}` : key, out, seen, depth + 1);
-    }
-    return out;
-};
-
-// WhatsApp LID mode can send inbound messages with key.remoteJid as the
-// replyable @lid chat and key.remoteJidAlt as the user's real phone JID.
-// Some Evolution webhook payloads reverse those two fields. When both are
-// present, always identify the user by the phone JID and reply to the LID JID.
-const resolveInboundAddress = (msg) => {
-    const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || '';
-    const altJid =
-        msg?.key?.remoteJidAlt ||
-        msg?.remoteJidAlt ||
-        msg?.key?.participantAlt ||
-        msg?.participantAlt ||
-        '';
-    const participantJid = msg?.key?.participant || msg?.participant || '';
-    const participantAltJid = msg?.key?.participantAlt || msg?.participantAlt || '';
-    // Baileys 7 exposes the real phone-number JID in senderPn/participantPn
-    // when remoteJid is an opaque @lid address. Prefer these explicit sender
-    // fields over recursively discovered metadata.
-    const senderPhoneValues = uniqueNonEmpty([
-        msg?.key?.senderPn,
-        msg?.senderPn,
-        msg?.key?.senderPN,
-        msg?.senderPN,
-        msg?.key?.participantPn,
-        msg?.participantPn,
-        msg?.key?.participantPN,
-        msg?.participantPN,
-    ]);
-    const senderPhoneJids = senderPhoneValues.filter(isPhoneJid);
-    const senderPhoneDigits = uniqueNonEmpty(senderPhoneValues.map(phoneFromJid))
-        .filter(number => number.length >= 8 && number.length <= 15);
-    const deepHints = collectAddressHints(msg);
-    const jidCandidates = uniqueNonEmpty([
-        remoteJid,
-        altJid,
-        participantJid,
-        participantAltJid,
-        ...deepHints.lidJids,
-        ...deepHints.phoneJids,
-    ]);
-    const lidJid = jidCandidates.find(isLidJid) || '';
-    const phoneJid = jidCandidates.find(isPhoneJid) || '';
-    const remotePhone = phoneFromJid(remoteJid);
-    const altPhone = phoneFromJid(altJid);
-    const participantPhone = phoneFromJid(participantJid);
-    const participantAltPhone = phoneFromJid(participantAltJid);
-    const phoneJidDigits = phoneFromJid(phoneJid);
-    const excludedOwnerPhones = uniqueNonEmpty(deepHints.excludedOwnerPhones);
-
-    const explicitPhoneJidDigits = uniqueNonEmpty([
-        ...senderPhoneDigits,
-        isPhoneJid(altJid) ? altPhone : '',
-        isPhoneJid(remoteJid) ? remotePhone : '',
-        isPhoneJid(participantAltJid) ? participantAltPhone : '',
-        isPhoneJid(participantJid) ? participantPhone : '',
-        phoneJidDigits,
-    ]).filter(number => !excludedOwnerPhones.includes(number));
-    const lidDigits = uniqueNonEmpty([
-        isLidJid(remoteJid) ? remotePhone : '',
-        isLidJid(altJid) ? altPhone : '',
-        isLidJid(participantJid) ? participantPhone : '',
-        isLidJid(participantAltJid) ? participantAltPhone : '',
-    ]);
-    const barePhones = uniqueNonEmpty(deepHints.phoneNumbers)
-        .filter(number => (
-            !explicitPhoneJidDigits.includes(number) &&
-            !lidDigits.includes(number) &&
-            !excludedOwnerPhones.includes(number)
-        ));
-    // A LID is an opaque WhatsApp identifier, not a telephone number. Never
-    // use its digits for account lookup; fail closed until a PN mapping arrives.
-    const identityPhone = explicitPhoneJidDigits[0] || barePhones[0] || '';
-    const replyPhoneJid = uniqueNonEmpty([
-        ...senderPhoneJids,
-        altJid,
-        remoteJid,
-        participantAltJid,
-        participantJid,
-        phoneJid,
-        ...deepHints.phoneJids,
-    ]).find(jid => isPhoneJid(jid) && phoneFromJid(jid) === identityPhone) || '';
-    rememberPhoneLid(identityPhone, lidJid);
-
+// These are protocol-level sender fields. Message text, quoted-message authors,
+// contextInfo, mentions, contacts, forwarded content and arbitrary nested fields
+// NEVER establish either an account identity or a reply destination.
+const collectAddressHints = (message = {}, context = {}) => {
+    const key = message?.key && typeof message.key === 'object' ? message.key : {};
+    const peers = [key.remoteJid || message.remoteJid, key.remoteJidAlt || message.remoteJidAlt,
+        key.senderLid, key.senderLID, message.senderLid, message.senderLID];
+    const senderPhones = [key.senderPn, key.senderPN, message.senderPn, message.senderPN,
+        key.senderPhone, message.senderPhone];
+    if (peers.some(isLidJid)) senderPhones.push(key.participantPn, key.participantPN,
+        message.participantPn, message.participantPN, key.participantPhone, message.participantPhone);
+    const owners = ownerValues(message, context);
     return {
-        remoteJid,
-        altJid,
-        participantJid,
-        participantAltJid,
-        lidJid,
-        phoneJid,
-        identityPhone,
-        replyTo: lidJid || replyPhoneJid || (identityPhone ? toPhoneJid(identityPhone) : ''),
-        candidatePhones: uniqueNonEmpty([...explicitPhoneJidDigits, ...barePhones]),
-        excludedOwnerPhones,
+        lidJids: uniqueNonEmpty(peers.filter(isLidJid).map(canonicalJid)),
+        phoneJids: uniqueNonEmpty([...peers, ...senderPhones].filter(isPhoneJid).map(canonicalJid)),
+        phoneNumbers: uniqueNonEmpty([...peers, ...senderPhones].map(canonicalPhone)),
+        excludedOwnerPhones: uniqueNonEmpty(owners.map(canonicalPhone)),
+        excludedOwnerLids: uniqueNonEmpty(owners.filter(isLidJid).map(canonicalJid)),
+    };
+};
+
+const resolveInboundAddress = (message = {}, context = {}) => {
+    const key = message?.key && typeof message.key === 'object' ? message.key : {};
+    const remoteJid = canonicalJid(key.remoteJid || message.remoteJid || '');
+    const altJid = canonicalJid(key.remoteJidAlt || message.remoteJidAlt || '');
+    const hints = collectAddressHints(message, context);
+    const phones = hints.phoneNumbers.filter(phone => !hints.excludedOwnerPhones.includes(phone));
+    const peerLids = hints.lidJids.filter(lid => !hints.excludedOwnerLids.includes(lid));
+    const fromMe = key.fromMe ?? message.fromMe;
+    const ownMessage = fromMe === true || fromMe === 1 || fromMe === '1' || fromMe === 'true';
+    const privateChat = !isGroupOrBroadcastJid(remoteJid) && !isGroupOrBroadcastJid(altJid);
+    const identityPhone = !ownMessage && privateChat && phones.length === 1 ? phones[0] : '';
+    const lidJid = peerLids.length === 1 ? peerLids[0] : '';
+    const explicitlyInbound = fromMe === false || fromMe === 0 || fromMe === '0' || fromMe === 'false';
+    const verifiedPeerLid = Boolean(identityPhone && lidJid && explicitlyInbound && privateChat);
+    return {
+        remoteJid, altJid, participantJid: canonicalJid(key.participant || ''),
+        participantAltJid: canonicalJid(key.participantAlt || ''),
+        lidJid, phoneJid: toPhoneJid(identityPhone), identityPhone,
+        replyTo: identityPhone ? (verifiedPeerLid ? lidJid : toPhoneJid(identityPhone)) : '',
+        candidatePhones: identityPhone ? [identityPhone] : [],
+        excludedOwnerPhones: hints.excludedOwnerPhones, excludedOwnerLids: hints.excludedOwnerLids,
+        verifiedPeerLid, routingSource: verifiedPeerLid ? ROUTE_SOURCE : '',
+        routingIssue: ownMessage ? 'own_message' : phones.length > 1 ? 'ambiguous_sender'
+            : !identityPhone ? 'no_verified_sender' : peerLids.length > 1 ? 'ambiguous_peer_lids' : '',
     };
 };
 
 module.exports = {
-    phoneFromJid,
-    isGroupOrBroadcastJid,
-    isLidJid,
-    isPhoneJid,
-    toPhoneJid,
-    rememberPhoneLid,
-    getRememberedLid,
-    resolveReplyTo,
-    collectAddressHints,
-    resolveInboundAddress,
-    uniqueNonEmpty,
+    ROUTE_SOURCE, LID_MAPPING_TTL_MS, uniqueNonEmpty, phoneFromJid, canonicalPhone, canonicalJid,
+    isGroupOrBroadcastJid, isLidJid, isPhoneJid, toPhoneJid,
+    rememberPhoneLid, getRememberedLid, resolveReplyTo, collectAddressHints, resolveInboundAddress,
 };

@@ -1,183 +1,162 @@
+'use strict';
+
 const {
-  phoneFromJid,
-  isGroupOrBroadcastJid,
-  rememberPhoneLid,
-  resolveReplyTo,
-  toPhoneJid,
-  collectAddressHints,
-  resolveInboundAddress,
+  ROUTE_SOURCE, LID_MAPPING_TTL_MS, phoneFromJid, canonicalPhone, canonicalJid,
+  isGroupOrBroadcastJid, rememberPhoneLid, getRememberedLid, resolveReplyTo,
+  toPhoneJid, collectAddressHints, resolveInboundAddress,
 } = require('../../services/whatsapp/addressing');
 
-describe('WhatsApp inbound addressing', () => {
-  test('extracts digits from phone and LID JIDs', () => {
-    expect(phoneFromJid('923001112222@s.whatsapp.net')).toBe('923001112222');
-    expect(phoneFromJid('78220481290301@lid')).toBe('78220481290301');
-    expect(phoneFromJid('+92 300 111 2222')).toBe('923001112222');
+const PHONE = '15550000001', PN = PHONE + '@s.whatsapp.net', LID = '155500000000001@lid';
+const OWNER = '15550000000@s.whatsapp.net', OWNER_LID = '155500000000000@lid';
+const CONTEXT = { participant: OWNER_LID, stanzaId: 'quoted-bot-message', remoteJid: OWNER };
+const envelope = (key = {}, other = {}) => ({ key: { remoteJid: PN, fromMe: false, ...key }, ...other });
+
+afterEach(() => jest.restoreAllMocks());
+
+describe('sender-envelope-only WhatsApp addressing', () => {
+  test.each([
+    ['15550000001:3@s.whatsapp.net', PHONE], [PN, PHONE],
+    ['+1 (555) 000-0001', PHONE], [LID, '155500000000001'],
+  ])('extracts device-independent address digits from %s', (value, expected) => {
+    expect(phoneFromJid(value)).toBe(expected);
   });
 
-  test('keeps LID chat as reply target while using phone JID for identity', () => {
-    const address = resolveInboundAddress({
-      key: {
-        remoteJid: '78220481290301@lid',
-        remoteJidAlt: '923028588506@s.whatsapp.net',
-      },
+  test('never converts a LID, group or arbitrary message text to a phone JID', () => {
+    for (const value of [LID, '123456789@g.us', 'Call 15550000001', '', null, '123']) {
+      expect(canonicalPhone(value)).toBe('');
+      expect(toPhoneJid(value)).toBe('');
+    }
+    expect(toPhoneJid('+1 555 000 0001')).toBe(PN);
+    expect(canonicalJid(' 15550000001:2@S.WHATSAPP.NET ')).toBe(PN);
+  });
+
+  test.each([
+    { remoteJid: LID, remoteJidAlt: PN },
+    { remoteJid: PN, remoteJidAlt: LID },
+    { remoteJid: LID, senderPn: PN },
+    { remoteJid: LID, senderPn: PHONE },
+    { remoteJid: LID, participantPn: PN },
+    { remoteJid: '155500000000001:7@LID', remoteJidAlt: '15550000001:2@S.WHATSAPP.NET' },
+  ])('binds a peer LID to the phone from the same inbound key: %j', key => {
+    expect(resolveInboundAddress(envelope(key))).toMatchObject({
+      identityPhone: PHONE, phoneJid: PN, replyTo: LID,
+      verifiedPeerLid: true, routingSource: ROUTE_SOURCE, candidatePhones: [PHONE],
     });
-
-    expect(address.identityPhone).toBe('923028588506');
-    expect(address.replyTo).toBe('78220481290301@lid');
-    expect(address.candidatePhones).toEqual(['923028588506']);
   });
 
-  test('handles Evolution webhook payloads where phone and LID fields are reversed', () => {
-    const address = resolveInboundAddress({
-      key: {
-        remoteJid: '923499166402@s.whatsapp.net',
-        remoteJidAlt: '39767790104698@lid',
-      },
+  test('supports the documented root sender-PN fields, not quoted participant metadata', () => {
+    expect(resolveInboundAddress(envelope({ remoteJid: LID }, {
+      participantPhone: '+1 555 000 0001', contextInfo: CONTEXT,
+    }))).toMatchObject({ identityPhone: PHONE, replyTo: LID, verifiedPeerLid: true });
+  });
+
+  // De-identified shape of all four live Confirm/Cancel failures: both peer
+  // key fields are the buyer's PN, while the quoted author is the bot's LID.
+  test.each(['confirm', 'cancel'])('live %s regression: root quoted author cannot replace the buyer', action => {
+    const message = envelope({ remoteJidAlt: PN }, {
+      contextInfo: CONTEXT,
+      message: { templateButtonReplyMessage: { selectedId: action + '_ORD-QA' } },
     });
-
-    expect(address.identityPhone).toBe('923499166402');
-    expect(address.replyTo).toBe('39767790104698@lid');
-    expect(address.candidatePhones).toEqual(['923499166402']);
-  });
-
-  test('prefers explicit phone JID over unrelated bare numeric fields', () => {
-    const address = resolveInboundAddress({
-      key: {
-        remoteJid: '923499166402@s.whatsapp.net',
-      },
-      message: {
-        conversation: 'Hi',
-        contextInfo: {
-          owner: '39767790104698',
-        },
-      },
+    expect(resolveInboundAddress(message, { ownerPhone: OWNER })).toMatchObject({
+      identityPhone: PHONE, replyTo: PN, lidJid: '', verifiedPeerLid: false,
+      candidatePhones: [PHONE],
     });
-
-    expect(address.identityPhone).toBe('923499166402');
-    expect(address.replyTo).toBe('923499166402@s.whatsapp.net');
-    expect(address.candidatePhones[0]).toBe('923499166402');
-    expect(address.candidatePhones).not.toContain('39767790104698');
   });
 
-  test('finds phone and LID hints nested inside unknown Evolution payload fields', () => {
-    const address = resolveInboundAddress({
-      key: {},
-      message: {
-        contextInfo: {
-          sender: '923499166402@s.whatsapp.net',
-          senderAlt: '39767790104698@lid',
-        },
-      },
+  test.each([
+    { extendedTextMessage: { text: 'hello', contextInfo: CONTEXT } },
+    { templateButtonReplyMessage: { selectedId: 'confirm_ORD-QA', contextInfo: CONTEXT } },
+    { buttonsResponseMessage: { selectedButtonId: 'cancel_ORD-QA', contextInfo: CONTEXT } },
+    { interactiveResponseMessage: { nativeFlowResponseMessage: { paramsJson: JSON.stringify(CONTEXT) } } },
+    { listResponseMessage: { singleSelectReply: { selectedRowId: 'confirm_ORD-QA' }, contextInfo: CONTEXT } },
+    { imageMessage: { caption: 'look', contextInfo: CONTEXT } },
+    { audioMessage: { ptt: true, contextInfo: CONTEXT } },
+    { contactMessage: { vcard: 'TEL:' + PHONE, contextInfo: CONTEXT } },
+    { conversation: '155500000000000@lid 15550000000@s.whatsapp.net' },
+    { ephemeralMessage: { message: { extendedTextMessage: { contextInfo: CONTEXT } } } },
+  ])('quotes, forwarded content, contacts and media cannot establish a recipient: %j', content => {
+    const result = resolveInboundAddress(envelope({}, {
+      message: content, contextInfo: CONTEXT, mentionedJid: [OWNER_LID],
+      unknown: { sender: OWNER, senderAlt: OWNER_LID },
+    }));
+    expect(result.identityPhone).toBe(PHONE);
+    expect(result.replyTo).toBe(PN);
+    expect(result.lidJid).toBe('');
+  });
+
+  test('arbitrary nested hints cannot establish an identity when the sender is absent', () => {
+    const result = resolveInboundAddress({ key: {}, message: { contextInfo: { sender: PN, senderAlt: LID } } });
+    expect(result).toMatchObject({ identityPhone: '', replyTo: '', candidatePhones: [] });
+    expect(collectAddressHints({ body: 'order 123456789', sender: PN, remoteAlt: LID })).toMatchObject({
+      phoneNumbers: [], phoneJids: [], lidJids: [],
     });
-
-    expect(address.identityPhone).toBe('923499166402');
-    expect(address.replyTo).toBe('39767790104698@lid');
-    expect(address.candidatePhones).toContain('923499166402');
   });
 
-  test('uses bare phone fields as identity when only a LID JID is explicit', () => {
-    const address = resolveInboundAddress({
-      key: { remoteJid: '39767790104698@lid' },
-      pushName: 'Buyer',
-      participantPhone: '+92 349 916 6402',
-    });
-
-    expect(address.identityPhone).toBe('923499166402');
-    expect(address.replyTo).toBe('39767790104698@lid');
-    expect(address.candidatePhones).toContain('923499166402');
+  test.each([true, 1, '1', 'true'])('own outbound message (%j) cannot identify an inbound actor', fromMe => {
+    expect(resolveInboundAddress(envelope({ remoteJid: LID, remoteJidAlt: PN, fromMe })))
+      .toMatchObject({ identityPhone: '', replyTo: '', verifiedPeerLid: false });
   });
 
-  test('collects address hints without treating unrelated text as phone numbers', () => {
-    const hints = collectAddressHints({
-      body: 'order 123456789 should not be a phone',
-      sender: '923499166402@s.whatsapp.net',
-      remoteAlt: '39767790104698@lid',
-    });
-
-    expect(hints.phoneJids).toEqual(['923499166402@s.whatsapp.net']);
-    expect(hints.lidJids).toEqual(['39767790104698@lid']);
-    expect(hints.phoneNumbers).toContain('923499166402');
-    expect(hints.phoneNumbers).not.toContain('123456789');
+  test.each([false, 0, '0', 'false'])('accepts an explicitly inbound peer pair (%j)', fromMe => {
+    expect(resolveInboundAddress(envelope({ remoteJidAlt: LID, fromMe })).verifiedPeerLid).toBe(true);
   });
 
-  test('Evolution v2.3.7 LID payload gives senderPn priority and rejects connected owner metadata', () => {
-    const address = resolveInboundAddress({
-      key: {
-        remoteJid: '39767790104698@lid',
-        senderPn: '923499166402@s.whatsapp.net',
-      },
-      senderPn: '923499166402@s.whatsapp.net',
-      owner: '923028588506@s.whatsapp.net',
-      instance: {
-        ownerJid: '923028588506@s.whatsapp.net',
-        owner: '+92 302 8588506',
-      },
-      message: { conversation: 'Hi' },
-    });
-
-    expect(address.identityPhone).toBe('923499166402');
-    expect(address.replyTo).toBe('39767790104698@lid');
-    expect(address.candidatePhones).toEqual(['923499166402']);
-    expect(address.excludedOwnerPhones).toContain('923028588506');
+  test('missing fromMe can use the known phone, but cannot authorize a LID mapping', () => {
+    const address = resolveInboundAddress({ key: { remoteJid: PN, remoteJidAlt: LID } });
+    expect(address).toMatchObject({ identityPhone: PHONE, replyTo: PN, verifiedPeerLid: false });
   });
 
-  test('fails closed when a LID envelope only contains the connected owner number', () => {
-    const address = resolveInboundAddress({
-      key: { remoteJid: '39767790104698@lid' },
-      owner: '923028588506@s.whatsapp.net',
-      instance: { owner: '+92 302 8588506' },
-    });
-
-    expect(address.identityPhone).toBe('');
-    expect(address.replyTo).toBe('39767790104698@lid');
-    expect(address.candidatePhones).toEqual([]);
-    expect(address.excludedOwnerPhones).toContain('923028588506');
+  test('ignores the instance owner even if present among key fields', () => {
+    const address = resolveInboundAddress(envelope({ remoteJidAlt: OWNER }, {
+      owner: OWNER, instance: { ownerJid: OWNER }, message: { conversation: 'hi' },
+    }), { ownerPhone: OWNER, ownerLid: OWNER_LID });
+    expect(address.identityPhone).toBe(PHONE);
+    expect(address.replyTo).toBe(PN);
+    expect(address.candidatePhones).toEqual([PHONE]);
   });
 
-  test('fails closed when a malformed inbound phone-JID points at the connected owner', () => {
-    const address = resolveInboundAddress({
-      key: {
-        remoteJid: '923028588506@s.whatsapp.net',
-        fromMe: false,
-      },
-      owner: '923028588506@s.whatsapp.net',
-      instance: { ownerJid: '923028588506@s.whatsapp.net' },
-      message: { conversation: 'misaddressed webhook' },
-    });
-
-    expect(address.identityPhone).toBe('');
-    expect(address.replyTo).toBe('');
-    expect(address.candidatePhones).toEqual([]);
-    expect(address.excludedOwnerPhones).toContain('923028588506');
+  test('does not route through the owner LID even if it appears as a peer hint', () => {
+    expect(resolveInboundAddress(envelope({ remoteJidAlt: OWNER_LID }), { ownerPhone: OWNER, ownerLid: OWNER_LID }))
+      .toMatchObject({ identityPhone: PHONE, replyTo: PN, verifiedPeerLid: false });
   });
 
-  test('builds explicit phone JID for proactive outbound sends', () => {
-    expect(toPhoneJid('+92 349 9166402')).toBe('923499166402@s.whatsapp.net');
-    expect(toPhoneJid('923499166402@s.whatsapp.net')).toBe('923499166402@s.whatsapp.net');
-    expect(toPhoneJid('')).toBe('');
+  test.each([
+    envelope({ remoteJid: LID }, { owner: OWNER }),
+    envelope({ remoteJid: OWNER }, { owner: OWNER }),
+    envelope({ remoteJidAlt: '15550000002@s.whatsapp.net' }),
+    envelope({ remoteJid: '120363000000@g.us', senderPn: PN }),
+    envelope({ remoteJidAlt: 'status@broadcast' }),
+  ])('unknown, ambiguous or non-private senders fail closed: %j', message => {
+    expect(resolveInboundAddress(message)).toMatchObject({ identityPhone: '', replyTo: '', verifiedPeerLid: false });
   });
 
-  test('remembers a phone to LID mapping for later sends', () => {
-    rememberPhoneLid('923499166402', '39767790104698@lid');
-
-    expect(resolveReplyTo('923499166402', '923499166402@s.whatsapp.net')).toBe('39767790104698@lid');
-    expect(resolveReplyTo('923499166402', '39767790104698@lid')).toBe('39767790104698@lid');
+  test('multiple peer LIDs cannot authorize either one', () => {
+    expect(resolveInboundAddress(envelope({ remoteJidAlt: LID, senderLid: OWNER_LID })))
+      .toMatchObject({ identityPhone: PHONE, replyTo: PN, verifiedPeerLid: false });
   });
 
-  test('falls back cleanly for legacy phone-JID messages', () => {
-    const address = resolveInboundAddress({
-      key: { remoteJid: '923028588506@s.whatsapp.net' },
-    });
-
-    expect(address.identityPhone).toBe('923028588506');
-    expect(address.replyTo).toBe('923028588506@s.whatsapp.net');
-    expect(address.candidatePhones).toEqual(['923028588506']);
+  test('parsing an event does not pollute a shared route cache', () => {
+    resolveInboundAddress(envelope({ remoteJidAlt: LID }));
+    expect(getRememberedLid(PHONE, 'parser-must-not-write')).toBe('');
   });
 
-  test('recognizes group and broadcast JIDs', () => {
+  test('a cache entry needs explicit verification, stays scoped and expires', () => {
+    const scope = 'address-cache-test';
+    expect(rememberPhoneLid(PHONE, OWNER_LID, scope)).toBe(false);
+    expect(resolveReplyTo(PHONE, OWNER_LID, scope)).toBe(PN);
+    expect(rememberPhoneLid(PHONE, LID, scope, { verified: true })).toBe(true);
+    expect(resolveReplyTo(PHONE, LID, scope)).toBe(LID);
+    expect(resolveReplyTo(PHONE, OWNER_LID, scope)).toBe(PN);
+    expect(resolveReplyTo(PHONE, PN, scope)).toBe(PN);
+    expect(getRememberedLid(PHONE, 'other-instance')).toBe('');
+    const later = Date.now() + LID_MAPPING_TTL_MS + 1;
+    jest.spyOn(Date, 'now').mockReturnValue(later);
+    expect(resolveReplyTo(PHONE, LID, scope)).toBe(PN);
+  });
+
+  test('recognizes group and broadcast addresses', () => {
     expect(isGroupOrBroadcastJid('120363000@g.us')).toBe(true);
     expect(isGroupOrBroadcastJid('status@broadcast')).toBe(true);
-    expect(isGroupOrBroadcastJid('923001112222@s.whatsapp.net')).toBe(false);
+    expect(isGroupOrBroadcastJid(PN)).toBe(false);
   });
 });

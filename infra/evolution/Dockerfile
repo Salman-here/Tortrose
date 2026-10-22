@@ -14,6 +14,12 @@ RUN node /tmp/patch-baileys-lid-send.js && node /tmp/check-lid-reply-routing.js 
 COPY patches/patch-rozare-fast-inbound-webhook.js /tmp/patch-rozare-fast-inbound-webhook.js
 RUN node /tmp/patch-rozare-fast-inbound-webhook.js && rm /tmp/patch-rozare-fast-inbound-webhook.js
 
+COPY patches/patch-self-recipient-guard.js /tmp/patch-self-recipient-guard.js
+COPY tests/check-self-recipient-guard.js /tmp/check-self-recipient-guard.js
+COPY tests/check-lid-reply-routing.js /tmp/check-lid-reply-routing.js
+RUN node /tmp/patch-self-recipient-guard.js && node /tmp/check-self-recipient-guard.js \
+    && rm /tmp/patch-self-recipient-guard.js /tmp/check-self-recipient-guard.js /tmp/check-lid-reply-routing.js
+
 COPY patches/patch-cod-reply-envelope.js /tmp/patch-cod-reply-envelope.js
 COPY tests/check-cod-reply-envelope.js /tmp/check-cod-reply-envelope.js
 RUN node /tmp/patch-cod-reply-envelope.js && node /tmp/check-cod-reply-envelope.js \

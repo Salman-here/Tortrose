@@ -87,6 +87,39 @@ Confirm and Cancel reply text, device/uppercase LIDs, normal phone lookup and
 invalid addresses. It does not send a message or replay an order action. The
 separate COD envelope check must still pass, preserving the original buttons.
 
+## Sender identity and unintended self-delivery
+
+The backend takes a reply destination only from the private sender envelope.
+`contextInfo.participant`, quoted-message authors, mentions, contacts and
+arbitrary nested message fields are content, not sender identity. In particular,
+a reply to a bot message can correctly identify the buyer by phone while its
+quoted participant is the bot's own LID. Using that participant as the reply
+destination sends the response to the bot instead of the buyer.
+
+Only an explicit inbound sender-envelope phone/LID pair can create a
+`sender-envelope-v2` route. Routes are isolated by logical and physical instance
+and expire after 24 hours. Legacy `webhook` and `evolution-message-store` records
+are ignored, not deleted. Never restore a historical-message scan as a fallback.
+If a route cannot be verified, use the authoritative phone JID, not a guessed LID.
+
+`patches/patch-self-recipient-guard.js` adds a separate gateway safeguard. It
+rejects explicit self-LIDs and unexpected phone-lookup redirects back to the
+linked account. It preserves deliberately requested self-phone notifications.
+It does not guess another customer, change a message, or apply an order action.
+This containment cannot replace deployment of the backend parser correction.
+
+The same patch adds minimal delivery-receipt logging to the existing fast
+forwarding paths. Logs contain a message-id suffix, numeric status and address
+type, not message bodies or recipient addresses. Numeric Baileys status `0` is
+ERROR, `2` is server acceptance, `3` is device delivery and `4` is read. HTTP
+success alone is not device-delivery evidence. The original receipt is forwarded
+unchanged; receipt work must not block the inbound event queue.
+
+Run the backend recipient-isolation and gateway guard tests, then
+`tests/check-self-recipient-guard.js` inside the candidate gateway with network
+sends stubbed. Cover all four main/component JS/MJS entries and retain the
+existing LID-routing and exact button-envelope checks.
+
 ## COD reply-button envelope correction
 
 `patches/patch-cod-reply-envelope.js` narrowly backports the interactive relay

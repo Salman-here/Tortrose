@@ -1,119 +1,112 @@
-jest.mock('../../models/WhatsAppJidMapping', () => ({
-  findOneAndUpdate: jest.fn(),
-  findOne: jest.fn(),
-}));
+'use strict';
 
-const WhatsAppJidMapping = require('../../models/WhatsAppJidMapping');
-const mongoose = require('mongoose');
-const {
-  rememberInboundRoute,
-  resolveOutboundRecipient,
-} = require('../../services/whatsapp/jidRoutingStore');
+jest.mock('../../models/WhatsAppJidMapping', () => ({ findOneAndUpdate: jest.fn(), findOne: jest.fn() }));
+let store, model, mongoose, addressing;
+const PHONE = '15550000001', PN = PHONE + '@s.whatsapp.net', LID = '155500000000001@lid';
+const OWNER_LID = '155500000000000@lid';
+const options = { instanceType: 'seller', instanceName: 'qa-seller-instance' };
+const route = extra => ({ phone: PHONE, lidJid: LID, ...options,
+  source: addressing.ROUTE_SOURCE, lastSeenAt: new Date(), ...extra });
+const inbound = () => addressing.resolveInboundAddress({
+  key: { remoteJid: LID, remoteJidAlt: PN, fromMe: false },
+});
+const databaseRoute = value => model.findOne.mockReturnValue({
+  sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(value) }),
+});
 
-describe('WhatsApp JID routing store', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    Object.defineProperty(mongoose.connection, 'readyState', {
-      configurable: true,
-      get: () => 1,
-    });
-  });
+beforeEach(() => {
+  jest.resetModules();
+  addressing = require('../../services/whatsapp/addressing');
+  model = require('../../models/WhatsAppJidMapping');
+  mongoose = require('mongoose');
+  store = require('../../services/whatsapp/jidRoutingStore');
+  Object.defineProperty(mongoose.connection, 'readyState', { configurable: true, get: () => 1 });
+  databaseRoute(null);
+});
+afterEach(() => jest.restoreAllMocks());
 
-  test('persists a phone to LID route per instance', async () => {
-    WhatsAppJidMapping.findOneAndUpdate.mockResolvedValue({
-      phone: '923499166402',
-      instanceType: 'seller',
-      lidJid: '39767790104698@lid',
-    });
+test('only a same-envelope, explicitly inbound pair can populate the versioned store', async () => {
+  model.findOneAndUpdate.mockResolvedValue(route());
+  await expect(store.rememberInboundRoute(inbound(), options)).resolves.toMatchObject({ lidJid: LID });
+  expect(model.findOneAndUpdate).toHaveBeenCalledWith(
+    { phone: PHONE, instanceType: 'seller' },
+    { $set: { lidJid: LID, instanceName: options.instanceName,
+      source: addressing.ROUTE_SOURCE, lastSeenAt: expect.any(Date) } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  expect(await store.resolveOutboundRecipient(PHONE, LID, options)).toBe(LID);
+});
 
-    const saved = await rememberInboundRoute(
-      { identityPhone: '923499166402', lidJid: '39767790104698@lid' },
-      { instanceType: 'seller', instanceName: 'rozare-seller' }
-    );
+test.each([
+  {}, { identityPhone: PHONE, lidJid: OWNER_LID },
+  { identityPhone: PHONE, lidJid: OWNER_LID, verifiedPeerLid: false, routingSource: 'sender-envelope-v2' },
+  { identityPhone: PHONE, lidJid: OWNER_LID, verifiedPeerLid: true, routingSource: 'webhook' },
+  { identityPhone: PHONE, lidJid: OWNER_LID, verifiedPeerLid: true, routingSource: 'sender-envelope-v2', excludedOwnerLids: [OWNER_LID] },
+])('cannot persist an unverified or excluded route: %j', async address => {
+  expect(await store.rememberInboundRoute(address, options)).toBeNull();
+  expect(model.findOneAndUpdate).not.toHaveBeenCalled();
+  expect(await store.resolveOutboundRecipient(PHONE, OWNER_LID, options)).toBe(PN);
+});
 
-    expect(saved.lidJid).toBe('39767790104698@lid');
-    expect(WhatsAppJidMapping.findOneAndUpdate).toHaveBeenCalledWith(
-      { phone: '923499166402', instanceType: 'seller' },
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          lidJid: '39767790104698@lid',
-          instanceName: 'rozare-seller',
-        }),
-      }),
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-  });
+test.each([PN, '15550000000@s.whatsapp.net'])('explicit phone requests (%s) retain the authoritative phone', async requested => {
+  await store.rememberInboundRoute(inbound(), options);
+  expect(await store.resolveOutboundRecipient(PHONE, requested, options)).toBe(PN);
+  expect(model.findOne).not.toHaveBeenCalled();
+});
 
-  test('keeps an explicit phone JID unchanged', async () => {
-    WhatsAppJidMapping.findOne.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({
-          phone: '923000000001',
-          instanceType: 'main',
-          lidJid: '11111111111111@lid',
-        }),
-      }),
-    });
+test('uses a fresh versioned route only in the same physical instance', async () => {
+  databaseRoute(route());
+  expect(await store.resolveOutboundRecipient(PHONE, PHONE, options)).toBe(LID);
+  expect(model.findOne).toHaveBeenCalledWith({ phone: PHONE, ...options,
+    source: addressing.ROUTE_SOURCE, lastSeenAt: { $gte: expect.any(Date) } });
+});
 
-    const recipient = await resolveOutboundRecipient(
-      '923000000001',
-      '923000000001@s.whatsapp.net',
-      { instanceType: 'main' }
-    );
+test('an explicit LID must match the verified phone association', async () => {
+  databaseRoute(route());
+  expect(await store.resolveOutboundRecipient(PHONE, OWNER_LID, options)).toBe(PN);
+  expect(await store.resolveOutboundRecipient(PHONE, LID, options)).toBe(LID);
+});
 
-    expect(recipient).toBe('923000000001@s.whatsapp.net');
-    expect(WhatsAppJidMapping.findOne).not.toHaveBeenCalled();
-  });
+test.each([
+  { source: 'webhook' }, { source: 'evolution-message-store' }, { source: undefined },
+  { instanceName: 'other-instance' }, { phone: '15550000002' },
+  { lidJid: PN }, { lastSeenAt: new Date(0) }, { lastSeenAt: 'invalid' },
+])('legacy, expired, malformed and wrong-instance database routes are ignored: %j', async extra => {
+  databaseRoute(route(extra));
+  expect(await store.resolveOutboundRecipient(PHONE, OWNER_LID, options)).toBe(PN);
+  expect(await store.resolveOutboundRecipient(PHONE, PHONE, options)).toBe(PN);
+});
 
-  test('uses a persisted route when the requested recipient is a bare phone', async () => {
-    WhatsAppJidMapping.findOne.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({
-          phone: '923000000001',
-          instanceType: 'main',
-          lidJid: '11111111111111@lid',
-        }),
-      }),
-    });
+test('a route from another physical instance is not reused from memory', async () => {
+  await store.rememberInboundRoute(inbound(), options);
+  expect(await store.resolveOutboundRecipient(PHONE, LID, { ...options, instanceName: 'other-instance' })).toBe(PN);
+  expect(await store.resolveOutboundRecipient(PHONE, LID, { instanceType: 'main', instanceName: options.instanceName })).toBe(PN);
+});
 
-    const recipient = await resolveOutboundRecipient(
-      '923000000001',
-      '923000000001',
-      { instanceType: 'main' }
-    );
+test('memory routes expire and old persisted mappings cannot resurrect them', async () => {
+  await store.rememberInboundRoute(inbound(), options);
+  const now = Date.now();
+  jest.spyOn(Date, 'now').mockReturnValue(now + addressing.LID_MAPPING_TTL_MS + 1);
+  databaseRoute(route({ source: 'webhook' }));
+  expect(await store.resolveOutboundRecipient(PHONE, LID, options)).toBe(PN);
+});
 
-    expect(recipient).toBe('11111111111111@lid');
-    expect(WhatsAppJidMapping.findOne).toHaveBeenCalledWith({
-      phone: '923000000001',
-      instanceType: 'main',
-    });
-  });
+test('database failure cannot redirect a customer to an unverified LID', async () => {
+  model.findOne.mockImplementation(() => { throw new Error('synthetic unavailable database'); });
+  expect(await store.resolveOutboundRecipient(PHONE, OWNER_LID, options)).toBe(PN);
+});
 
-  test('keeps an explicit LID recipient unchanged', async () => {
-    const recipient = await resolveOutboundRecipient(
-      '923000000002',
-      '22222222222222@lid',
-      { instanceType: 'main' }
-    );
+test('database unavailable uses only a fresh in-process verified association or the original phone', async () => {
+  Object.defineProperty(mongoose.connection, 'readyState', { configurable: true, get: () => 0 });
+  expect(await store.resolveOutboundRecipient(PHONE, OWNER_LID, options)).toBe(PN);
+  await store.rememberInboundRoute(inbound(), options);
+  expect(await store.resolveOutboundRecipient(PHONE, LID, options)).toBe(LID);
+  expect(model.findOneAndUpdate).not.toHaveBeenCalled();
+  expect(model.findOne).not.toHaveBeenCalled();
+});
 
-    expect(recipient).toBe('22222222222222@lid');
-    expect(WhatsAppJidMapping.findOne).not.toHaveBeenCalled();
-  });
-
-  test('rejects a connected-owner phone JID that does not match the resolved sender', async () => {
-    WhatsAppJidMapping.findOne.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue(null),
-      }),
-    });
-
-    const recipient = await resolveOutboundRecipient(
-      '923499166499',
-      '923028588506@s.whatsapp.net',
-      { instanceType: 'seller' }
-    );
-
-    expect(recipient).toBe('923499166499@s.whatsapp.net');
-    expect(recipient).not.toContain('923028588506');
-  });
+test('does not derive a destination from an invalid account identity', async () => {
+  expect(await store.resolveOutboundRecipient(LID, OWNER_LID, options)).toBe('');
+  expect(await store.resolveOutboundRecipient('not a phone', OWNER_LID, options)).toBe('');
+  expect(await store.resolveOutboundRecipient(PHONE, OWNER_LID, { instanceType: 'unknown' })).toBe(PN);
 });

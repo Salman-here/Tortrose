@@ -15,6 +15,7 @@ const {
   extractMediaAttachments,
   extractMessageText,
   isFromMeMessage,
+  latestMessageUpdateStatus,
   orderConfirmationTokenExpired,
   pendingJobMatchesInboundPhone,
   pendingJobMatchesOrderConfirmation,
@@ -22,6 +23,13 @@ const {
 } = require('../../services/whatsapp/webhookHandler').__private;
 
 describe('Evolution v2.3.7 webhook media extraction', () => {
+  test.each([[0, 'ERROR'], ['0', 'ERROR'], [1, 'PENDING'], [2, 'SERVER_ACK'], [3, 'DELIVERY_ACK'], [4, 'READ'], [5, 'PLAYED'], ['error', 'ERROR']])(
+    'recognizes delivery receipt %s without losing numeric ERROR zero', (input, status) => {
+      expect(latestMessageUpdateStatus({ status: input })).toBe(status);
+      expect(latestMessageUpdateStatus({ update: { status: input } })).toBe(status);
+      expect(latestMessageUpdateStatus({ updates: [{ status: 'PENDING' }, { status: input }] })).toBe(status);
+    }
+  );
   test('extracts an inline Baileys 7 PTT voice note through an ephemeral wrapper', () => {
     const bytes = Buffer.from('synthetic opus voice note');
     const message = {

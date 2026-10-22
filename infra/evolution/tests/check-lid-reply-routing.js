@@ -9,7 +9,9 @@ const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 
 async function captureRoute(source, { number, lookup = { exists: true, jid: '19999999999@s.whatsapp.net' }, lookupThrows = false,
-  text = 'Hi QA Buyer,\n\nYour order *#ORD-ROUTING-QA* is confirmed.\n\nTrack your order: https://rozare.com/track-order' } = {}, deps = {}) {
+  text = 'Hi QA Buyer,\n\nYour order *#ORD-ROUTING-QA* is confirmed.\n\nTrack your order: https://rozare.com/track-order',
+  selfPhone = '15550000000@s.whatsapp.net', selfLid = '155500000000000@lid',
+  selfInAuthState = false } = {}, deps = {}) {
   const isGroup = deps.baileys?.isJidGroup || (jid => String(jid).endsWith('@g.us'));
   const context = { Date, R: { ...(deps.baileys || {}), isJidGroup: isGroup }, console: { log() {} } };
   for (const match of source.matchAll(/if\(![\w$]+\.exists&&!([\w$]+)\([\w$]+\.jid\)/g)) context[match[1]] = isGroup;
@@ -23,8 +25,10 @@ async function captureRoute(source, { number, lookup = { exists: true, jid: '199
   const methods = new vm.Script('({' + source + '})').runInNewContext(context);
   const lookups = [], sends = [], webhooks = [], payload = { conversation: text };
   const receiver = {
-    instance: { wuid: '15550000000@s.whatsapp.net' }, instanceId: 'qa-instance', localWebhook: { enabled: false },
-    logger: { verbose() {}, error() {} }, client: {},
+    instance: { wuid: selfPhone }, instanceId: 'qa-instance', localWebhook: { enabled: false },
+    logger: { verbose() {}, error() {} }, client: selfInAuthState
+      ? { authState: { creds: { me: { id: selfPhone, lid: selfLid } } } }
+      : { user: { id: selfPhone, lid: selfLid } },
     whatsappNumber: async args => { lookups.push(args); if (lookupThrows) throw new Error('Phone lookup is unavailable'); return [lookup]; },
     sendMessage: async (...args) => { sends.push(args); return { key: { id: 'qa-no-network', remoteJid: args[0], fromMe: true }, message: { conversation: text }, messageTimestamp: 1792627200 }; },
     prepareMessage: message => message, sendDataWebhook: (...args) => webhooks.push(args),

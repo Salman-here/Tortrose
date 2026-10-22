@@ -9,13 +9,12 @@ const axios = require('axios');
 const { WHATSAPP_WEBHOOK_HEADER } = require('./webhookSecurity');
 const QRCode = require('qrcode');
 const {
-    collectAddressHints,
-    phoneFromJid,
+    canonicalPhone,
+    canonicalJid,
     isLidJid,
     isPhoneJid,
 } = require('./addressing');
 const {
-    rememberInboundRoute,
     resolveOutboundRecipient,
 } = require('./jidRoutingStore');
 const {
@@ -70,8 +69,6 @@ const makeClient = () => {
     );
     return instance;
 };
-const recentRouteCache = new Map();
-const RECENT_ROUTE_CACHE_TTL_MS = 10 * 60 * 1000;
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Turn a raw QR "code" string into a base64 PNG data URL.
@@ -134,90 +131,15 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
             : 'main'
     );
 
-    const routeCacheKey = (phone) => `${instanceName()}:${phoneFromJid(phone)}`;
-
-    const getCachedRecentRoute = (phone) => {
-        const key = routeCacheKey(phone);
-        const route = recentRouteCache.get(key);
-        if (!route) return '';
-        if (Date.now() - route.seenAt > RECENT_ROUTE_CACHE_TTL_MS) {
-            recentRouteCache.delete(key);
-            return '';
-        }
-        return route.lidJid;
-    };
-
-    const cacheRecentRoute = (phone, lidJid) => {
-        if (!phone || !isLidJid(lidJid)) return;
-        recentRouteCache.set(routeCacheKey(phone), { lidJid, seenAt: Date.now() });
-    };
-
-    const findRecentLidForPhone = async (phone) => {
-        const digits = phoneFromJid(phone);
-        if (!digits) return '';
-
-        const cached = getCachedRecentRoute(digits);
-        if (cached) return cached;
-
-        try {
-            const { data } = await client().post(`/chat/findMessages/${instanceName()}`, {});
-            const records = data?.messages?.records || data?.records || [];
-            for (const msg of records.slice(0, 100)) {
-                const key = msg?.key || {};
-                const hints = collectAddressHints(msg);
-                const phoneCandidates = [
-                    key.remoteJid,
-                    key.remoteJidAlt,
-                    key.participant,
-                    key.participantAlt,
-                    ...hints.phoneJids,
-                    ...hints.phoneNumbers,
-                ];
-                const lidCandidates = [
-                    key.remoteJid,
-                    key.remoteJidAlt,
-                    key.participant,
-                    key.participantAlt,
-                    ...hints.lidJids,
-                ];
-                const phoneMatches = phoneCandidates.some(candidate => phoneFromJid(candidate) === digits);
-                const lidJid = lidCandidates.find(isLidJid) || '';
-                if (phoneMatches && lidJid) {
-                    cacheRecentRoute(digits, lidJid);
-                    await rememberInboundRoute(
-                        { identityPhone: digits, lidJid },
-                        {
-                            instanceType: instanceType(),
-                            instanceName: instanceName(),
-                            source: 'evolution-message-store',
-                        }
-                    ).catch(() => null);
-                    return lidJid;
-                }
-            }
-        } catch (err) {
-            console.warn(`[evolution:${instanceName()}] recent LID lookup failed:`, err.response?.data || err.message);
-        }
-
-        return '';
-    };
-
     const normalizeSendRecipient = async (number) => {
-        if (isLidJid(number)) return number;
-        if (isPhoneJid(number)) return number;
-        const digits = phoneFromJid(number);
-        if (!digits) return number;
-
-        const stored = await resolveOutboundRecipient(digits, number, { instanceType: instanceType() });
-        if (isLidJid(stored)) return stored;
-
-        const recent = await findRecentLidForPhone(digits);
-        if (recent) {
-            console.log(`[evolution:${instanceName()}] routed recipient ${digits} to ${recent}`);
-            return recent;
-        }
-
-        return number;
+        if (isLidJid(number) || isPhoneJid(number)) return canonicalJid(number);
+        const digits = canonicalPhone(number);
+        if (!digits) throw new TypeError('A valid WhatsApp recipient is required');
+        // Never mine quoted authors or historical message content for a route.
+        // Only the sender-envelope store can establish a phone/LID association.
+        return resolveOutboundRecipient(digits, number, {
+            instanceType: instanceType(), instanceName: instanceName(),
+        });
     };
 
     const createInstance = async () => {
