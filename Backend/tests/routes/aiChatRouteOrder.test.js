@@ -10,6 +10,7 @@ jest.mock('../../middleware/authMiddleware', () => {
     next();
   };
   protect.protect = protect;
+  protect.admin = protect;
   return protect;
 });
 jest.mock('../../middleware/aiChatDailyLimit', () => (_req, _res, next) => {

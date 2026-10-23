@@ -6,6 +6,7 @@ import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 import Loader from '../common/Loader';
 import { getAuthToken } from "../../utils/cookieHelper";
+import { Link } from 'react-router-dom';
 
 const UserManagement = () => {
   const { currentUser } = useAuth();
@@ -201,12 +202,15 @@ const UserManagement = () => {
   };
 
   const renderUserActions = (user) => {
+    const chats = <Link to={`/admin-dashboard/chats?userId=${encodeURIComponent(user._id)}`} aria-label={`View chats for ${user.username || user.email}`} title="View saved chats"
+      className="inline-flex rounded-xl bg-primary/10 p-2 text-primary transition-colors hover:bg-primary/20"><MessageCircle className="h-4 w-4" /></Link>;
     if (currentUser?.email === user.email) {
-      return <span className="text-xs font-medium px-2 py-1" style={{ color: 'hsl(var(--muted-foreground))' }}>You</span>;
+      return <>{chats}<span className="text-xs font-medium px-2 py-1" style={{ color: 'hsl(var(--muted-foreground))' }}>You</span></>;
     }
 
     return (
       <>
+        {chats}
         {user.role === 'seller' && (
           <button onClick={() => handleConfigureTrial(user)} disabled={hasProtectedPaidEntitlement(user)} className="p-2 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ color: 'hsl(150, 60%, 45%)', background: 'rgba(16, 185, 129, 0.08)' }}

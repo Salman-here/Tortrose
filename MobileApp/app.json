@@ -2,7 +2,7 @@
   "expo": {
     "name": "Rozare",
     "slug": "rozare",
-    "version": "1.0.14",
+    "version": "1.0.15",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -28,7 +28,7 @@
         "backgroundColor": "#0EA5E9"
       },
       "package": "com.rozare.app",
-      "versionCode": 23,
+      "versionCode": 24,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECORD_AUDIO",
@@ -49,8 +49,26 @@
             {
               "scheme": "https",
               "host": "rozare.com",
-              "pathPrefix": "/"
-            }
+              "path": "/"
+            },
+            { "scheme": "https", "host": "rozare.com", "pathPrefix": "/single-product/" },
+            { "scheme": "https", "host": "rozare.com", "pathPrefix": "/store/" },
+            { "scheme": "https", "host": "rozare.com", "path": "/marketplace" },
+            { "scheme": "https", "host": "rozare.com", "path": "/track-order" },
+            { "scheme": "https", "host": "rozare.com", "path": "/orders" },
+            { "scheme": "https", "host": "rozare.com", "pathPrefix": "/user-dashboard/order" },
+            { "scheme": "https", "host": "rozare.com", "pathPrefix": "/orders/confirm/" },
+            { "scheme": "https", "host": "rozare.com", "pathPrefix": "/order/" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "*.rozare.com", "path": "/" },
+            { "scheme": "https", "host": "*.rozare.com", "pathPrefix": "/single-product/" },
+            { "scheme": "https", "host": "*.rozare.com", "pathPrefix": "/store/" }
           ],
           "category": [
             "BROWSABLE",
@@ -64,7 +82,8 @@
       "bundleIdentifier": "com.rozare.app",
       "buildNumber": "18",
       "associatedDomains": [
-        "applinks:rozare.com"
+        "applinks:rozare.com",
+        "applinks:*.rozare.com"
       ],
       "infoPlist": {
         "UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],

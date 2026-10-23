@@ -35,6 +35,7 @@ const getAdminMenuItems = ({ pendingOrders = 0, lowStockProducts = 0 } = {}) => 
     { id: 'analytics', label: 'Analytics', icon: <TrendingUp size={18} />, link: '/admin-dashboard/analytics' },
     { id: 'payments', label: 'Payments', icon: <DollarSign size={18} />, link: '/admin-dashboard/payments' },
     { id: 'users', label: 'User Management', icon: <Users size={18} />, link: '/admin-dashboard/user-management' },
+    { id: 'chats', label: 'Chat History', icon: <MessageCircle size={18} />, link: '/admin-dashboard/chats' },
     { id: 'products', label: 'Products', icon: <Package size={18} />, link: '/admin-dashboard/product-management', badge: lowStockProducts },
     { id: 'orders', label: 'Orders', icon: <ShoppingBag size={18} />, link: '/admin-dashboard/order-management', badge: pendingOrders },
     { id: 'verifications', label: 'Verifications', icon: <CheckCircle size={18} />, link: '/admin-dashboard/store-verifications' },

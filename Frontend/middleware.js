@@ -1,4 +1,5 @@
 import { next, rewrite } from '@vercel/functions';
+import { appAssociationResponse } from './server/appLinkAssociations.mjs';
 import { isPrivatePath, nonIndexableQuery } from './src/utils/indexingPolicy.js';
 export { isPrivatePath, nonIndexableQuery };
 
@@ -171,6 +172,9 @@ export const config = {
 export default async function middleware(request) {
   const url = new URL(request.url);
   const hostname = url.hostname.toLowerCase();
+  // Domain verification is public JSON, never an SPA page or a redirect.
+  const association = appAssociationResponse(request);
+  if (association) return association;
 
   // Independent static platform: never load the marketplace shell, analytics,
   // storefront lookup, or branded error pages on this host.

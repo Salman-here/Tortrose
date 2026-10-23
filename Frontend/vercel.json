@@ -8,7 +8,7 @@
   },
   "redirects": [
     {
-      "source": "/:path*",
+      "source": "/:path((?!\\.well-known/).*)",
       "has": [{ "type": "host", "value": "www.rozare.com" }],
       "destination": "https://rozare.com/:path*",
       "permanent": true

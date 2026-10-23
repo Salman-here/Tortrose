@@ -47,6 +47,7 @@ const UserOrdersManagement = lazy(() => import('../components/layout/UserOrdersM
 const UserOrderDetail = lazy(() => import('../components/layout/UserOrderDetail'))
 const OrderDetail = lazy(() => import('../components/layout/OrderDetail'))
 const UserManagement = lazy(() => import('../components/layout/UserManagement'))
+const AdminChatHistory = lazy(() => import('../components/layout/AdminChatHistory'))
 const UserWhatsAppSettings = lazy(() => import('../components/layout/UserWhatsAppSettings'))
 const Wallet = lazy(() => import('../components/layout/Wallet'))
 const PaymentMethods = lazy(() => import('../components/layout/PaymentMethods'))
@@ -200,6 +201,7 @@ function AppRoutes({ subdomainSlug = null }) {
                     <Route path='/admin-dashboard/order-management' element={<ProtectedRoute role={'admin'}><OrderManagement /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/order/:id' element={<ProtectedRoute role={['admin', 'seller']}><OrderDetail /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/user-management' element={<ProtectedRoute role={'admin'}><UserManagement /></ProtectedRoute>} />
+                    <Route path='/admin-dashboard/chats' element={<ProtectedRoute role={'admin'}><AdminChatHistory /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/tax-configuration' element={<ProtectedRoute role={'admin'}><TaxConfiguration /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/store-verifications' element={<ProtectedRoute role={'admin'}><StoreVerifications /></ProtectedRoute>} />
                     <Route path='/admin-dashboard/analytics' element={<ProtectedRoute role={'admin'}><AdminAnalytics /></ProtectedRoute>} />

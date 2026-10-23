@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Linking } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
@@ -15,6 +16,7 @@ import { BuyerLocationProvider } from './src/contexts/BuyerLocationContext';
 import ShoppingLocationPrompt from './src/components/common/ShoppingLocationPrompt';
 import SafepayCheckoutProvider from './src/components/SafepayCheckoutProvider';
 import { isSafepayBrowserReturn } from './src/utils/safepayBrowser';
+import { createAppLinkHandlers } from './src/utils/appLinks';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingWalkthrough, { shouldShowOnboarding } from './src/components/OnboardingWalkthrough';
@@ -255,10 +257,10 @@ const errorStyles = StyleSheet.create({
 
 // ─── Deep Linking ────────────────────────────────────────────────────────────
 const linking = {
+  ...createAppLinkHandlers({ linking: Linking, openBrowser: WebBrowser.openBrowserAsync, ownsReturn: isSafepayBrowserReturn }),
   // The active presenter owns this callback and verifies its payment. A cold
   // start or a different payment still opens the normal authenticated status page.
   filter: url => !isSafepayBrowserReturn(url),
-  prefixes: ['rozare://', 'https://rozare.com', 'http://rozare.com'],
   config: {
     screens: {
       MainTabs: {

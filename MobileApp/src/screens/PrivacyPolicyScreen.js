@@ -5,15 +5,14 @@ import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
 import PremiumBackHeader from '../components/common/PremiumBackHeader';
 import { useTheme } from '../contexts/ThemeContext';
-import { policyConfig } from '../content/commercePolicies';
-import { paymentPrivacyNotice, privacyIntro, privacySections } from '../content/privacyContent';
+import { paymentPrivacyNotice, privacyIntro, privacySections, privacyUpdatedAt } from '../content/privacyContent';
 
 export default function PrivacyPolicyScreen({ navigation }) {
   const { palette } = useTheme();
   const styles = makeStyles(palette);
   const open = url => Linking.openURL(url).catch(() => Alert.alert('Privacy support', 'Contact privacy@rozare.com for help.'));
   return <GlassBackground><SafeAreaView style={styles.container} edges={Platform.OS === 'android' ? [] : ['top']}>
-    <PremiumBackHeader title="Privacy Policy" subtitle={`Updated ${policyConfig.updatedAt}`} icon="shield-checkmark-outline" onBack={() => navigation.goBack()} rightIcon="lock-closed-outline" rightLabel="Privacy" />
+    <PremiumBackHeader title="Privacy Policy" subtitle={`Updated ${privacyUpdatedAt}`} icon="shield-checkmark-outline" onBack={() => navigation.goBack()} rightIcon="lock-closed-outline" rightLabel="Privacy" />
     <ScrollView contentContainerStyle={styles.content}>
       <GlassPanel style={styles.panel}><Text style={styles.text}>{privacyIntro}</Text></GlassPanel>
       <GlassPanel style={styles.panel}><Text accessibilityRole="header" style={styles.title}>Who operates Rozare and handles payments</Text><Text style={styles.text}>{paymentPrivacyNotice}</Text></GlassPanel>
