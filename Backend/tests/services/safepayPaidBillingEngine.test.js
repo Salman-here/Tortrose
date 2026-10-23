@@ -78,19 +78,59 @@ async function makeDue() {
 
 const enableTestClock=()=>{const now=new Date();process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW=JSON.stringify({startsAt:new Date(now.getTime()-1000),expiresAt:new Date(now.getTime()+119*60000)});};
 const acceptTest=q=>billing.acceptQuote(seller._id,{quoteId:q.quoteId,cardId:'pm_paid-engine-owned',consentAccepted:true,consentVersion:billing.CONSENT_VERSION,billingTestId:q.billingTest.id});
+async function expectNotice(aggregateId, eventType, title, body) {
+  const notices = await Outbox.find({ aggregateId: String(aggregateId), eventType }).lean();
+  expect(notices.map(notice => notice.channel).sort()).toEqual(['email', 'inapp', 'push', 'whatsapp']);
+  for (const notice of notices) {
+    const content = notice.channel === 'email' ? { subject: title, text: body }
+      : notice.channel === 'whatsapp' ? { message: `*${title}*\n\n${body}\n\nView details: https://rozare.com/seller-dashboard/subscription` } : { title, body };
+    expect(notice.payload).toMatchObject(content);
+  }
+}
+
 test.each([['starter',10],['elite',15]])('live-test %s has a %i-minute intro and two exact $1 engine renewals without duplicate collection',async(plan,minutes)=>{
  await Sub.updateOne({_id:sub._id},{$set:{hasUsedFreePeriod:false}});enableTestClock();
  const q=await quote({plan,includeMetaAds:plan==='elite'});expect(q).toMatchObject({monthlyAmountMinor:100,dueNowMinor:0,billingTest:{renewalMinutes:20}});
  await expect(accept(q.quoteId)).rejects.toMatchObject({code:'SUBSCRIPTION_QUOTE_STALE'});
  expect((await acceptTest(q)).completed).toBe(true);let current=await Sub.findById(sub._id);
  expect(current.currentPeriodEnd-current.currentPeriodStart).toBe(minutes*60000);expect(captures).toHaveLength(0);
+ await expectNotice(q.quoteId, 'subscription.payment_received', 'Your subscription introductory period has started',
+   `Your ${current.planName} plan was activated with a ${minutes}-minute free introductory period. Amount due at activation: $0.00. Review your current billing dates, plan price and renewal settings in Subscription.`);
  useBillingClock();jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+10));await lifecycle.runBillingWorker();await lifecycle.runBillingWorker();
  expect(captures).toHaveLength(1);expect(captures[0]).toMatchObject({amount:100,currency:'USD'});
  current=await Sub.findById(sub._id);expect(current.currentPeriodEnd-current.currentPeriodStart).toBe(20*60000);
  jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+10));await lifecycle.runBillingWorker();await lifecycle.runBillingWorker();
  expect(captures).toHaveLength(2);expect(captures.every(row=>row.amount===100)).toBe(true);
  expect(await Operation.countDocuments({kind:'renewal',status:'applied'})).toBe(2);
+ for (const renewal of await Operation.find({kind:'renewal',status:'applied'})) {
+   await expectNotice(renewal._id, 'subscription.payment_received', 'Your subscription was updated',
+     `Your ${renewal.terms.planName} subscription was updated successfully. Amount paid: $1.00. Review your current billing dates, plan price and renewal settings in Subscription.`);
+ }
 });
+test('a declined test enrollment keeps the original failure wording in all four channels', async () => {
+ enableTestClock();mode='declined';const q=await quote();await acceptTest(q);
+ await expectNotice(q.quoteId, 'subscription.payment_failed', 'Subscription payment unsuccessful',
+   'Your payment of $1.00 was unsuccessful. This attempt did not activate or extend your subscription. Review your payment method and retry in Subscription.');
+ expect((await Sub.findById(sub._id)).safepayBilling.autoRenew).toBe(false);
+});
+
+test('a declined test renewal preserves the approved retry notice and the original failure schedule', async () => {
+ enableTestClock();await acceptTest(await quote());let current=await Sub.findById(sub._id);
+ useBillingClock();jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+10));mode='declined';await lifecycle.runBillingWorker();
+ current=await Sub.findById(sub._id);const failed=await Operation.findById(current.safepayBilling.lastFailedOperation);
+ const notice=require('../../services/safepayRenewalPolicy').failureNotice(current,failed);
+ await expectNotice(failed._id,'subscription.payment_failed',notice.title,notice.body.replace('{{money.charged}}','$1.00'));
+ expect(current.safepayBilling.recovery.attempts).toBe(1);
+ expect(current.safepayBilling.recovery.nextRetryAt.getTime()-Date.now()).toBeGreaterThan(24*60*60000);
+});
+
+test('test cancellation keeps the original lifecycle wording with only the rate and interval substituted', async () => {
+ enableTestClock();await acceptTest(await quote());await lifecycle.cancel(seller._id);const current=await Sub.findById(sub._id);
+ await expectNotice(sub._id,'subscription.cancelled','Subscription renewal cancelled',
+   `Automatic renewal of your plan ($1.00 per 20 minutes) is turned off. You can use your current plan until ${current.currentPeriodEnd.toISOString().slice(0,10)}. Review your subscription details if you want to resume.`);
+ expect(current.safepayBilling.autoRenew).toBe(false);expect(current.safepayBilling.nextChargeAt).toBeNull();
+});
+
 test('test-window expiry cancels an unstarted invoice and cannot switch a new test agreement to the regular price',async()=>{
  await Sub.updateOne({_id:sub._id},{$set:{hasUsedFreePeriod:false}});enableTestClock();
  const q=await quote();await acceptTest(q);const current=await Sub.findById(sub._id);

@@ -79,11 +79,18 @@ test('billing operation and lifecycle text comes from actual source call sites',
   expect(one('Safepay downgrade cancelled').after.html).toContain('downgrade to Starter has been cancelled');
 });
 
-test('temporary billing previews use the real minute-based activation and exact $1 receipt text',()=>{
-  expect(one('Safepay temporary test — starter introductory period').after.html).toContain('10-minute test');
-  expect(one('Safepay temporary test — elite introductory period').after.html).toContain('15-minute test');
-  expect(one('Safepay temporary test — paid renewal').after.html).toContain('Amount paid: $1.00');
-  expect(one('Safepay temporary test — paid renewal').after.html).toContain('$1-per-20-minute billing test');
+test('temporary billing previews preserve approved wording with only the time and amount substituted',()=>{
+  for (const channel of ['email', 'whatsapp']) {
+    for (const [plan, label, minutes] of [['starter', 'Starter', 10], ['elite', 'Elite', 15]]) {
+      const preview = one(`Safepay temporary test — ${plan} introductory period`, channel).after;
+      const normal = one('Safepay subscription trial started', channel).after;
+      const expected = JSON.parse(JSON.stringify(normal).replaceAll('Rozare Elite + Meta Ads', `Rozare ${label}`).replaceAll('45-day', `${minutes}-minute`));
+      expect(preview).toEqual(expected);
+    }
+    const normal = one('Safepay subscription updated', channel).after;
+    const expected = JSON.parse(JSON.stringify(normal).replaceAll('Rozare Elite + Meta Ads', 'Rozare Starter').replaceAll('$25.65', '$1.00'));
+    expect(one('Safepay temporary test — paid renewal', channel).after).toEqual(expected);
+  }
 });
 
 test('return statuses, moderation safety and source-backed receipt channels are complete', () => {

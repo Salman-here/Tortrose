@@ -290,7 +290,7 @@ async function applyOperation(operation, sub, session) {
     $or: [{ isActive: true }, ...(previousBlockedAt ? [{ blockedAt: previousBlockedAt }] : [])] },
   { $set: { isActive: true, blockedAt: null, 'subdomainPurchase.removalScheduledAt': null } }, { session });
   await notifyOperation(operation, { session, title: terms.trialDays ? 'Your subscription introductory period has started' : 'Your subscription was updated',
-    body: `${terms.trialDays ? `Your ${terms.planName} plan was activated with a ${test ? `${billingTest.introMinutes(test,terms.plan)}-minute test` : `${terms.trialDays}-day free`} introductory period. Amount due at activation: {{money.charged}}.` : `Your ${terms.planName} subscription was updated successfully. Amount paid: {{money.charged}}.`}${test ? ` This is a live $1-per-20-minute billing test ending at ${test.expiresAt}; no further test charge starts after that cutoff.` : ''} Review your current billing dates, plan price and renewal settings in Subscription.` });
+    body: `${terms.trialDays ? `Your ${terms.planName} plan was activated with a ${test ? `${billingTest.introMinutes(test,terms.plan)}-minute` : `${terms.trialDays}-day`} free introductory period. Amount due at activation: {{money.charged}}.` : `Your ${terms.planName} subscription was updated successfully. Amount paid: {{money.charged}}.`} Review your current billing dates, plan price and renewal settings in Subscription.` });
   return sub;
 }
 
@@ -479,10 +479,6 @@ async function failBillingPayment(payment, session, { failureCode = 'SAFEPAY_REC
   const notice = op.recoveryNotice ? renewalPolicy.failureNotice(sub, op, at) : {
     title: 'Subscription payment unsuccessful',
     body: 'Your payment of {{money.charged}} was unsuccessful. This attempt did not activate or extend your subscription. Review your payment method and retry in Subscription.' };
-  if (op.terms.billingTest) {
-    notice.title = 'Test subscription payment unsuccessful';
-    notice.body = `The live test charge of {{money.charged}} was unsuccessful. Update the billing card or review the exact attempt in Subscription. Failure retries are not accelerated. Automatic test charges stop at ${op.terms.billingTest.expiresAt}; this test will not silently switch to a higher regular price.`;
-  }
   await notifyOperation(op, { session, type: 'subscription.payment_failed', ...notice });
 }
 
