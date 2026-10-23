@@ -17,6 +17,9 @@ const otpSchema = new mongoose.Schema({
         password: String,
         role: String,
         isVerified: Boolean,
+        // Preserve a new buyer's browsing preference through verification.
+        // Optional for verification codes issued by older clients.
+        currency: { type: String, enum: ['USD', 'PKR', 'EUR', 'GBP'] },
         // Direct seller signup freezes the chosen native listing currency at
         // send-OTP time. It is optional only so verification records created
         // before this field existed can finish using the explicit legacy USD

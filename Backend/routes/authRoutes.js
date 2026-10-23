@@ -1,6 +1,7 @@
 const express = require('express')
 const { registerr, login, googleCallback, sendOTP, verifyOTPAndRegister, sendSellerOTP, verifySellerOTPAndRegister } = require('../controllers/authController')
 const passport = require('passport')
+const { registrationCurrency } = require('../services/registrationCurrencyService');
 const router = express.Router()
 
 // New OTP-based registration
@@ -22,7 +23,10 @@ router.get("/google", (req, res, next) => {
 });
 
 // Mobile Google OAuth — passes state=mobile so callback can redirect to deep link
-router.get("/google/mobile", passport.authenticate("google", { scope: ["profile", "email"], state: "mobile" }));
+router.get("/google/mobile", (req, res, next) => {
+    const currency = registrationCurrency(req.query.currency);
+    passport.authenticate("google", { scope: ["profile", "email"], state: currency ? `mobile:${currency}` : 'mobile' })(req, res, next);
+});
 
 // callback route (shared for web + mobile, distinguished by state)
 router.get("/google/callback", passport.authenticate("google", { failureRedirect: "/login", session: false }), googleCallback);

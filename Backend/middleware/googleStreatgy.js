@@ -1,6 +1,7 @@
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const User = require("../models/User");
+const { mobileGoogleRegistration } = require('../services/registrationCurrencyService');
 const dotenv = require('dotenv')
 dotenv.config()
 
@@ -11,8 +12,9 @@ if (process.env.clientID && process.env.clientSecret && process.env.GOOGLE_CALLB
         clientID: process.env.clientID,
         clientSecret: process.env.clientSecret,
         callbackURL: process.env.GOOGLE_CALLBACK_URL,
+        passReqToCallback: true,
       },
-    async (accessToken, refreshToken, profile, done) => {
+    async (req, accessToken, refreshToken, profile, done) => {
       try {
         // Check if user already exists
         let user = await User.findOne({ email: profile.emails[0].value });
@@ -26,6 +28,7 @@ if (process.env.clientID && process.env.clientSecret && process.env.GOOGLE_CALLB
             profilePicture: profile.photos[0].value,
             password: null,
             isVerified: true,
+            currency: mobileGoogleRegistration(req.query?.state).currency,
           });
         } else if (user.status === 'blocked') {
           // Return the live account without mutating it. googleCallback reloads

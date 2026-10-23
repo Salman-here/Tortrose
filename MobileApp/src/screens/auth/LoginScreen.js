@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import RozareLogo from '../../components/common/RozareLogo';
@@ -26,6 +27,7 @@ export default function LoginScreen({ navigation, route }) {
   const styles = buildStyles(palette);
 
   const { login, googleSignIn } = useAuth();
+  const { currency } = useCurrency();
   const [googleLoading, setGoogleLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -48,7 +50,7 @@ export default function LoginScreen({ navigation, route }) {
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
-    const result = await googleSignIn();
+    const result = await googleSignIn({ currency });
     setGoogleLoading(false);
     if (result?.success) finishAuthentication();
   };

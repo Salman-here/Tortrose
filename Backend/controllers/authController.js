@@ -21,11 +21,16 @@ const {
 const { normalizePhoneDigits, toE164PhoneNumber } = require('../utils/phoneNumber');
 const { MAX_STORE_SLUG_LENGTH, safeGeneratedStoreSlugBase } = require('../utils/storeSlug');
 const { generateSixDigitOTP, signAuthToken } = require('../utils/authSecurity');
+const { registrationCurrency, mobileGoogleRegistration } = require('../services/registrationCurrencyService');
 
 
 // Step 1: Send OTP to email
 exports.sendOTP = async (req, res) => {
     const { username, email, password } = req.body;
+    const currency = registrationCurrency(req.body.currency);
+    if (req.body.currency !== undefined && !currency) {
+        return res.status(400).json({ msg: 'Invalid currency code', code: 'INVALID_CURRENCY' });
+    }
 
     try {
         // Check if user already exists
@@ -48,6 +53,7 @@ exports.sendOTP = async (req, res) => {
                 username,
                 email,
                 password, // Will be hashed during user creation
+                ...(currency ? { currency } : {}),
                 role: 'user',
                 isVerified: true // Will be set to true after OTP verification
             }
@@ -122,7 +128,7 @@ exports.verifyOTPAndRegister = async (req, res) => {
         res.status(200).json({ 
             msg: 'Email verified! Sign up successful.', 
             token: token, 
-            user: payload 
+            user: { ...payload, currency: newUser.currency }
         });
     } catch (error) {
         console.error('Verify OTP error:', error);
@@ -195,7 +201,7 @@ exports.login = async (req, res) => {
 exports.googleCallback = async (req, res) => {
     try {
         const state = req.query.state || '';
-        const isMobile = state === 'mobile';
+        const { isMobile } = mobileGoogleRegistration(state);
         const isSeller = state === 'seller';
         const passportUserId = req.user?._id || req.user?.id;
         const user = passportUserId
@@ -231,7 +237,7 @@ exports.googleCallback = async (req, res) => {
     } catch (error) {
         console.error('Google callback error:', error);
         const state = req.query.state || '';
-        if (state === 'mobile') {
+        if (mobileGoogleRegistration(state).isMobile) {
             return res.redirect('rozare://auth/google/error');
         }
         res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);

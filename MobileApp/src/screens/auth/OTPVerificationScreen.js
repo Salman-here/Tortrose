@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import AuthTopHeader from '../../components/common/AuthTopHeader';
@@ -27,6 +28,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
 
   const { email, name, password, returnTo } = route.params || {};
   const { verifyOTP, signup } = useAuth();
+  const { currency } = useCurrency();
 
   const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
   const [isVerifying, setIsVerifying] = useState(false);
@@ -74,7 +76,7 @@ export default function OTPVerificationScreen({ route, navigation }) {
   const handleResend = async () => {
     if (!otpTimer.canResend) return;
     setIsResending(true); setOtp(Array(OTP_LENGTH).fill('')); setError('');
-    const result = await signup({ username: name, email, password });
+    const result = await signup({ username: name, email, password, currency });
     if (!result?.success) setError(result?.error || 'Failed to resend the verification code.');
     else otpTimer.start();
     setIsResending(false); inputRefs.current[0]?.focus();

@@ -55,6 +55,7 @@ describe('blocked account token issuance', () => {
     ['', 'https://rozare.test/login?error=account_blocked'],
     ['seller', 'https://rozare.test/login?error=account_blocked'],
     ['mobile', 'rozare://auth/google/error?code=account_blocked'],
+    ['mobile:PKR', 'rozare://auth/google/error?code=account_blocked'],
   ])('Google callback reloads live status and returns no token for state %p', async (state, expectedUrl) => {
     User.findById.mockReturnValue(queryResult({
       _id: 'blocked-google-user',

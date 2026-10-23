@@ -182,10 +182,11 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Google Sign-In via backend OAuth (opens in-app browser, intercepts deep link)
-  const googleSignIn = async () => {
+  const googleSignIn = async ({ currency } = {}) => {
     try {
       const redirectUrl = 'rozare://auth/google/success';
-      const authUrl = `${API_BASE_URL}/api/auth/google/mobile`;
+      const initialCurrency = ['USD', 'PKR', 'EUR', 'GBP'].includes(currency) ? currency : null;
+      const authUrl = `${API_BASE_URL}/api/auth/google/mobile${initialCurrency ? `?currency=${initialCurrency}` : ''}`;
 
       const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
 

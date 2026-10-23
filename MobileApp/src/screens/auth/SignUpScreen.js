@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCurrency } from '../../contexts/CurrencyContext';
 import GlassBackground from '../../components/common/GlassBackground';
 import GlassPanel from '../../components/common/GlassPanel';
 import RozareLogo from '../../components/common/RozareLogo';
@@ -24,6 +25,7 @@ export default function SignUpScreen({ navigation, route }) {
   const styles = buildStyles(palette);
 
   const { signup, googleSignIn } = useAuth();
+  const { currency } = useCurrency();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -48,7 +50,7 @@ export default function SignUpScreen({ navigation, route }) {
 
   const handleGoogleSignUp = async () => {
     setGoogleLoading(true);
-    const result = await googleSignIn();
+    const result = await googleSignIn({ currency });
     setGoogleLoading(false);
     if (result?.success) finishAuthentication();
   };
@@ -65,7 +67,7 @@ export default function SignUpScreen({ navigation, route }) {
     if (Object.keys(newErrors).length > 0) { setErrors(newErrors); return; }
     setErrors({});
     setIsLoading(true);
-    const result = await signup({ username: name.trim(), email: email.trim(), password });
+    const result = await signup({ username: name.trim(), email: email.trim(), password, currency });
     setIsLoading(false);
     if (result.success) navigation.navigate('OTPVerification', {
       email: email.trim(),
