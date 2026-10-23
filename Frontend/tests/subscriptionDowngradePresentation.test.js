@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { formatUsdCents, getSubscriptionPricing } from '../src/utils/subscriptionPricing.js';
 import { calendarMonthsRemaining, subscriptionStatusConfirmsEntitlement } from '../src/utils/subscriptionPlanChange.js';
 import { subscriptionRecoveryNotice } from '../src/utils/subscriptionRecovery.js';
+import * as billingTestPresentation from '../../MobileApp/src/utils/subscriptionBillingTest.js';
 
 // Render the entire real component, not an extracted banner that could be
 // unreachable inside a contradictory parent condition.
@@ -48,6 +49,7 @@ function fixture(overrides = {}, busy = false) {
     '../../utils/subscriptionPricing': { formatUsdCents, getSubscriptionPricing },
     '../../utils/subscriptionStatusRefresh': { notifySubscriptionStatusChanged() {} },
     '../../utils/subscriptionRecovery': { subscriptionRecoveryNotice },
+    '../../../../MobileApp/src/utils/subscriptionBillingTest.js': billingTestPresentation,
     '../../contexts/AuthContext': { useAuth: () => ({ currentUser: { _id: 'qa-seller' } }) },
     '../../utils/subscriptionPlanChange': { calendarMonthsRemaining, subscriptionStatusConfirmsEntitlement },
   };
@@ -58,6 +60,15 @@ function fixture(overrides = {}, busy = false) {
   return { calls, tree, html: renderToStaticMarkup(tree), button: name => nodes(tree).find(node =>
     (node.type === 'button' || node.props?.onClick) && label(node).trim() === name) };
 }
+
+test('the real global test page shows minute-based $1 offers and hides the normal founder offer',()=>{
+  const testPricing={...pricing,metaAdsAddonCents:0,billingTest:{id:'a'.repeat(32),startsAt:'2026-10-23T10:00:00Z',expiresAt:'2026-10-23T12:00:00Z',amountMinor:100,currency:'USD',starterIntroMinutes:10,eliteIntroMinutes:15,renewalMinutes:20}};
+  for(const plan of ['starter','elite'])testPricing[plan]={...pricing[plan],listAmountCents:100,standardAmountCents:100,founderAmountCents:100,advertisedDiscountPercent:0};
+  const f=fixture({status:'trial',plan:'free_trial',pendingDowngrade:null,cancelledAt:null,hasUsedFreePeriod:false,pricing:testPricing,
+    founderPromotion:{code:'FIRST100',available:true,sellerEligible:true,remaining:100,maxRedemptions:100,discountPercent:40}});
+  assert.match(f.html,/Temporary live billing test/);assert.match(f.html,/10 MINUTES/);assert.match(f.html,/15 MINUTES/);assert.match(f.html,/\$1\.00/);assert.match(f.html,/20 minutes/);
+  assert.doesNotMatch(f.html,/30 DAYS FREE|45 DAYS FREE|First 100 Sellers offer/);
+});
 
 for (const status of ['active', 'free_period']) {
   test(`${status} Elite has a reachable downgrade notice and undo button`, () => {

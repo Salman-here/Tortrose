@@ -18,7 +18,7 @@ const previous = { ...process.env };
 const realDateNow = Date.now.bind(Date);
 const useBillingClock = () => jest.useFakeTimers({ doNotFake: ['hrtime', 'nextTick', 'performance', 'queueMicrotask',
   'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
-afterEach(() => jest.useRealTimers());
+afterEach(() => {jest.useRealTimers();delete process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW;});
 beforeAll(async () => {
   Object.assign(process.env, { SAFEPAY_ENV: 'sandbox', SAFEPAY_WEB_ENABLED: 'true', SAFEPAY_MOBILE_ENABLED: 'true',
     SAFEPAY_SANDBOX_PUBLIC_KEY: 'sec_paid-engine', SAFEPAY_SANDBOX_SECRET_KEY: 'private-paid-engine-secret',
@@ -75,6 +75,40 @@ async function makeDue() {
   anchor.setUTCDate(Math.min(28, anchor.getUTCDate())); anchor.setUTCMonth(anchor.getUTCMonth() - current.safepayBilling.cycle);
   await Sub.updateOne({ _id: sub._id }, { $set: { 'safepayBilling.anchorAt': anchor, 'safepayBilling.nextChargeAt': due, currentPeriodEnd: due } });
 }
+
+const enableTestClock=()=>{const now=new Date();process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW=JSON.stringify({startsAt:new Date(now.getTime()-1000),expiresAt:new Date(now.getTime()+119*60000)});};
+const acceptTest=q=>billing.acceptQuote(seller._id,{quoteId:q.quoteId,cardId:'pm_paid-engine-owned',consentAccepted:true,consentVersion:billing.CONSENT_VERSION,billingTestId:q.billingTest.id});
+test.each([['starter',10],['elite',15]])('live-test %s has a %i-minute intro and two exact $1 engine renewals without duplicate collection',async(plan,minutes)=>{
+ await Sub.updateOne({_id:sub._id},{$set:{hasUsedFreePeriod:false}});enableTestClock();
+ const q=await quote({plan,includeMetaAds:plan==='elite'});expect(q).toMatchObject({monthlyAmountMinor:100,dueNowMinor:0,billingTest:{renewalMinutes:20}});
+ await expect(accept(q.quoteId)).rejects.toMatchObject({code:'SUBSCRIPTION_QUOTE_STALE'});
+ expect((await acceptTest(q)).completed).toBe(true);let current=await Sub.findById(sub._id);
+ expect(current.currentPeriodEnd-current.currentPeriodStart).toBe(minutes*60000);expect(captures).toHaveLength(0);
+ useBillingClock();jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+10));await lifecycle.runBillingWorker();await lifecycle.runBillingWorker();
+ expect(captures).toHaveLength(1);expect(captures[0]).toMatchObject({amount:100,currency:'USD'});
+ current=await Sub.findById(sub._id);expect(current.currentPeriodEnd-current.currentPeriodStart).toBe(20*60000);
+ jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+10));await lifecycle.runBillingWorker();await lifecycle.runBillingWorker();
+ expect(captures).toHaveLength(2);expect(captures.every(row=>row.amount===100)).toBe(true);
+ expect(await Operation.countDocuments({kind:'renewal',status:'applied'})).toBe(2);
+});
+test('test-window expiry cancels an unstarted invoice and cannot switch a new test agreement to the regular price',async()=>{
+ await Sub.updateOne({_id:sub._id},{$set:{hasUsedFreePeriod:false}});enableTestClock();
+ const q=await quote();await acceptTest(q);const current=await Sub.findById(sub._id);
+ useBillingClock();jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+1));const op=await lifecycle.queueRenewal(sub._id);
+ expect(op.terms.dueMinor).toBe(100);expect(captures).toHaveLength(0);
+ jest.setSystemTime(new Date(new Date(q.billingTest.expiresAt).getTime()+1));await lifecycle.runBillingWorker();
+ expect(captures).toHaveLength(0);expect((await Sub.findById(sub._id)).safepayBilling.autoRenew).toBe(false);
+ expect((await Payment.findById(op.payment)).chargeStartedAt).toBeNull();
+});
+test('global test adoption and expiry preserve the pre-existing monthly agreement and invoice history',async()=>{
+ await accept((await quote()).quoteId);const original=await Sub.findById(sub._id);expect(captures[0].amount).toBe(999);enableTestClock();
+ await lifecycle.refreshStatus(sub._id);let current=await Sub.findById(sub._id);expect(current.safepayBilling.monthlyMinor).toBe(100);
+ expect(current.currentPeriodEnd.getTime()).toBeGreaterThan(Date.now()+19*60000);
+ useBillingClock();jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+1));await lifecycle.runBillingWorker();expect(captures).toHaveLength(2);expect(captures[1].amount).toBe(100);
+ jest.setSystemTime(new Date(new Date(current.safepayBilling.testClock.expiresAt).getTime()+1));await lifecycle.runBillingWorker();
+ current=await Sub.findById(sub._id);expect(current.safepayBilling.monthlyMinor).toBe(999);expect(current.currentPeriodEnd).toEqual(original.currentPeriodEnd);
+ expect(current.safepayBilling.autoRenew).toBe(true);expect(captures).toHaveLength(2);expect(await Payment.countDocuments({status:'paid'})).toBe(2);
+});
 test('paid first invoice uses exact quoted money and activates once only after the adapter verifies capture', async () => {
   const q = await quote(); expect(q).toMatchObject({ dueNowMinor: 999, monthlyAmountMinor: 999, freePeriodDays: 0 });
   expect((await accept(q.quoteId)).completed).toBe(true);

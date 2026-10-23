@@ -15,6 +15,8 @@ const { buildPlanPricing } = require('./subscriptionPricingService');
 const { applyBillingCredit, renewalPeriod } = require('./safepayBillingMath');
 const { requireOwnedReusableCard } = require('./safepayCustomerService');
 const renewalPolicy = require('./safepayRenewalPolicy');
+const billingTest = require('./subscriptionBillingTestPolicy');
+const testClocks = require('./subscriptionBillingTestClockService');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { id, fail, minor, date, transaction } = billing;
@@ -54,6 +56,7 @@ async function submitQueuedOperation(operationId, environment) {
 
 async function notify(sub, kind, at, title, message, session) {
   const value = minor(sub.safepayBilling.monthlyMinor);
+  if (sub.safepayBilling.testClock && !sub.safepayBilling.testClock.restoredAt) message = message.replace(/per month/g,'per 20 minutes');
   // Lifecycle notices describe current state. Freeze their authority with the
   // transition, so a queued cancellation cannot be delivered after a resume.
   sub.safepayBilling.notification = { kind, occurredAt: date(at),
@@ -87,6 +90,8 @@ async function cancel(sellerId) {
     const at = new Date();
     sub.cancelledAt = at; sub.pendingDowngrade = { toPlan: null }; sub.warningEmailSent = false;
     sub.safepayBilling.autoRenew = false; sub.safepayBilling.nextChargeAt = null; sub.safepayBilling.version += 1;
+    const protectedEnd = sub.safepayBilling.testClock?.origin === 'operator' && sub.safepayBilling.testClock.original?.subscription?.currentPeriodEnd;
+    if (protectedEnd && date(protectedEnd) > date(sub.currentPeriodEnd)) sub.currentPeriodEnd = date(protectedEnd);
     let currentPaymentMayComplete = false;
     if (sub.safepayBilling.pendingOperation) {
       const op = await Operation.findById(sub.safepayBilling.pendingOperation).session(session);
@@ -118,6 +123,9 @@ async function cancel(sellerId) {
 async function resume(sellerId) {
   return transaction(async session => {
     const sub = await scopedSubscription(sellerId, session);
+    if (sub.safepayBilling.testClock && !sub.safepayBilling.testClock.restoredAt && !billingTest.authorized(sub.safepayBilling.testClock)) {
+      throw fail('The temporary test agreement ended. Review normal subscription pricing before starting a new agreement.', 'BILLING_TEST_ENDED');
+    }
     if (sub.paymentRisk?.suspended || sub.safepayBilling.pendingOperation || sub.pendingDowngrade?.toPlan) throw fail('Resolve the pending billing action before resuming.', 'SUBSCRIPTION_BILLING_PENDING');
     if (!['active', 'free_period'].includes(sub.status) || date(sub.currentPeriodEnd) <= new Date() || sub.safepayBilling.endedAt) {
       throw fail('This subscription already ended. Review a new subscription quote.', 'SUBSCRIPTION_ENDED');
@@ -135,10 +143,11 @@ async function resume(sellerId) {
 async function scheduleDowngrade(sellerId) {
   return transaction(async session => {
     const sub = await scopedSubscription(sellerId, session);
+    if (sub.safepayBilling.testClock?.origin === 'operator' && !sub.safepayBilling.testClock.restoredAt) throw fail('The original plan is preserved during the global billing test. Schedule a plan change after this test ends.', 'BILLING_TEST_EXISTING_PLAN_CHANGE_HELD');
     if (sub.pendingDowngrade?.toPlan === 'starter') return { msg: 'Starter is already scheduled for period end.', reused: true };
     if (sub.plan !== 'elite' || !['active', 'free_period'].includes(sub.status) || sub.paymentRisk?.suspended
       || sub.safepayBilling.pendingOperation || date(sub.currentPeriodEnd) <= new Date()) throw fail('An active Elite subscription is required.', 'DOWNGRADE_NOT_AVAILABLE');
-    const price = buildPlanPricing('starter', false, sub.founderOffer?.active === true);
+    const price = buildPlanPricing('starter', false, sub.founderOffer?.active === true, {ignoreTest:false});
     const at = new Date();
     sub.pendingDowngrade = { toPlan: 'starter', scheduledAt: at, operationKey: crypto.randomUUID(),
       targetPlanName: price.planName, targetUnitAmountMinor: price.unitAmount, targetCurrency: 'usd',
@@ -171,9 +180,16 @@ async function queueRenewal(subscriptionId, at = new Date()) {
   return transaction(async session => {
     const sub = await Subscription.findOne({ _id: subscriptionId, billingProvider: 'safepay', 'safepayBilling.environment': config.environment }).select('+safepayBilling.cardId').session(session);
     if (!sub || !sub.safepayBilling.autoRenew || sub.paymentRisk?.suspended) return null;
+    const clock = sub.safepayBilling.testClock;
+    const test = clock && !clock.restoredAt ? billingTest.validateStamp(clock) : null;
+    if (test && !billingTest.authorized(test,at)) {
+      if (testClocks.stop(sub,at)) { sub.markModified('safepayBilling.testClock'); await sub.save({session}); }
+      return null;
+    }
+    if (!test && billingTest.readWindow(process.env,at)) return null;
     if (sub.safepayBilling.pendingOperation) return Operation.findById(sub.safepayBilling.pendingOperation).session(session);
     if (renewalPolicy.ownsRecovery(sub)) return queueRecoveryAttempt(sub, at, config, session);
-    const period = renewalPeriod({ anchorAt: sub.safepayBilling.anchorAt, cycle: sub.safepayBilling.cycle, now: at });
+    const period = renewalPeriod({ anchorAt: sub.safepayBilling.anchorAt, cycle: sub.safepayBilling.cycle, now: at, billingTest:test });
     if (!period.due) {
       if (period.missed) {
         // Do not silently collect several months after an extended outage.
@@ -196,14 +212,16 @@ async function queueRenewal(subscriptionId, at = new Date()) {
       return null;
     }
     const downgrade = sub.pendingDowngrade?.toPlan === 'starter';
-    const monthlyMinor = downgrade ? minor(sub.pendingDowngrade.targetUnitAmountMinor) : minor(sub.safepayBilling.monthlyMinor);
-    const credit = applyBillingCredit(monthlyMinor, minor(sub.safepayBilling.creditMinor));
-    const requestKey = `renewal:${sub.safepayBilling.contractId}:${sub.safepayBilling.cycle}`;
-    const metaAddonMinor = !downgrade && sub.metaAdsIncluded
+    const monthlyMinor = test ? 100 : downgrade ? minor(sub.pendingDowngrade.targetUnitAmountMinor) : minor(sub.safepayBilling.monthlyMinor);
+    const credit = test ? {chargeMinor:100,appliedCreditMinor:0,remainingCreditMinor:minor(sub.safepayBilling.creditMinor)}
+      : applyBillingCredit(monthlyMinor, minor(sub.safepayBilling.creditMinor));
+    const requestKey = `${test ? `test-renewal:${test.id}` : 'renewal'}:${sub.safepayBilling.contractId}:${sub.safepayBilling.cycle}`;
+    const metaAddonMinor = !test && !downgrade && sub.metaAdsIncluded
       ? (await require('./safepayMetaCreditService').currentMetaFunding(sub, config.environment, session)).addonMonthlyMinor : 0;
     const terms = { plan: downgrade ? 'starter' : sub.plan, planName: downgrade ? sub.pendingDowngrade.targetPlanName : sub.planName,
       metaAddonMinor,
       includeMetaAds: downgrade ? false : sub.metaAdsIncluded, monthlyMinor, currency: 'USD', trialDays: 0,
+      ...(test ? {billingTest:{id:test.id,startsAt:test.startsAt,expiresAt:test.expiresAt,amountMinor:100,currency:'USD',starterIntroMinutes:10,eliteIntroMinutes:15,renewalMinutes:20}} : {}),
       founderRate: sub.founderOffer?.active === true, sourceContractId: sub.safepayBilling.contractId,
       periodStart: period.start, periodEnd: period.end, cycle: sub.safepayBilling.cycle,
       grossMinor: monthlyMinor, dueMinor: credit.chargeMinor, appliedCreditMinor: credit.appliedCreditMinor,
@@ -329,6 +347,10 @@ async function closeEndedSubscription(subscriptionId, at = new Date()) {
 }
 
 async function refreshStatus(subscriptionId) {
+  if (process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW) {
+    const config = readSafepayConfig(process.env, {requireWebhook:true});
+    await testClocks.reconcileOne(subscriptionId,config.environment);
+  }
   await closeUnpaidRenewal(subscriptionId);
   await closeEndedSubscription(subscriptionId);
   return transaction(async session => {
@@ -360,6 +382,7 @@ function createBillingWorker() {
       const config = readSafepayConfig(process.env, { requireWebhook: true });
       await Promise.all([Operation.init(), Payment.init(), Subscription.init()]);
       const at = new Date();
+      await testClocks.reconcileWindow(config.environment,at);
       const expiredGrace = await Subscription.find({ billingProvider: 'safepay', 'safepayBilling.environment': config.environment,
         'safepayBilling.autoRenew': true, 'safepayBilling.endedAt': null,
         'safepayBilling.recovery.rootOperation': { $ne: null }, 'safepayBilling.recovery.cancelAt': { $lte: at, $ne: null },

@@ -484,10 +484,18 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   const billing = declarations(billingPath, ['notifyOperation'], { ...deps, minor: value => value });
   const op = { _id: IDS.request, seller: IDS.seller, terms: { dueMinor: 2565 }, appliedAt: NOW };
   const operationCalls = callExpressions(billingPath, 'notifyOperation');
+  const testPolicy = require('../services/subscriptionBillingTestPolicy');
   if (operationCalls.length !== 2) throw new Error('Safepay operation notification inventory changed.');
   for (const trialDays of [0, 45]) await run(billingPath, trialDays ? 'Safepay subscription trial started' : 'Safepay subscription updated', operationCalls[0].line,
     () => evaluateCall(billingPath, operationCalls[0], { notifyOperation: billing.result.notifyOperation, operation: { ...op, terms: { dueMinor: trialDays ? 0 : 2565 } },
-      terms: { trialDays, planName: 'Rozare Elite + Meta Ads' }, sub: { status: trialDays ? 'free_period' : 'active' }, session: null }));
+      terms: { trialDays, planName: 'Rozare Elite + Meta Ads' }, test:null, billingTest:testPolicy, sub: { status: trialDays ? 'free_period' : 'active' }, session: null }));
+  const testStamp = testPolicy.readWindow({ SAFEPAY_SUBSCRIPTION_TEST_WINDOW:JSON.stringify({startsAt:NOW,expiresAt:new Date(NOW.getTime()+7200000)}) },NOW);
+  for(const plan of ['starter','elite']) await run(billingPath,`Safepay temporary test — ${plan} introductory period`,operationCalls[0].line,
+    ()=>evaluateCall(billingPath,operationCalls[0],{notifyOperation:billing.result.notifyOperation,operation:{...op,terms:{dueMinor:0}},
+      terms:{trialDays:plan==='starter'?30:45,plan,planName:`Rozare ${plan==='starter'?'Starter':'Elite'}`},test:testStamp,billingTest:testPolicy,sub:{status:'free_period'},session:null}));
+  await run(billingPath,'Safepay temporary test — paid renewal',operationCalls[0].line,
+    ()=>evaluateCall(billingPath,operationCalls[0],{notifyOperation:billing.result.notifyOperation,operation:{...op,terms:{dueMinor:100}},
+      terms:{trialDays:0,plan:'starter',planName:'Rozare Starter'},test:testStamp,billingTest:testPolicy,sub:{status:'active'},session:null}));
   const failureFunction = source(billingPath).ast.program.body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'failBillingPayment');
   let noticeExpression = null;
   visit(failureFunction, node => { if (node.type === 'VariableDeclarator' && node.id.name === 'notice') noticeExpression = source(billingPath).text.slice(node.init.start, node.init.end); });

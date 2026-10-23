@@ -75,7 +75,7 @@ exports.getUsers = async (req, res) => {
         const [subscriptions, stores] = await Promise.all([
             sellerIds.length
                 ? SellerSubscription.find({ seller: { $in: sellerIds } })
-                    .select('seller status plan planName trialStartDate trialEndDate adminTrialGrant subscribedAt freePeriodEndDate currentPeriodStart currentPeriodEnd bonusExpiryDate blockedAt blockedReason aiMessageLimit cancelledAt createdAt updatedAt')
+                    .select('seller status plan planName trialStartDate trialEndDate adminTrialGrant subscribedAt freePeriodEndDate currentPeriodStart currentPeriodEnd bonusExpiryDate blockedAt blockedReason aiMessageLimit cancelledAt createdAt updatedAt safepayBilling.testClock')
                     .lean()
                 : [],
             sellerIds.length

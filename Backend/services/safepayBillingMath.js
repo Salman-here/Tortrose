@@ -43,7 +43,8 @@ function proratedPlanChange({ sourceMinor, targetMinor, periodStart, periodEnd, 
     periodStart: new Date(start * 1000), periodEnd: new Date(end * 1000), calculatedAt: new Date(requested * 1000) };
 }
 
-function renewalPeriod({ anchorAt, cycle, now = new Date() }) {
+function renewalPeriod({ anchorAt, cycle, now = new Date(), billingTest = null }) {
+  if (billingTest) return require('./subscriptionBillingTestPolicy').period({ anchorAt, cycle, now, stamp: billingTest });
   const start = monthlyBoundary(anchorAt, cycle), end = monthlyBoundary(anchorAt, cycle + 1);
   const current = instant(now, 'renewal time');
   return { start, end, due: current >= start && current < end, missed: current >= end };

@@ -11,6 +11,7 @@ import { toast } from 'react-toastify';
 import { useSearchParams } from 'react-router-dom';
 import { getAuthToken } from "../../utils/cookieHelper";
 import { formatUsdCents, getSubscriptionPricing } from '../../utils/subscriptionPricing';
+import { billingTestNotice, formatBillingTime } from '../../../../MobileApp/src/utils/subscriptionBillingTest.js';
 import { notifySubscriptionStatusChanged } from '../../utils/subscriptionStatusRefresh';
 import { subscriptionRecoveryNotice } from '../../utils/subscriptionRecovery';
 import { useAuth } from '../../contexts/AuthContext';
@@ -93,7 +94,7 @@ const SellerSubscription = () => {
         setCheckoutLoading(plan);
         try {
             await safepayBilling.open({ plan, includeMetaAds: plan === 'elite' && eliteMetaAds,
-                couponCode: founderCouponApplied ? subscription?.founderPromotion?.code || '' : '' });
+                couponCode: !subscription?.pricing?.billingTest && founderCouponApplied ? subscription?.founderPromotion?.code || '' : '' });
         } finally { setCheckoutLoading(null); }
     };
 
@@ -314,6 +315,11 @@ const SellerSubscription = () => {
         : 6;
     const isStarterSubscribed = isSubscribed && !isElite;
     const founderPromotion = subscription?.founderPromotion;
+    const test = pricing.billingTest;
+    const intervalLabel = test ? '20 minutes' : 'month';
+    const starterIntroLabel = test ? '10 Minutes' : `${pricing.starter.freePeriodDays} Days`;
+    const eliteIntroLabel = test ? '15 Minutes' : `${pricing.elite.freePeriodDays} Days`;
+    const currentTest = subscription?.billingTestAgreement;
     const founderReservationMinutes = Number.isSafeInteger(founderPromotion?.checkoutReservationMinutes)
         && founderPromotion.checkoutReservationMinutes > 0
         ? founderPromotion.checkoutReservationMinutes
@@ -402,6 +408,8 @@ const SellerSubscription = () => {
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 sm:p-6 max-w-4xl mx-auto">
             {safepayBilling.review}
+            {test && <section role="status" className="glass-card p-4 mb-6 border border-amber-500/30"><h2 className="font-semibold">Temporary live billing test</h2><p className="text-sm text-muted-foreground mt-2">{billingTestNotice(test)}</p></section>}
+            {currentTest?.stopped && <section role="status" className="glass-card p-4 mb-6"><h2 className="font-semibold">Test billing stopped</h2><p className="text-sm text-muted-foreground">Automatic test billing is paused. A higher regular price will not be charged under this test agreement. Review normal billing when choosing your next subscription.</p></section>}
             {recoveryNotice && <section className="glass-card p-4 mb-6 border border-amber-500/30" role="status">
                 <div className="flex items-start gap-3">
                     <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5" aria-hidden="true" />
@@ -412,6 +420,7 @@ const SellerSubscription = () => {
             {subscription?.billingProvider === 'safepay' && <section className="glass-card p-4 mb-6 space-y-3">
                 <h2 className="font-semibold">Safepay subscription billing</h2>
                 <p className="text-sm text-muted-foreground">Manage the card used for automatic renewals. Updating your default shopping card does not change your subscription card.</p>
+                {currentTest && subscription.nextChargeAt && <p className="text-sm">Next charge: {formatBillingTime(subscription.nextChargeAt)} · $1 USD test charge</p>}
                 <div className="flex flex-wrap gap-3">
                     {subscription.automaticRenewal && !subscription.pendingBillingOperation && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={safepayBilling.changeCard}>Change billing card</button>}
                     {subscription.pendingBillingOperation && <button className="glass-button px-4 py-2" disabled={safepayBilling.busy} onClick={safepayBilling.checkPending}>Check pending payment</button>}
@@ -698,8 +707,8 @@ const SellerSubscription = () => {
                             <p className="text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>
                                 {isSubscribed
                                     ? subscription?.status === 'free_period'
-                                        ? `Free until ${new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then ${isElite ? activeEliteMonthlyPriceLabel : starterMonthlyPriceLabel}/mo`
-                                        : `${isElite ? activeEliteMonthlyPriceLabel : starterMonthlyPriceLabel}/month - Cancel anytime`
+                                        ? `Free until ${currentTest ? formatBillingTime(subscription.freePeriodEndDate) : new Date(subscription.freePeriodEndDate).toLocaleDateString()}, then ${currentTest ? formatUsdCents(subscription.currentMonthlyAmountCents) : isElite ? activeEliteMonthlyPriceLabel : starterMonthlyPriceLabel}/${currentTest ? '20 minutes' : 'mo'}`
+                                        : `${currentTest ? formatUsdCents(subscription.currentMonthlyAmountCents) : isElite ? activeEliteMonthlyPriceLabel : starterMonthlyPriceLabel}/${currentTest ? '20 minutes' : 'month'} - Cancel anytime`
                                     : isTrial
                                         ? `${subscription?.trialDaysRemaining} day${subscription?.trialDaysRemaining !== 1 ? 's' : ''} remaining`
                                           : isPastDue ? 'Your existing billing agreement is retained. Resolve the outstanding renewal to reactivate your store.' : 'Subscribe to activate your store'
@@ -916,7 +925,7 @@ const SellerSubscription = () => {
             </div>
             )}
 
-            {founderPromotion && (founderRateActive || founderPromotion.sellerEligible || founderPromotion.forfeited) && (
+            {!test && founderPromotion && (founderRateActive || founderPromotion.sellerEligible || founderPromotion.forfeited) && (
                 <div
                     className="glass-panel-strong p-5 mb-6 border"
                     style={{
@@ -1015,7 +1024,7 @@ const SellerSubscription = () => {
                                 {getsIntroductoryFreePeriod && (
                                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold"
                                         style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'hsl(150, 60%, 45%)' }}>
-                                        <Sparkles size={12} /> {pricing.starter.freePeriodDays} DAYS FREE
+                                        <Sparkles size={12} /> {starterIntroLabel.toUpperCase()} FREE
                                     </span>
                                 )}
                                 <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
@@ -1035,10 +1044,10 @@ const SellerSubscription = () => {
                                         {formatUsdCents(pricing.starter.standardAmountCents)}{' '}
                                     </span>
                                 )}
-                                {starterMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/mo</span>
+                                {starterMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/{test ? '20 min' : 'mo'}</span>
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                {getsIntroductoryFreePeriod ? `First ${pricing.starter.freePeriodDays} days free, then ` : ''}{starterMonthlyPriceLabel}/month - Cancel anytime
+                                {getsIntroductoryFreePeriod ? `First ${starterIntroLabel.toLowerCase()} free, then ` : ''}{starterMonthlyPriceLabel}/{intervalLabel} - Cancel anytime
                             </p>
                             {useFounderRate && (
                                 <p className="text-[11px] font-semibold mt-1" style={{ color: 'hsl(150, 60%, 42%)' }}>
@@ -1126,8 +1135,8 @@ const SellerSubscription = () => {
                                 <>
                                     <CreditCard size={15} />
                                     {getsIntroductoryFreePeriod
-                                        ? `Subscribe - ${pricing.starter.freePeriodDays} Days Free`
-                                        : `Subscribe - ${starterMonthlyPriceLabel}/month`}
+                                        ? `Subscribe - ${starterIntroLabel} Free`
+                                        : `Subscribe - ${starterMonthlyPriceLabel}/${intervalLabel}`}
                                     <ArrowRight size={15} />
                                 </>
                             )}
@@ -1154,7 +1163,7 @@ const SellerSubscription = () => {
                                 {getsIntroductoryFreePeriod && (
                                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold"
                                         style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'hsl(270, 60%, 55%)' }}>
-                                        <Gem size={12} /> {pricing.elite.freePeriodDays} DAYS FREE
+                                        <Gem size={12} /> {eliteIntroLabel.toUpperCase()} FREE
                                     </span>
                                 )}
                                 <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
@@ -1174,10 +1183,10 @@ const SellerSubscription = () => {
                                         {formatUsdCents(pricing.elite.standardAmountCents)}{' '}
                                     </span>
                                 )}
-                                {eliteMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/mo</span>
+                                {eliteMonthlyPriceLabel}<span className="text-sm font-normal" style={{ color: 'hsl(var(--muted-foreground))' }}>/{test ? '20 min' : 'mo'}</span>
                             </p>
                             <p className="text-xs mt-1" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                {getsIntroductoryFreePeriod ? `First ${pricing.elite.freePeriodDays} days free, then ` : ''}{eliteMonthlyPriceLabel}/month - Cancel anytime
+                                {getsIntroductoryFreePeriod ? `First ${eliteIntroLabel.toLowerCase()} free, then ` : ''}{eliteMonthlyPriceLabel}/{intervalLabel} - Cancel anytime
                             </p>
                             {useFounderRate && (
                                 <p className="text-[11px] font-semibold mt-1" style={{ color: 'hsl(150, 60%, 42%)' }}>
@@ -1276,8 +1285,8 @@ const SellerSubscription = () => {
                                 <>
                                     <Gem size={15} />
                                     {getsIntroductoryFreePeriod
-                                        ? `Subscribe Elite - ${pricing.elite.freePeriodDays} Days Free`
-                                        : `Subscribe Elite - ${eliteMonthlyPriceLabel}/month`}
+                                        ? `Subscribe Elite - ${eliteIntroLabel} Free`
+                                        : `Subscribe Elite - ${eliteMonthlyPriceLabel}/${intervalLabel}`}
                                     <ArrowRight size={15} />
                                 </>
                             )}
@@ -1292,9 +1301,9 @@ const SellerSubscription = () => {
                 <div className="space-y-4">
                     {[
                         { step: '1', title: 'Free Trial', desc: '15 days to set up your store, add products, and start selling', active: isTrial, done: !isTrial && (isSubscribed || isBlocked || isPastDue) },
-                        { step: '2', title: 'Subscribe', desc: `Choose Rozare Starter (${starterMonthlyPriceLabel}/mo) or Rozare Elite (${eliteMonthlyPriceLabel}/mo with your current options)`, active: false, done: isSubscribed || isPastDue },
-                        { step: '3', title: 'Free Period', desc: `${pricing[isElite ? 'elite' : 'starter'].freePeriodDays} days of full access at no cost${isElite ? '' : ' to grow your business'}`, active: subscription?.status === 'free_period', done: subscription?.status === 'active' || (isSubscribed && subscription?.hasUsedFreePeriod && subscription?.status !== 'free_period') },
-                        { step: '4', title: 'Monthly Billing', desc: isElite ? `${activeEliteMonthlyPriceLabel}/month. Cancel anytime.` : `${starterMonthlyPriceLabel}/month after the free period. Cancel anytime.`, active: subscription?.status === 'active', done: false },
+                        { step: '2', title: 'Subscribe', desc: `Choose Rozare Starter (${starterMonthlyPriceLabel}/${intervalLabel}) or Rozare Elite (${eliteMonthlyPriceLabel}/${intervalLabel} with your current options)`, active: false, done: isSubscribed || isPastDue },
+                        { step: '3', title: 'Free Period', desc: `${isElite ? eliteIntroLabel : starterIntroLabel} of full access at no cost${isElite ? '' : ' to grow your business'}`, active: subscription?.status === 'free_period', done: subscription?.status === 'active' || (isSubscribed && subscription?.hasUsedFreePeriod && subscription?.status !== 'free_period') },
+                        { step: '4', title: test ? 'Test Billing' : 'Monthly Billing', desc: isElite ? `${activeEliteMonthlyPriceLabel}/${intervalLabel}. Cancel anytime.` : `${starterMonthlyPriceLabel}/${intervalLabel} after the free period. Cancel anytime.`, active: subscription?.status === 'active', done: false },
                         { step: '5', title: 'Bonus Features', desc: isElite ? 'Permanently included with your Elite plan.' : 'After 6 months, bonus features expire. Upgrade to Elite to keep them.', active: false, done: isElite && isSubscribed },
                     ].map((s, i) => {
                         const isDone = s.done;
@@ -1424,7 +1433,7 @@ const SellerSubscription = () => {
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Upgrade to Rozare Elite?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Your billing will change from {starterMonthlyPriceLabel}/month to {eliteMonthlyPriceLabel}/month. The price difference will be prorated for the current period.
+                                    Your billing will change from {starterMonthlyPriceLabel}/{intervalLabel} to {eliteMonthlyPriceLabel}/{intervalLabel}. The price difference will be prorated for the current period.
                                 </p>
                             </div>
 
@@ -1490,7 +1499,7 @@ const SellerSubscription = () => {
                                 </div>
                                 <h3 className="text-base font-bold" style={{ color: 'hsl(var(--foreground))' }}>Downgrade to Starter?</h3>
                                 <p className="text-xs mt-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
-                                    Your Elite plan will remain active until the current period ends. After that, you'll be switched to Starter ({starterMonthlyPriceLabel}/month).
+                                    Your Elite plan will remain active until the current period ends. After that, you'll be switched to Starter ({starterMonthlyPriceLabel}/{intervalLabel}).
                                 </p>
                             </div>
 
@@ -1498,7 +1507,7 @@ const SellerSubscription = () => {
                                 <p className="text-xs font-bold mb-2" style={{ color: "var(--modal-warning)" }}>What changes with Starter:</p>
                                 <div className="space-y-1.5">
                                     {[
-                                        { text: `Billing changes to ${starterMonthlyPriceLabel}/month`, good: true },
+                                        { text: `Billing changes to ${starterMonthlyPriceLabel}/${intervalLabel}`, good: true },
                                         { text: 'No free period (already used)', good: false },
                                         { text: 'Bonus features available for 6 months only (then expire)', good: false },
                                         { text: 'All core features remain (store, products, payments, AI)', good: true },

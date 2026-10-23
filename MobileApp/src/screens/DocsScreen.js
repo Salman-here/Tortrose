@@ -15,6 +15,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import api, { API_ENDPOINTS } from '../config/api';
 import { commercePolicies } from '../content/commercePolicies';
 import { commerceGuides, guideText, formatSubscriptionGuide } from '../content/commerceHelpContent';
+import { inspectBillingTest, billingTestNotice } from '../utils/subscriptionBillingTest';
 
 if (
   Platform.OS === 'android'
@@ -186,6 +187,8 @@ const formatUsd = (cents, fallback) => {
 };
 
 export const buildSubscriptionDocsBody = (catalog) => {
+  const test = inspectBillingTest(catalog?.pricing?.billingTest);
+  if (test) return `${billingTestNotice(test)} The initial seller setup trial is separate from this paid-plan introductory period. New test agreements pause at the cutoff rather than silently increasing in price. Normal Starter and Elite pricing and monthly periods apply outside the test window. Review the exact quote and next-charge time in Subscription before authorizing billing.`;
   const pricing = catalog?.pricing;
   const starter = pricing?.starter;
   const elite = pricing?.elite;

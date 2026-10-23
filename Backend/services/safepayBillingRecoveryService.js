@@ -10,6 +10,7 @@ const { claimSellerCheckout, releaseSellerCheckoutClaim } = require('./sellerChe
 const { requireOwnedReusableCard } = require('./safepayCustomerService');
 const { fail, id, date, transaction } = billing;
 const renewalPolicy = require('./safepayRenewalPolicy');
+const billingTest = require('./subscriptionBillingTestPolicy');
 
 async function retryQuote(sellerId, body) {
   const config = readSafepayConfig(process.env, { requireWebhook: true });
@@ -67,6 +68,10 @@ async function changeCard(sellerId, body) {
     if (!sub || sub.paymentRisk?.suspended || sub.safepayBilling.pendingOperation
       || !sub.safepayBilling.autoRenew || sub.safepayBilling.version !== body.billingVersion) {
       throw fail('Billing details changed or a payment is still in progress. Refresh before changing the card.', 'SUBSCRIPTION_QUOTE_STALE');
+    }
+    const clock = sub.safepayBilling.testClock;
+    if (clock && !clock.restoredAt && (!billingTest.authorized(clock) || body.billingTestId !== clock.id)) {
+      throw fail('Review and authorize the current temporary billing test terms before changing the card.', 'SUBSCRIPTION_CONSENT_REQUIRED', 400);
     }
     const owner = await Customer.updateOne({ _id: link._id, customerId: sub.safepayBilling.customerId,
       status: 'ready', deletingCardId: { $ne: card.token } }, { $inc: { __v: 1 } }, { session });

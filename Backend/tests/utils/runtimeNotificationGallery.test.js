@@ -14,8 +14,8 @@ const one = (name, channel = 'email') => {
 beforeAll(async () => { entries = await buildRuntimeNotificationGalleryEntries(); });
 
 test('inventory contains source-exact active descriptors and no fabricated historical versions', () => {
-  expect(entries.filter(item => item.channel === 'email' && item.activity === 'active')).toHaveLength(150);
-  expect(entries.filter(item => item.channel === 'whatsapp' && item.activity === 'active')).toHaveLength(142);
+  expect(entries.filter(item => item.channel === 'email' && item.activity === 'active')).toHaveLength(153);
+  expect(entries.filter(item => item.channel === 'whatsapp' && item.activity === 'active')).toHaveLength(145);
   expect(new Set(entries.map(item => `${item.channel}:${item.name}`)).size).toBe(entries.length);
   for (const entry of entries) {
     expect(['active', 'legacy', 'review-required', 'exception']).toContain(entry.activity);
@@ -79,6 +79,13 @@ test('billing operation and lifecycle text comes from actual source call sites',
   expect(one('Safepay downgrade cancelled').after.html).toContain('downgrade to Starter has been cancelled');
 });
 
+test('temporary billing previews use the real minute-based activation and exact $1 receipt text',()=>{
+  expect(one('Safepay temporary test — starter introductory period').after.html).toContain('10-minute test');
+  expect(one('Safepay temporary test — elite introductory period').after.html).toContain('15-minute test');
+  expect(one('Safepay temporary test — paid renewal').after.html).toContain('Amount paid: $1.00');
+  expect(one('Safepay temporary test — paid renewal').after.html).toContain('$1-per-20-minute billing test');
+});
+
 test('return statuses, moderation safety and source-backed receipt channels are complete', () => {
   const statuses = require('../../services/returnPolicyService').RETURN_STATUS_LABELS;
   for (const [status, label] of Object.entries(statuses)) {
@@ -116,7 +123,7 @@ test('retained billing helpers remain visible without claiming active Safepay el
   expect(one('Retained invoice payment failed').after.html).toContain('was unsuccessful');
   expect(one('Safepay subscription ending soon — standard')).toMatchObject({ activity: 'active' });
   expect(one('Retained downgrade scheduled — founder / bonus available').after.html).toContain('30% founder discount');
-  expect(runtimeGalleryCounts(entries)).toEqual({ active: { email: 150, whatsapp: 142 }, legacy: { email: 16, whatsapp: 16 },
+  expect(runtimeGalleryCounts(entries)).toEqual({ active: { email: 153, whatsapp: 145 }, legacy: { email: 16, whatsapp: 16 },
     exception: { email: 4, whatsapp: 4 }, reviewRequired: { email: 0, whatsapp: 0 }, sourceCallSites: 54 });
   expect(notificationCallSiteInventory()).toHaveLength(54);
 });

@@ -47,8 +47,8 @@ export default function SubscriptionBillingModal({
             contentContainerStyle={styles.content} showsVerticalScrollIndicator keyboardShouldPersistTaps="handled">
             <Text style={styles.planName}>{quote.planName}</Text>
             <Text style={styles.text}>Due now: {formatUsd(quote.dueNowMinor)} USD</Text>
-            <Text style={styles.text}>Recurring price: {formatUsd(quote.monthlyAmountMinor)} USD/month</Text>
-            {!!quote.freePeriodDays && <Text style={styles.secondary}>First {quote.freePeriodDays} days free.</Text>}
+            <Text style={styles.text}>Recurring price: {formatUsd(quote.monthlyAmountMinor)} USD/{quote.billingTest ? '20 minutes' : 'month'}</Text>
+            {!!quote.freePeriodDays && <Text style={styles.secondary}>First {quote.billingTest ? `${quote.plan === 'elite' ? 15 : 10} minutes` : `${quote.freePeriodDays} days`} free.</Text>}
             {!!quote.creditMinor && <Text style={styles.secondary}>Credit toward future billing: {formatUsd(quote.creditMinor)} USD</Text>}
             <Text style={styles.secondary}>Payment card</Text>
             <Picker accessibilityLabel="Subscription payment card" selectedValue={cardId}

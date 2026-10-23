@@ -10,7 +10,7 @@ const CheckoutClaim = require('../models/SellerCheckoutClaim');
 const Store = require('../models/Store');
 const User = require('../models/User');
 const { readSafepayConfig } = require('../config/safepay');
-const { buildPlanPricing, META_ADS_ADDON_CENTS } = require('./subscriptionPricingService');
+const { buildPlanPricing } = require('./subscriptionPricingService');
 const metaCredit = require('./safepayMetaCreditService');
 const { monthlyBoundary, proratedPlanChange, applyBillingCredit, renewalPeriod } = require('./safepayBillingMath');
 const { requireOwnedReusableCard } = require('./safepayCustomerService');
@@ -20,6 +20,7 @@ const { claimSellerCheckout, releaseSellerCheckoutClaim } = require('./sellerChe
 const { enqueueNotificationEvent } = require('./notificationOutboxService');
 const { snapshotMinorMoney } = require('./notificationMoneySnapshotService');
 const renewalPolicy = require('./safepayRenewalPolicy');
+const billingTest = require('./subscriptionBillingTestPolicy');
 
 const CONSENT_VERSION = 'rozare-safepay-recurring-v1';
 const id = value => String(value?._id || value || '');
@@ -50,6 +51,11 @@ async function sellerSubscription(sellerId) {
   if (!user) throw fail('An active seller account is required.', 'SELLER_REQUIRED', 403);
   let sub = await Subscription.findOne({ seller: sellerId }).select('+safepayBilling.cardId');
   if (!sub) sub = await require('../controllers/subscriptionController').initializeSubscription(sellerId);
+  if (billingTest.readWindow() || sub.safepayBilling?.testClock && !sub.safepayBilling.testClock.restoredAt) {
+    const config = readSafepayConfig(process.env, { requireWebhook: true });
+    await require('./subscriptionBillingTestClockService').reconcileOne(sub._id, config.environment);
+    sub = await Subscription.findById(sub._id).select('+safepayBilling.cardId');
+  }
   if (sub.paymentRisk?.suspended) throw fail('Billing changes are on hold while a payment is reviewed.', 'SUBSCRIPTION_PAYMENT_RISK_OPEN', 423);
   return sub;
 }
@@ -61,7 +67,9 @@ function presentQuote(operation) {
     monthlyAmountMinor: t.monthlyMinor, dueNowMinor: t.dueMinor, creditMinor: t.creditMinor || 0,
     freePeriodDays: t.trialDays || 0, founderRate: t.founderRate === true,
     consentVersion: CONSENT_VERSION, requiresSafepayAccount: false,
-    terms: `Authorize Rozare to charge ${t.monthlyMinor / 100} USD each month using your selected Safepay-saved card${t.trialDays ? ` after ${t.trialDays} free days` : ''}. If a renewal fails, Rozare may make four scheduled attempts in total on days 1, 3, 5 and 7. Your plan stays active until the end of day 7 (Pakistan time) and is cancelled if the renewal remains unpaid. Cancel renewal in your subscription settings before the next billing date.` };
+    ...(t.billingTest ? { billingTest: billingTest.validateStamp(t.billingTest) } : {}),
+    terms: t.billingTest ? billingTest.terms(t.billingTest, t.plan, t.trialDays > 0)
+      : `Authorize Rozare to charge ${t.monthlyMinor / 100} USD each month using your selected Safepay-saved card${t.trialDays ? ` after ${t.trialDays} free days` : ''}. If a renewal fails, Rozare may make four scheduled attempts in total on days 1, 3, 5 and 7. Your plan stays active until the end of day 7 (Pakistan time) and is cancelled if the renewal remains unpaid. Cancel renewal in your subscription settings before the next billing date.` };
 }
 
 async function createQuote(sellerId, body) {
@@ -76,8 +84,11 @@ async function createQuote(sellerId, body) {
   const includeMetaAds = body.includeMetaAds === true;
   if (includeMetaAds && plan !== 'elite') throw fail('Meta Ads are available only with Elite.', 'INVALID_META_ADS_SELECTION', 400);
   const coupon = String(body.couponCode || '').trim().toUpperCase();
+  const testWindow = billingTest.readWindow();
+  if (testWindow && coupon) throw fail('The temporary $1 billing test does not use founder coupons. Your founder eligibility is preserved.', 'BILLING_TEST_COUPON_UNAVAILABLE', 400);
   if (coupon && coupon !== FOUNDER_PROMOTION.code) throw fail('This subscription coupon is not valid.', 'INVALID_SUBSCRIPTION_COUPON', 400);
-  const requestFingerprint = payments.fingerprint({ seller: id(sellerId), provider: 'safepay', kind, plan, includeMetaAds, coupon });
+  const requestFingerprint = payments.fingerprint({ seller: id(sellerId), provider: 'safepay', kind, plan, includeMetaAds, coupon,
+    ...(testWindow ? { billingTestId: testWindow.id } : {}) });
   await Promise.all([Operation.init(), Payment.init()]);
   const existing = await Operation.findOne({ seller: sellerId, environment: config.environment, requestKey });
   if (existing) {
@@ -99,6 +110,9 @@ async function createQuote(sellerId, body) {
     return presentQuote(existing);
   }
   const sub = await sellerSubscription(sellerId);
+  if (kind === 'upgrade' && sub.safepayBilling?.testClock?.origin === 'operator' && !sub.safepayBilling.testClock.restoredAt) {
+    throw fail('This existing agreement is temporarily using the global billing test. Its original plan is preserved; change plans after the test ends.', 'BILLING_TEST_EXISTING_PLAN_CHANGE_HELD');
+  }
   const store = await Store.findOne({ seller: sellerId }).select('isActive blockedAt moderationStatus').lean();
   if (!store || (store.moderationStatus && store.moderationStatus !== 'approved')
     || (!store.isActive && !sub.blockedAt)) throw fail('Resolve the store restriction before starting a new billing agreement.', 'STORE_BILLING_RESTRICTED', 423);
@@ -143,7 +157,7 @@ async function createQuote(sellerId, body) {
   try {
     if (kind === 'enrollment' && coupon) reservation = await reserveFounderSlot(sellerId);
     const founderRate = kind === 'enrollment' ? Boolean(reservation) : sub.founderOffer?.active === true;
-    const price = buildPlanPricing(plan, includeMetaAds, founderRate);
+    const price = buildPlanPricing(plan, includeMetaAds, founderRate, {ignoreTest:false});
     const trialDays = kind === 'enrollment' && !sub.hasUsedFreePeriod ? price.freePeriodDays : 0;
     const at = new Date();
     let proration = kind === 'upgrade' && sub.status !== 'free_period'
@@ -153,12 +167,15 @@ async function createQuote(sellerId, body) {
       proration = metaCredit.capMetaCredit(proration, await metaCredit.currentMetaFunding(sub, config.environment));
     }
     const gross = kind === 'enrollment' ? (trialDays ? 0 : price.unitAmount) : proration?.dueMinor || 0;
-    const credit = applyBillingCredit(gross, minor(sub.safepayBilling?.creditMinor || 0));
+    const credit = price.billingTest ? { chargeMinor:gross, appliedCreditMinor:0, remainingCreditMinor:minor(sub.safepayBilling?.creditMinor || 0) }
+      : applyBillingCredit(gross, minor(sub.safepayBilling?.creditMinor || 0));
     const [operation] = await Operation.create([{ _id: operationId, seller: sellerId, subscription: sub._id,
       environment: config.environment, requestKey, fingerprint: requestFingerprint, sourceVersion: sub.safepayBilling?.version || 0,
-      kind: isRemoval ? 'meta_removal' : kind, expiresAt: claim.claim.expiresAt,
-      terms: { plan, planName: price.planName, includeMetaAds, metaAddonMinor: includeMetaAds ? META_ADS_ADDON_CENTS : 0,
+      kind: isRemoval ? 'meta_removal' : kind,
+      expiresAt: price.billingTest ? new Date(Math.min(date(claim.claim.expiresAt).getTime(),Date.parse(price.billingTest.expiresAt))) : claim.claim.expiresAt,
+      terms: { plan, planName: price.planName, includeMetaAds, metaAddonMinor: price.metaAddOn,
         monthlyMinor: price.unitAmount, currency: 'USD', trialDays,
+        ...(price.billingTest ? { billingTest: price.billingTest } : {}),
         founderRate, founderReservationToken: reservation?.token || '', checkoutClaimToken: claim.claim.token,
         sourceContractId: sub.safepayBilling?.contractId || '', sourceMonthlyMinor: sub.safepayBilling?.monthlyMinor || 0,
         sourcePlan: sub.plan, sourceMetaAds: sub.metaAdsIncluded, grossMinor: gross, dueMinor: credit.chargeMinor,
@@ -210,20 +227,22 @@ async function applyOperation(operation, sub, session) {
   if (operation.status === 'applied') return sub;
   if (id(sub.safepayBilling?.pendingOperation) !== id(operation)) throw fail('The billing operation was superseded.', 'SUBSCRIPTION_OPERATION_SUPERSEDED');
   const terms = operation.terms, at = date(operation.acceptedAt);
+  const test = terms.billingTest ? billingTest.validateStamp(terms.billingTest) : null;
   const previousBlockedAt = sub.blockedAt || null;
   const enrollment = operation.kind === 'enrollment';
   if (enrollment) {
     const founderAt = await claimFounder(operation, session);
     sub.subscribedAt = at;
     sub.hasUsedFreePeriod = sub.hasUsedFreePeriod || terms.trialDays > 0;
-    sub.freePeriodEndDate = terms.trialDays ? new Date(at.getTime() + terms.trialDays * 86400000) : null;
+    sub.freePeriodEndDate = terms.trialDays ? new Date(at.getTime() + (test ? billingTest.introMinutes(test,terms.plan) * 60000 : terms.trialDays * 86400000)) : null;
     sub.currentPeriodStart = at;
-    sub.currentPeriodEnd = sub.freePeriodEndDate || monthlyBoundary(at, 1);
+    sub.currentPeriodEnd = sub.freePeriodEndDate || (test ? billingTest.boundary(at,1,test) : monthlyBoundary(at, 1));
     sub.safepayBilling.anchorAt = sub.freePeriodEndDate || at;
     sub.safepayBilling.cycle = terms.trialDays ? 0 : 1;
     sub.safepayBilling.contractId = id(operation);
     sub.status = terms.trialDays ? 'free_period' : 'active';
     sub.safepayBilling.endedAt = null;
+    if (test) sub.safepayBilling.testClock = { ...test, origin:'enrollment', adoptedAt:at, stoppedAt:null, restoredAt:null };
     if (founderAt) sub.founderOffer = { active: true, code: FOUNDER_PROMOTION.code, discountPercent: FOUNDER_PROMOTION.discountPercent, claimedAt: founderAt, forfeitedAt: null, source: 'coupon' };
   } else if (operation.kind === 'renewal' || operation.kind === 'downgrade') {
     sub.currentPeriodStart = date(terms.periodStart);
@@ -246,6 +265,11 @@ async function applyOperation(operation, sub, session) {
   sub.safepayBilling.recovery = { rootOperation: null, contractId: null, cycle: null, policyVersion: null,
     startedAt: null, cancelAt: null, attempts: 0, nextRetryAt: null, lastFailureAt: null, cancelledAt: null };
   sub.safepayBilling.nextChargeAt = sub.safepayBilling.autoRenew ? sub.currentPeriodEnd : null;
+  if (test && !billingTest.authorized(test)) {
+    sub.safepayBilling.autoRenew = false; sub.safepayBilling.nextChargeAt = null;
+    sub.cancelledAt = sub.cancelledAt || new Date(test.expiresAt);
+    sub.safepayBilling.testClock = { ...sub.safepayBilling.testClock, stoppedAt:new Date(), restoreBlockedByInFlight:true };
+  }
   sub.warningEmailSent = false; sub.blockedAt = null; sub.blockedReason = ''; sub.aiMessageLimit = -1;
   sub.trialBlockedNotificationEventAt = null; sub.trialBlockedNotificationEnqueuedAt = null;
   if (terms.plan === 'elite') {
@@ -266,7 +290,7 @@ async function applyOperation(operation, sub, session) {
     $or: [{ isActive: true }, ...(previousBlockedAt ? [{ blockedAt: previousBlockedAt }] : [])] },
   { $set: { isActive: true, blockedAt: null, 'subdomainPurchase.removalScheduledAt': null } }, { session });
   await notifyOperation(operation, { session, title: terms.trialDays ? 'Your subscription introductory period has started' : 'Your subscription was updated',
-    body: `${terms.trialDays ? `Your ${terms.planName} plan was activated with a ${terms.trialDays}-day free introductory period. Amount due at activation: {{money.charged}}.` : `Your ${terms.planName} subscription was updated successfully. Amount paid: {{money.charged}}.`} Review your current billing dates, plan price and renewal settings in Subscription.` });
+    body: `${terms.trialDays ? `Your ${terms.planName} plan was activated with a ${test ? `${billingTest.introMinutes(test,terms.plan)}-minute test` : `${terms.trialDays}-day free`} introductory period. Amount due at activation: {{money.charged}}.` : `Your ${terms.planName} subscription was updated successfully. Amount paid: {{money.charged}}.`}${test ? ` This is a live $1-per-20-minute billing test ending at ${test.expiresAt}; no further test charge starts after that cutoff.` : ''} Review your current billing dates, plan price and renewal settings in Subscription.` });
   return sub;
 }
 
@@ -281,6 +305,9 @@ async function acceptQuote(sellerId, body) {
     if (['accepted', 'awaiting_payment', 'applied'].includes(op.status)) {
       if (op.cardId !== card.token) throw fail('This billing operation was already authorized with a different card.', 'IDEMPOTENCY_CONFLICT');
       return op;
+    }
+    if (op.terms.billingTest ? !billingTest.authorized(op.terms.billingTest) || body.billingTestId !== op.terms.billingTest.id : billingTest.readWindow()) {
+      throw fail('The billing test window changed. Refresh and explicitly accept a new quote.', 'SUBSCRIPTION_QUOTE_STALE');
     }
     if (op.status !== 'quoted' || date(op.expiresAt) <= new Date()) throw fail('This quote expired. Please review a fresh quote.', 'SUBSCRIPTION_QUOTE_EXPIRED');
     if (metaCredit.unboundedMetaQuote(op)) throw fail('Review a fresh quote to verify the funded add-on credit.', 'SUBSCRIPTION_QUOTE_STALE');
@@ -313,6 +340,7 @@ async function acceptQuote(sellerId, body) {
       sub.cancelledAt = null; sub.safepayBilling.autoRenew = true;
       sub.safepayBilling.contractId = id(op); sub.safepayBilling.monthlyMinor = minor(op.terms.monthlyMinor);
       sub.safepayBilling.endedAt = null;
+      if (op.terms.billingTest) sub.safepayBilling.testClock = { ...op.terms.billingTest, origin:'enrollment', adoptedAt:op.acceptedAt, stoppedAt:null, restoredAt:null };
       // Preserve historic Stripe invoice records but detach the closed live
       // projection, so delayed old-provider events cannot replace this plan.
       sub.stripeSubscriptionId = undefined; sub.stripePriceId = undefined; sub.stripeProductId = undefined;
@@ -350,10 +378,14 @@ async function claimRecurringCharge(paymentId) {
       || payment.currency !== 'USD' || sub.safepayBilling.customerId !== payment.customerId) {
       throw fail('The recurring charge has no matching billing authorization.', 'SAFEPAY_RECURRING_BINDING_INVALID');
     }
+    if (op.terms.billingTest) {
+      if (!billingTest.authorized(op.terms.billingTest) || sub.safepayBilling.testClock?.id !== op.terms.billingTest.id
+        || op.terms.monthlyMinor !== 100 || op.terms.dueMinor > 100) return null;
+    } else if (billingTest.readWindow()) return null;
     if (['renewal', 'downgrade'].includes(op.kind) && !sub.safepayBilling.autoRenew) return null;
     if (['renewal', 'downgrade'].includes(op.kind) && renewalPolicy.ownsRecovery(sub)
       && date(sub.safepayBilling.recovery.cancelAt) <= new Date()) return null;
-    const fundedEnd = op.kind === 'enrollment' ? monthlyBoundary(op.acceptedAt, 1)
+    const fundedEnd = op.kind === 'enrollment' ? (op.terms.billingTest ? billingTest.boundary(op.acceptedAt,1,op.terms.billingTest) : monthlyBoundary(op.acceptedAt, 1))
       : op.terms.periodEnd || op.terms.proration?.periodEnd;
     if (fundedEnd && date(fundedEnd) <= new Date()) throw fail('The agreed billing period ended before collection. Review is required before a new charge.', 'SUBSCRIPTION_MISSED_PERIOD_REVIEW');
     const user = await User.findOneAndUpdate({ _id: payment.user, status: 'active' }, { $inc: { __v: 1 } }, { new: true, session });
@@ -447,6 +479,10 @@ async function failBillingPayment(payment, session, { failureCode = 'SAFEPAY_REC
   const notice = op.recoveryNotice ? renewalPolicy.failureNotice(sub, op, at) : {
     title: 'Subscription payment unsuccessful',
     body: 'Your payment of {{money.charged}} was unsuccessful. This attempt did not activate or extend your subscription. Review your payment method and retry in Subscription.' };
+  if (op.terms.billingTest) {
+    notice.title = 'Test subscription payment unsuccessful';
+    notice.body = `The live test charge of {{money.charged}} was unsuccessful. Update the billing card or review the exact attempt in Subscription. Failure retries are not accelerated. Automatic test charges stop at ${op.terms.billingTest.expiresAt}; this test will not silently switch to a higher regular price.`;
+  }
   await notifyOperation(op, { session, type: 'subscription.payment_failed', ...notice });
 }
 

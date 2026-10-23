@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { safepayApi } from '../../utils/safepay';
 import { formatUsdCents } from '../../utils/subscriptionPricing';
+import { validBillingTestQuote, billingTestAuthorization, billingCardTestTerms } from '../../../../MobileApp/src/utils/subscriptionBillingTest.js';
 import { selectSubscriptionBillingCard } from '../../utils/subscriptionBillingCard';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptForFingerprint, clearPersistedMutationAttemptForFingerprint } from '../../utils/persistedMutationAttempt';
 
@@ -13,7 +14,7 @@ export const isValidBillingQuote = quote => Boolean(quote && /^[a-f\d]{24}$/i.te
   && Number.isSafeInteger(quote.monthlyAmountMinor) && quote.monthlyAmountMinor > 0
   && Number.isSafeInteger(quote.dueNowMinor) && quote.dueNowMinor >= 0
   && quote.currency === 'USD' && quote.consentVersion === 'rozare-safepay-recurring-v1'
-  && typeof quote.terms === 'string' && quote.terms.length > 0);
+  && typeof quote.terms === 'string' && quote.terms.length > 0 && validBillingTestQuote(quote));
 
 export function useSafepaySubscriptionBilling(subscription, refresh) {
   const { currentUser } = useAuth();
@@ -59,7 +60,8 @@ export function useSafepaySubscriptionBilling(subscription, refresh) {
       if (subscription?.pendingBillingOperation) { await check(subscription.pendingBillingOperation); return; }
       if (!await getCards(kind)) return;
       const storageKey = createScopedMutationStorageKey('rozare_safepay_billing_web_v1', currentUser?._id || currentUser?.id);
-      const fingerprint = JSON.stringify({ kind, plan, includeMetaAds, couponCode, version: subscription?.billingVersion || 0 });
+      const fingerprint = JSON.stringify({ kind, plan, includeMetaAds, couponCode, version: subscription?.billingVersion || 0,
+        ...(subscription?.pricing?.billingTest ? {billingTestId:subscription.pricing.billingTest.id} : {}) });
       const attempt = await getOrCreatePersistedMutationAttemptForFingerprint({ storage: localStorage, storageKey, fingerprint, keyPrefix: 'web-billing' });
       attemptRef.current = { ...attempt, storageKey, fingerprint };
       const { data } = await safepayApi.post(kind === 'retry' ? '/subscription/retry-quote' : '/subscription/quote', {
@@ -85,7 +87,9 @@ export function useSafepaySubscriptionBilling(subscription, refresh) {
       setQuote({ kind: 'card_change', planName: subscription.planName, dueNowMinor: 0,
         monthlyAmountMinor: subscription.currentMonthlyAmountCents, billingVersion: subscription.billingVersion,
         consentVersion: 'rozare-safepay-recurring-v1',
-        terms: `Authorize this card for your existing ${formatUsdCents(subscription.currentMonthlyAmountCents)} USD/month agreement. This changes neither the renewal date nor the price and does not collect a payment.` });
+        ...(subscription.billingTestAgreement ? {billingTest:subscription.billingTestAgreement} : {}),
+        terms: subscription.billingTestAgreement ? billingCardTestTerms(subscription.billingTestAgreement)
+          : `Authorize this card for your existing ${formatUsdCents(subscription.currentMonthlyAmountCents)} USD/month agreement. This changes neither the renewal date nor the price and does not collect a payment.` });
     } catch (err) { toast.error(err.response?.data?.msg || err.message); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -94,10 +98,10 @@ export function useSafepaySubscriptionBilling(subscription, refresh) {
     busyRef.current = true; setBusy(true);
     try {
       if (quote.kind === 'card_change') {
-        await safepayApi.patch('/subscription/card', { clientSurface: 'web', cardId, billingVersion: quote.billingVersion, consentAccepted: true, consentVersion: quote.consentVersion });
+        await safepayApi.patch('/subscription/card', { clientSurface: 'web', cardId, billingVersion: quote.billingVersion, consentAccepted: true, consentVersion: quote.consentVersion, ...billingTestAuthorization(quote) });
         setQuote(null); toast.success('Subscription billing card updated.'); await refresh();
       } else {
-        await safepayApi.post('/subscription/accept', { clientSurface: 'web', quoteId: quote.quoteId, cardId, consentAccepted: true, consentVersion: quote.consentVersion });
+        await safepayApi.post('/subscription/accept', { clientSurface: 'web', quoteId: quote.quoteId, cardId, consentAccepted: true, consentVersion: quote.consentVersion, ...billingTestAuthorization(quote) });
         await check(quote.quoteId);
       }
     } catch (err) { toast.error(err.response?.data?.msg || 'Billing is not confirmed. Your exact attempt is retained.'); await refresh(); }
@@ -136,7 +140,7 @@ function SafepayBillingReview({ quote, cards, cardId, onCardChange, consent, onC
     <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="safepay-billing-title" className="modal-surface safepay-surface w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl p-6 shadow-xl space-y-5">
       <header className="flex items-center justify-between gap-3"><h2 id="safepay-billing-title" className="font-bold text-lg">Review your subscription</h2><button type="button" aria-label="Close subscription review" disabled={busy} onClick={onClose}><X /></button></header>
       <h3 className="font-semibold">{quote.planName}</h3>
-      <div className="glass-card p-4 space-y-2"><p>Due now: <strong>{formatUsdCents(quote.dueNowMinor)} USD</strong></p><p>Recurring price: <strong>{formatUsdCents(quote.monthlyAmountMinor)} USD/month</strong></p>{quote.freePeriodDays > 0 && <p>First {quote.freePeriodDays} days free.</p>}{quote.creditMinor > 0 && <p>Credit toward future billing: {formatUsdCents(quote.creditMinor)} USD</p>}</div>
+      <div className="glass-card p-4 space-y-2"><p>Due now: <strong>{formatUsdCents(quote.dueNowMinor)} USD</strong></p><p>Recurring price: <strong>{formatUsdCents(quote.monthlyAmountMinor)} USD/{quote.billingTest ? '20 minutes' : 'month'}</strong></p>{quote.freePeriodDays > 0 && <p>First {quote.billingTest ? `${quote.plan === 'elite' ? 15 : 10} minutes` : `${quote.freePeriodDays} days`} free.</p>}{quote.creditMinor > 0 && <p>Credit toward future billing: {formatUsdCents(quote.creditMinor)} USD</p>}</div>
       <label className="block text-sm">Safepay payment card<select value={cardId} onChange={event => onCardChange(event.target.value)} disabled={busy} className="glass-input block w-full mt-2"><option value="" disabled>Choose a saved card</option>{cards.map(card => <option key={card.id} value={card.id}>{String(card.brand || 'Card').toUpperCase()} •••• {card.last4}</option>)}</select></label>
       <p className="text-sm text-muted-foreground">{quote.terms}</p>
       <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={consent} disabled={busy} onChange={event => onConsentChange(event.target.checked)} /><span>I agree to this price and the displayed automatic renewal terms.</span></label>

@@ -172,6 +172,9 @@ const sellerSubscriptionSchema = new mongoose.Schema({
     // Stripe
     billingProvider: { type: String, enum: ['stripe', 'safepay', null], default: null },
     safepayBilling: {
+        // Reversible QA clock; contains only public timing and original non-card
+        // subscription fields. Historical invoices and payment records stay immutable.
+        testClock: { type: mongoose.Schema.Types.Mixed, default: null },
         environment: { type: String, enum: ['sandbox', 'production', null], default: null },
         contractId: { type: String, default: null },
         customerId: { type: String, default: null },

@@ -30,6 +30,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { selectSubscriptionBillingCard } from '../../utils/subscriptionBillingCard';
 import { subscriptionRecoveryNotice } from '../../utils/subscriptionRecovery';
+import { inspectBillingTest, validBillingTestQuote, billingTestAuthorization, billingCardTestTerms, billingTestNotice, formatBillingTime } from '../../utils/subscriptionBillingTest';
 import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptInLedger, clearPersistedMutationAttemptFromLedger } from '../../utils/persistedMutationAttempt';
 import { useTheme } from '../../contexts/ThemeContext';
 import { borderRadius, fontSize, fontWeight, spacing } from '../../styles/theme';
@@ -143,12 +144,14 @@ const normalizeSubscriptionPricing = pricing => {
   const starter = normalizePricingPlan(pricing.starter, 'starter');
   const elite = normalizePricingPlan(pricing.elite, 'elite');
   if (!starter || !elite) return null;
+  let billingTest; try { billingTest=inspectBillingTest(pricing.billingTest); } catch { return null; }
   return {
     schemaVersion: 1,
     currency: 'USD',
     starter,
     elite,
     metaAdsAddonCents: pricing.metaAdsAddonCents,
+    ...(billingTest ? {billingTest} : {}),
   };
 };
 const formatUsd = cents => {
@@ -366,6 +369,10 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
   }, [navigation, refreshAfterCheckout, route?.params?.checkout]);
 
   const model = getSubscriptionViewModel(subscription, eliteMetaAds);
+  const test = model.pricing?.billingTest;
+  const intervalLabel = test ? '20 minutes' : 'month';
+  const starterIntroLabel = test ? '10 minutes' : `${model.pricing?.starter.freePeriodDays} days`;
+  const eliteIntroLabel = test ? '15 minutes' : `${model.pricing?.elite.freePeriodDays} days`;
   const metaAdsAddonCents = model.pricing?.metaAdsAddonCents ?? null;
   const periodDaysRemaining = daysUntil(subscription?.currentPeriodEnd);
   const activeStatus = model.isEnding
@@ -431,10 +438,11 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
           [{ text: 'Not now', style: 'cancel' }, { text: 'Add card', onPress: () => navigation.navigate('PaymentMethods') }]);
         return;
       }
-      const coupon = kind === 'enrollment' && founderCouponApplied ? subscription?.founderPromotion?.code || '' : '';
+      const coupon = !subscription?.pricing?.billingTest && kind === 'enrollment' && founderCouponApplied ? subscription?.founderPromotion?.code || '' : '';
       const includeMetaAds = plan === 'elite' && eliteMetaAds;
       const storageKey = createScopedMutationStorageKey('rozare_safepay_billing_v1', currentUser?._id || currentUser?.id);
-      const fingerprint = JSON.stringify({ kind, plan, includeMetaAds, coupon, version: subscription?.billingVersion || 0 });
+      const fingerprint = JSON.stringify({ kind, plan, includeMetaAds, coupon, version: subscription?.billingVersion || 0,
+        ...(subscription?.pricing?.billingTest ? {billingTestId:subscription.pricing.billingTest.id} : {}) });
       const attempt = await getOrCreatePersistedMutationAttemptInLedger({ storage: AsyncStorage, storageKey, fingerprint, keyPrefix: 'mobile-billing' });
       billingAttemptRef.current = { ...attempt, storageKey, fingerprint };
       const response = await api.post(kind === 'retry' ? '/api/safepay/subscription/retry-quote' : '/api/safepay/subscription/quote', {
@@ -442,7 +450,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
         ...(kind === 'retry' ? { failedOperation: subscription?.failedBillingOperation } : {}),
       });
       const quote = response.data;
-      if (!quote?.quoteId || !isSafeMinor(quote.monthlyAmountMinor) || !isSafeMinor(quote.dueNowMinor, { positive: false }) || quote.currency !== 'USD') {
+      if (!quote?.quoteId || !isSafeMinor(quote.monthlyAmountMinor) || !isSafeMinor(quote.dueNowMinor, { positive: false }) || quote.currency !== 'USD' || !validBillingTestQuote(quote)) {
         throw new Error('The billing quote could not be verified.');
       }
       if (['accepted', 'awaiting_payment', 'applied'].includes(quote.status)) {
@@ -481,7 +489,9 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
       setBillingQuote({ kind: 'card_change', planName: subscription.planName, dueNowMinor: 0,
         monthlyAmountMinor: subscription.currentMonthlyAmountCents, billingVersion: subscription.billingVersion,
         consentVersion: 'rozare-safepay-recurring-v1',
-        terms: `Authorize this card for your existing ${formatUsd(subscription.currentMonthlyAmountCents)} USD/month agreement. Changing the card does not collect a payment or change your renewal date.` });
+        ...(subscription.billingTestAgreement ? {billingTest:subscription.billingTestAgreement} : {}),
+        terms: subscription.billingTestAgreement ? billingCardTestTerms(subscription.billingTestAgreement)
+          : `Authorize this card for your existing ${formatUsd(subscription.currentMonthlyAmountCents)} USD/month agreement. Changing the card does not collect a payment or change your renewal date.` });
     } catch (requestError) {
       Alert.alert('Could not load billing cards', requestError.response?.data?.msg || requestError.message);
     } finally { billingBusyRef.current = false; setOperation(''); }
@@ -494,13 +504,13 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
     try {
       if (billingQuote.kind === 'card_change') {
         const response = await api.patch('/api/safepay/subscription/card', { clientSurface: 'mobile', cardId: billingCardId,
-          billingVersion: billingQuote.billingVersion, consentAccepted: true, consentVersion: billingQuote.consentVersion });
+          billingVersion: billingQuote.billingVersion, consentAccepted: true, consentVersion: billingQuote.consentVersion, ...billingTestAuthorization(billingQuote) });
         setBillingQuote(null); Alert.alert('Subscription card updated', response.data?.msg);
         await fetchSubscription();
         return;
       }
       await api.post('/api/safepay/subscription/accept', { clientSurface: 'mobile', quoteId: billingQuote.quoteId,
-        cardId: billingCardId, consentAccepted: true, consentVersion: billingQuote.consentVersion });
+        cardId: billingCardId, consentAccepted: true, consentVersion: billingQuote.consentVersion, ...billingTestAuthorization(billingQuote) });
       await checkBillingOperation(billingQuote.quoteId);
     } catch (requestError) {
       Alert.alert('Billing not confirmed', requestError.response?.data?.msg || 'Check your subscription before retrying. Your exact billing attempt is retained.');
@@ -643,6 +653,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
   const planEndDate = formatDate(subscription?.renewalRecovery?.graceActive ? subscription.renewalRecovery.cancelAt : subscription?.status === 'free_period'
     ? subscription?.freePeriodEndDate || subscription?.currentPeriodEnd
     : subscription?.currentPeriodEnd);
+  const displayedPlanEndDate = subscription?.billingTestAgreement && subscription?.currentPeriodEnd ? formatBillingTime(subscription.currentPeriodEnd) : planEndDate;
   const trialEndDate = formatDate(subscription?.trialEndDate);
   const starterBonusDays = daysUntil(subscription?.bonusExpiryDate);
   const bonusExpiryDate = formatDate(subscription?.bonusExpiryDate);
@@ -734,6 +745,9 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
             />
           )}
         >
+          {test && <GlassPanel variant="card" style={styles.accessCard}><Text style={styles.bannerTitle}>Temporary live billing test</Text><Text style={styles.bannerText}>{billingTestNotice(test)}</Text></GlassPanel>}
+          {subscription?.billingTestAgreement?.stopped && <GlassPanel variant="card" style={styles.accessCard}><Text style={styles.bannerTitle}>Test billing stopped</Text><Text style={styles.bannerText}>Automatic test billing is paused. A higher regular price will not be charged under this test agreement. Review normal billing when choosing your next subscription.</Text></GlassPanel>}
+          {!!subscription?.billingTestAgreement && !!subscription?.nextChargeAt && <GlassPanel variant="card" style={styles.accessCard}><Text style={styles.bannerTitle}>Next subscription charge</Text><Text style={styles.bannerText}>{formatBillingTime(subscription.nextChargeAt)} · $1 USD test charge</Text></GlassPanel>}
           {!!error && (
             <SellerInlineError
               compact
@@ -793,12 +807,12 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
             <Text style={styles.heroDescription}>
               {model.isSubscribed
                 ? subscription?.status === 'free_period'
-                  ? `Your introductory period${planEndDate ? ` runs until ${planEndDate}` : ' is active'}.`
+                  ? `Your introductory period${displayedPlanEndDate ? ` runs until ${displayedPlanEndDate}` : ' is active'}.`
                   : model.isEnding
-                    ? `Your plan remains active${planEndDate ? ` until ${planEndDate}` : ' until the current period ends'}.`
+                    ? `Your plan remains active${displayedPlanEndDate ? ` until ${displayedPlanEndDate}` : ' until the current period ends'}.`
                     : model.hasPendingDowngrade
                       ? `Elite remains active${planEndDate ? ` until ${planEndDate}` : ' through this billing period'}, then Starter begins.`
-                      : `Your seller workspace and public store are active${planEndDate ? ` through ${planEndDate}` : ''}.`
+                      : `Your seller workspace and public store are active${displayedPlanEndDate ? ` through ${displayedPlanEndDate}` : ''}.`
                 : model.isTrial
                   ? `${subscription?.trialDaysRemaining ?? 0} day${subscription?.trialDaysRemaining === 1 ? '' : 's'} remaining${trialEndDate ? ` · ends ${trialEndDate}` : ''}.`
                   : 'Choose a plan below to make your store and seller tools active.'}
@@ -1011,7 +1025,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
             </GlassPanel>
           )}
 
-          {!model.isSubscribed && !model.isPastDue && founderPromotion?.sellerEligible && founderPromotion?.available && (
+          {!test && !model.isSubscribed && !model.isPastDue && founderPromotion?.sellerEligible && founderPromotion?.available && (
             <GlassPanel variant="card" style={styles.couponCard}>
               <SellerSectionHeader
                 title="Founder pricing"
@@ -1079,10 +1093,10 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
                 <Text style={styles.listPrice}>{formatUsd(model.pricing.starter.standardAmountCents)}</Text>
               )}
               <Text style={styles.price}>{formatUsd(displayedStarterPrice)}</Text>
-              <Text style={styles.period}>/month</Text>
+              <Text style={styles.period}>/{intervalLabel}</Text>
             </View>
             <Text style={styles.priceNote}>
-              {model.pricing.starter.advertisedDiscountPercent}% standard launch discount from {formatUsd(model.pricing.starter.listAmountCents)} to {formatUsd(model.pricing.starter.standardAmountCents)}.{founderPricingSelected && founderDiscountPercent ? ` ${founderCode} adds ${founderDiscountPercent}% off that standard launch price.` : ''} {model.getsIntroductoryFreePeriod ? `${model.pricing.starter.freePeriodDays}-day one-time intro, then ` : ''}{formatUsd(displayedStarterPrice)}/month · cancel anytime
+              {test ? `Temporary test: ${model.getsIntroductoryFreePeriod ? `${starterIntroLabel} free, then ` : ''}$1 every 20 minutes until the test cutoff. Cancel anytime.` : <>{model.pricing.starter.advertisedDiscountPercent}% standard launch discount from {formatUsd(model.pricing.starter.listAmountCents)} to {formatUsd(model.pricing.starter.standardAmountCents)}.{founderPricingSelected && founderDiscountPercent ? ` ${founderCode} adds ${founderDiscountPercent}% off that standard launch price.` : ''} {model.getsIntroductoryFreePeriod ? `${model.pricing.starter.freePeriodDays}-day one-time intro, then ` : ''}{formatUsd(displayedStarterPrice)}/month · cancel anytime</>}
             </Text>
 
             <FeatureList items={starterFeatures} styles={styles} palette={palette} accent={palette.colors.primary} />
@@ -1138,7 +1152,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               />
             ) : !model.isPastDue ? (
               <ActionButton
-                label={model.getsIntroductoryFreePeriod ? `Start with ${model.pricing.starter.freePeriodDays} days free` : `Choose Starter · ${formatUsd(displayedStarterPrice)}/mo`}
+                label={model.getsIntroductoryFreePeriod ? `Start with ${starterIntroLabel} free` : `Choose Starter · ${formatUsd(displayedStarterPrice)}/${intervalLabel}`}
                 icon="card-outline"
                 loading={operation === 'checkout-starter'}
                 onPress={() => openCheckout('starter')}
@@ -1172,10 +1186,10 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
                 <Text style={styles.listPrice}>{formatUsd(model.pricing.elite.standardAmountCents)}</Text>
               )}
               <Text style={styles.price}>{formatUsd(displayedElitePrice)}</Text>
-              <Text style={styles.period}>/month</Text>
+              <Text style={styles.period}>/{intervalLabel}</Text>
             </View>
             <Text style={styles.priceNote}>
-              {model.pricing.elite.advertisedDiscountPercent}% standard launch discount from {formatUsd(model.pricing.elite.listAmountCents)} to {formatUsd(model.pricing.elite.standardAmountCents)}.{founderPricingSelected && founderDiscountPercent ? ` ${founderCode} adds ${founderDiscountPercent}% off that standard launch price.` : ''} {model.getsIntroductoryFreePeriod ? `${model.pricing.elite.freePeriodDays}-day one-time intro, then ` : ''}{formatUsd(displayedElitePrice)}/month{eliteMetaAds ? ` including ${formatUsd(model.pricing.metaAdsAddonCents)} Meta ads` : ''} · cancel anytime
+              {test ? `Temporary test: ${model.getsIntroductoryFreePeriod ? `${eliteIntroLabel} free, then ` : ''}$1 every 20 minutes until the test cutoff, including selected Meta Ads. Cancel anytime.` : <>{model.pricing.elite.advertisedDiscountPercent}% standard launch discount from {formatUsd(model.pricing.elite.listAmountCents)} to {formatUsd(model.pricing.elite.standardAmountCents)}.{founderPricingSelected && founderDiscountPercent ? ` ${founderCode} adds ${founderDiscountPercent}% off that standard launch price.` : ''} {model.getsIntroductoryFreePeriod ? `${model.pricing.elite.freePeriodDays}-day one-time intro, then ` : ''}{formatUsd(displayedElitePrice)}/month{eliteMetaAds ? ` including ${formatUsd(model.pricing.metaAdsAddonCents)} Meta ads` : ''} · cancel anytime</>}
             </Text>
 
             <FeatureList items={elitePlanFeatures} styles={styles} palette={palette} accent={palette.colors.secondary} />
@@ -1219,7 +1233,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               <>
                 <View style={styles.currentPlanBarElite}>
                   <Ionicons name="checkmark-circle" size={17} color={palette.colors.secondary} />
-                  <Text style={styles.currentPlanText}>Your current plan · {formatUsd(model.activeElitePrice)}/month</Text>
+                  <Text style={styles.currentPlanText}>Your current plan · {formatUsd(subscription.billingTestAgreement ? subscription.currentMonthlyAmountCents : model.activeElitePrice)}/{subscription.billingTestAgreement ? '20 minutes' : 'month'}</Text>
                 </View>
                 {model.metaSelectionChanged && !model.hasPendingDowngrade && !model.isEnding && (
                   <ActionButton
@@ -1245,7 +1259,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               </>
             ) : model.isStarter ? (
               <ActionButton
-                label={`Upgrade to Elite · ${formatUsd(displayedElitePrice)}/mo`}
+                label={`Upgrade to Elite · ${formatUsd(displayedElitePrice)}/${intervalLabel}`}
                 icon="arrow-up-circle-outline"
                 loading={operation === 'upgrade'}
                 onPress={confirmUpgrade}
@@ -1254,7 +1268,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               />
             ) : !model.isPastDue ? (
               <ActionButton
-                label={model.getsIntroductoryFreePeriod ? `Start with ${model.pricing.elite.freePeriodDays} days free` : `Choose Elite · ${formatUsd(displayedElitePrice)}/mo`}
+                label={model.getsIntroductoryFreePeriod ? `Start with ${eliteIntroLabel} free` : `Choose Elite · ${formatUsd(displayedElitePrice)}/${intervalLabel}`}
                 icon="card-outline"
                 loading={operation === 'checkout-elite'}
                 onPress={() => openCheckout('elite')}
@@ -1273,7 +1287,7 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
             {[
               ['shield-checkmark-outline', 'New mobile payments use Safepay. No separate Safepay account is required.'],
               ['calendar-clear-outline', model.getsIntroductoryFreePeriod
-                ? `The first paid subscription includes one introductory free period: ${model.pricing.starter.freePeriodDays} days on Starter or ${model.pricing.elite.freePeriodDays} days on Elite.`
+                ? `The first paid subscription includes one introductory free period: ${starterIntroLabel} on Starter or ${eliteIntroLabel} on Elite.`
                 : 'Your one-time introductory free period has already been used.'],
               ['swap-horizontal-outline', 'Elite upgrades and Meta changes apply immediately and may be prorated. Elite-to-Starter changes begin after the current period.'],
               ['close-circle-outline', 'Cancellation takes effect at the end of the current period; access remains active until then.'],
@@ -1298,16 +1312,16 @@ export default function SellerSubscriptionScreen({ navigation, route }) {
               },
               {
                 title: 'Subscribe',
-                text: `Choose Starter (${formatUsd(displayedStarterPrice)}/month) or Elite (${formatUsd(displayedElitePrice)}/month with the options currently selected).`,
+                text: `Choose Starter (${formatUsd(displayedStarterPrice)}/${intervalLabel}) or Elite (${formatUsd(displayedElitePrice)}/${intervalLabel} with the options currently selected).`,
               },
               {
                 title: 'One introductory period',
                 text: model.getsIntroductoryFreePeriod
-                  ? `${model.pricing.starter.freePeriodDays} days on Starter or ${model.pricing.elite.freePeriodDays} days on Elite after the first completed subscription checkout.`
+                  ? `${starterIntroLabel} on Starter or ${eliteIntroLabel} on Elite after the first completed subscription checkout.`
                   : 'This account has already used its one-time introductory period; changing or restarting a plan does not grant another one.',
               },
               {
-                title: 'Monthly billing',
+                title: test ? 'Test billing' : 'Monthly billing',
                 text: 'Your agreed recurring price is billed through your payment provider. Review exact charges before upgrades or add-on changes; downgrades begin at period end.',
               },
               {

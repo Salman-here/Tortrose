@@ -60,6 +60,23 @@ const openReview = async screen => {
   await waitFor(() => expect(screen.getByTestId('subscription-billing-dialog')).toBeTruthy());
 };
 
+test.each([['starter',10,30],['elite',15,45]])('temporary %s test shows %i-minute consent and submits its exact policy ID',async(plan,minutes,days)=>{
+  const stamp={id:'a'.repeat(32),startsAt:'2026-10-23T10:00:00Z',expiresAt:'2026-10-23T12:00:00Z',amountMinor:100,currency:'USD',starterIntroMinutes:10,eliteIntroMinutes:15,renewalMinutes:20};
+  const fast=JSON.parse(JSON.stringify(subscription));fast.pricing.billingTest=stamp;fast.pricing.metaAdsAddonCents=0;
+  for(const key of ['starter','elite'])Object.assign(fast.pricing[key],{listAmountCents:100,standardAmountCents:100,founderAmountCents:100,advertisedDiscountPercent:0});
+  api.get.mockImplementation(async path=>({data:path==='/api/subscription/status'?{subscription:fast}:path==='/api/safepay/cards'?{cards}:{completed:true}}));
+  api.post.mockResolvedValue({data:{quoteId:'owned-test-quote',status:'quoted',plan,planName:`Rozare ${plan}`,monthlyAmountMinor:100,dueNowMinor:0,freePeriodDays:days,currency:'USD',billingTest:stamp,
+    consentVersion:'rozare-safepay-recurring-v1',expiresAt:new Date(Date.now()+600000).toISOString(),terms:'Live test: $1 every 20 minutes, until the displayed cutoff.'}});
+  const screen=render(<SellerSubscriptionScreen navigation={navigation} route={{params:{}}}/>);
+  await waitFor(()=>expect(screen.getByLabelText(`Start with ${minutes} minutes free`)).toBeTruthy());
+  fireEvent.press(screen.getByLabelText(`Start with ${minutes} minutes free`));await waitFor(()=>expect(screen.getByTestId('subscription-billing-dialog')).toBeTruthy());
+  expect(screen.getByText('Recurring price: $1.00 USD/20 minutes')).toBeTruthy();expect(screen.getByText(`First ${minutes} minutes free.`)).toBeTruthy();
+  expect(api.post).not.toHaveBeenCalledWith('/api/safepay/subscription/accept',expect.anything());
+  fireEvent(screen.getByLabelText('Agree to the displayed subscription price and automatic renewal terms'),'valueChange',true);
+  fireEvent.press(screen.getByLabelText('Confirm subscription'));
+  await waitFor(()=>expect(api.post).toHaveBeenCalledWith('/api/safepay/subscription/accept',expect.objectContaining({billingTestId:stamp.id,cardId:'pm_owned',quoteId:'owned-test-quote'})));
+});
+
 test('a seller with a saved card sees the complete review without starting billing', async () => {
   const screen = render(<SellerSubscriptionScreen navigation={navigation} route={{ params: {} }} />);
   await openReview(screen);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import axios from 'axios';
-import { formatUsdCents, getSubscriptionPricing } from '../utils/subscriptionPricing';
+import { formatUsdCents, getSubscriptionPricing, billingTestNotice } from '../utils/subscriptionPricing';
 import { commerceFaqById, commerceGuides } from '../../../MobileApp/src/content/commerceHelpContent';
 
 // On the docs subdomain, internal app links must hop to the main domain.
@@ -105,7 +105,9 @@ function DocsPage() {
     : SECTIONS;
 
   const livePricing = getSubscriptionPricing({ pricing: subscriptionCatalog?.pricing });
-  const pricing = livePricing || {
+  const billingTest = livePricing?.billingTest;
+  const normalPricing = billingTest ? getSubscriptionPricing({pricing:subscriptionCatalog?.pricing?.normalPricing}) : livePricing;
+  const pricing = normalPricing || {
     starter: { listAmountCents: 1175, standardAmountCents: 999, founderAmountCents: 599, advertisedDiscountPercent: 15, freePeriodDays: 30 },
     elite: { listAmountCents: 3093, standardAmountCents: 2165, founderAmountCents: 1299, advertisedDiscountPercent: 30, freePeriodDays: 45 },
     metaAdsAddonCents: 400,
@@ -324,6 +326,7 @@ function DocsPage() {
 
           {/* Content */}
           <main className="flex-1 min-w-0 max-w-4xl" ref={contentRef}>
+            {billingTest && <section className="glass-card p-5 mb-6 border border-amber-500/30" role="status"><h2 className="font-bold">Temporary live billing test</h2><p className="text-sm mt-2">{billingTestNotice(billingTest)}</p><p className="text-sm mt-2 text-muted-foreground">The documentation below describes normal subscription pricing and periods outside this test window. Review the current terms in Subscription before authorizing a charge.</p></section>}
             <div className="space-y-16">
 
               {/* WHAT IS ROZARE */}

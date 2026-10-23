@@ -69,7 +69,9 @@ const presentSellerSubscription = (subscription, now = new Date()) => {
         periodEndDate = subscription.trialEndDate || null
         periodLabel = endingLabel('Trial', periodEndDate, now)
     } else if (status === 'free_period') {
-        displayStatus = `${plan === 'elite' ? 45 : 30}-Day Free Period`
+        displayStatus = subscription.safepayBilling?.testClock && !subscription.safepayBilling.testClock.restoredAt
+            ? `${plan === 'elite' ? 15 : 10}-Minute Test Intro`
+            : `${plan === 'elite' ? 45 : 30}-Day Free Period`
         periodEndDate = subscription.freePeriodEndDate || subscription.currentPeriodEnd || null
         periodLabel = endingLabel('Free period', periodEndDate, now)
     } else if (status === 'active') {

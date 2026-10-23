@@ -5,6 +5,7 @@ const { FEATURED_LIMITS, TRIAL_PRODUCT_LIMIT } = require('./sellerProductQuotaSe
 const { FOUNDER_PROMOTION } = require('./founderPromotionService');
 const renewalPolicy = require('./safepayRenewalPolicy');
 const { hasSellerPlanAccess, hasSellerBonusAccess } = require('./sellerSubscriptionAccess');
+const billingTest = require('./subscriptionBillingTestPolicy');
 
 const TRIAL_DAYS = 15;
 const STARTER_BONUS_MONTHS = 6;
@@ -54,9 +55,10 @@ const cloneFeatures = () => Object.fromEntries(
 );
 
 function getSubscriptionCatalog() {
+  const pricing = getPricingCatalog();
   return {
     schemaVersion: 1,
-    pricing: getPricingCatalog(),
+    pricing,
     trial: {
       days: TRIAL_DAYS,
       productListingLimit: TRIAL_PRODUCT_LIMIT,
@@ -87,7 +89,7 @@ function getSubscriptionCatalog() {
     },
     features: cloneFeatures(),
     billing: {
-      checkoutProvider: 'Stripe',
+      checkoutProvider: pricing.billingTest ? 'Safepay' : 'Stripe',
       upgradeTiming: 'immediate',
       downgradeTiming: 'period_end',
       cancellationTiming: 'period_end',
@@ -126,6 +128,8 @@ function buildSubscriptionStatusPresentation(subscription, {
   if (!subscription) return null;
 
   const status = subscription.status;
+  const clock = subscription.safepayBilling?.testClock;
+  const agreement = clock && !clock.restoredAt ? billingTest.validateStamp(clock) : null;
   const plan = subscription.plan;
   const trialStartDate = validDate(subscription.trialStartDate);
   const trialEndDate = validDate(subscription.trialEndDate)
@@ -181,6 +185,10 @@ function buildSubscriptionStatusPresentation(subscription, {
     failedBillingOperation: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.lastFailedOperation || null : null,
     billingFailureCode: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.lastFailureCode || null : null,
     automaticRenewal: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.autoRenew === true : null,
+    nextChargeAt: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.nextChargeAt || null : null,
+    billingTestAgreement: agreement ? { id:agreement.id,startsAt:agreement.startsAt,expiresAt:agreement.expiresAt,
+      amountMinor:100,currency:'USD',starterIntroMinutes:10,eliteIntroMinutes:15,renewalMinutes:20,
+      stopped:Boolean(clock.stoppedAt),paused:subscription.safepayBilling.autoRenew !== true } : null,
     renewalRecovery: renewalPolicy.presentation(subscription, now),
     requiresExternalPaymentAccount: subscription.billingProvider === 'safepay' ? false : null,
     cancelledAt: subscription.cancelledAt || null,
@@ -216,6 +224,7 @@ function buildSubscriptionStatusPresentation(subscription, {
 function buildSubscriptionStatusMessage(subscription) {
   if (!subscription) return 'No subscription was found for this seller.';
   const parts = [`Current subscription: ${subscription.planName} (${subscription.status}).`];
+  if (subscription.billingTestAgreement) parts.push(`Temporary live billing test: $1 USD every 20 minutes, ending ${subscription.billingTestAgreement.expiresAt}. ${subscription.billingTestAgreement.paused ? 'Automatic test billing is paused.' : 'Review the exact next billing time in Subscription.'}`);
   if (subscription.status === 'trial') {
     parts.push(`${subscription.trialDaysRemaining} trial day${subscription.trialDaysRemaining === 1 ? '' : 's'} remaining${isoDate(subscription.trialEndDate) ? `, through ${isoDate(subscription.trialEndDate)}` : ''}.`);
   }
@@ -228,7 +237,7 @@ function buildSubscriptionStatusMessage(subscription) {
   }
   if (Number.isSafeInteger(subscription.currentMonthlyAmountCents)) {
     const cents = BigInt(subscription.currentMonthlyAmountCents);
-    const amount = `$${cents / 100n}.${String(cents % 100n).padStart(2, '0')} USD per month`;
+    const amount = `$${cents / 100n}.${String(cents % 100n).padStart(2, '0')} USD per ${subscription.billingTestAgreement ? '20 minutes' : 'month'}`;
     parts.push(subscription.status === 'free_period'
       ? `Recurring price after the introductory period: ${amount}${subscription.metaAdsIncluded ? ', including the Meta ads add-on' : ''}.`
       : `Current recurring price: ${amount}${subscription.metaAdsIncluded ? ', including the Meta ads add-on' : ''}.`);

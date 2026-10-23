@@ -1,3 +1,5 @@
+import { inspectBillingTest } from '../../../MobileApp/src/utils/subscriptionBillingTest.js';
+export { billingTestNotice } from '../../../MobileApp/src/utils/subscriptionBillingTest.js';
 const isSafeMinor = (value, { positive = true } = {}) => (
     typeof value === 'number'
     && Number.isSafeInteger(value)
@@ -55,12 +57,14 @@ export const getSubscriptionPricing = (subscription) => {
     const starter = normalizePlan(catalog.starter, 'starter');
     const elite = normalizePlan(catalog.elite, 'elite');
     if (!starter || !elite) return null;
+    let billingTest; try { billingTest = inspectBillingTest(catalog.billingTest); } catch { return null; }
     return {
         schemaVersion: 1,
         currency: 'USD',
         starter,
         elite,
         metaAdsAddonCents: catalog.metaAdsAddonCents,
+        ...(billingTest ? {billingTest} : {}),
     };
 };
 
