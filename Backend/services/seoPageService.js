@@ -93,7 +93,7 @@ const renderDocument = ({
   const safeTitle = cleanText(title, SITE_NAME);
   const safeDescription = excerpt(description, 'Shop products from independent sellers and brands on Rozare.');
   const safeCanonical = cleanText(canonical, SITE_URL);
-  const safeImage = absoluteImageUrl(image) || DEFAULT_IMAGE;
+  const safeImage = image === null ? '' : (absoluteImageUrl(image) || DEFAULT_IMAGE);
   const safeImageAlt = cleanText(imageAlt, heading || safeTitle);
   const schemas = (Array.isArray(jsonLd) ? jsonLd : [jsonLd]).filter(Boolean);
   const schemaMarkup = schemas.map(schema => (
@@ -116,14 +116,14 @@ const renderDocument = ({
   <meta property="og:title" content="${htmlEscape(safeTitle)}">
   <meta property="og:description" content="${htmlEscape(safeDescription)}">
   <meta property="og:url" content="${htmlEscape(safeCanonical)}">
-  <meta property="og:image" content="${htmlEscape(safeImage)}">
+  ${safeImage ? `<meta property="og:image" content="${htmlEscape(safeImage)}">` : ''}
   ${safeImage.startsWith('https://') ? `<meta property="og:image:secure_url" content="${htmlEscape(safeImage)}">` : ''}
-  <meta property="og:image:alt" content="${htmlEscape(safeImageAlt)}">
-  <meta name="twitter:card" content="summary_large_image">
+  ${safeImage ? `<meta property="og:image:alt" content="${htmlEscape(safeImageAlt)}">` : ''}
+  <meta name="twitter:card" content="${safeImage ? 'summary_large_image' : 'summary'}">
   <meta name="twitter:title" content="${htmlEscape(safeTitle)}">
   <meta name="twitter:description" content="${htmlEscape(safeDescription)}">
-  <meta name="twitter:image" content="${htmlEscape(safeImage)}">
-  <meta name="twitter:image:alt" content="${htmlEscape(safeImageAlt)}">
+  ${safeImage ? `<meta name="twitter:image" content="${htmlEscape(safeImage)}">` : ''}
+  ${safeImage ? `<meta name="twitter:image:alt" content="${htmlEscape(safeImageAlt)}">` : ''}
   ${schemaMarkup}
   <style>
     :root{color-scheme:light dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -284,7 +284,7 @@ const renderStorePage = ({ store, products = [] }) => {
     canonical,
     heading: name,
     lead: description,
-    image: absoluteImageUrl(store?.logo) || absoluteImageUrl(store?.banner),
+    image: absoluteImageUrl(store?.logo) || null,
     imageAlt: `${name} logo`,
     jsonLd: [
       schema,
@@ -350,7 +350,7 @@ const renderProductPage = ({ product, store }) => {
     canonical,
     heading: name,
     lead: description,
-    image: images[0],
+    image: images[0] || null,
     imageAlt: name,
     ogType: 'product',
     jsonLd: [
@@ -372,6 +372,7 @@ const renderUnavailablePage = ({ canonical = SITE_URL, kind = 'page' } = {}) => 
   heading: `${kind === 'store' ? 'Store' : kind === 'product' ? 'Product' : 'Page'} unavailable`,
   lead: `This ${kind} does not exist or is no longer publicly available.`,
   robots: NOINDEX_ROBOTS,
+  image: null,
   content: `<p><a href="${SITE_URL}/">Return to Rozare</a> or <a href="${SITE_URL}/marketplace">browse active stores</a>.</p>`,
 });
 

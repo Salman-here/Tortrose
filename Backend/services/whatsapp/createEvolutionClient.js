@@ -8,6 +8,7 @@
 const axios = require('axios');
 const { WHATSAPP_WEBHOOK_HEADER } = require('./webhookSecurity');
 const QRCode = require('qrcode');
+const { messageLinkPreview } = require('./linkPreviewPolicy');
 const {
     canonicalPhone,
     canonicalJid,
@@ -304,13 +305,15 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
 
     const sendText = async (number, text) => {
         if (!isConfigured()) throw new Error('Evolution API not configured');
+        const linkPreview = messageLinkPreview(text);
+        const previewOptions = typeof linkPreview === 'boolean' ? { linkPreview } : {};
         const testDelivery = await captureOutboundIfTestNumber({
             number,
             instanceName: instanceName(),
             instanceType: instanceType(),
             messageType: 'text',
             text,
-            payload: { text },
+            payload: { text, ...previewOptions },
         });
         if (testDelivery) return testDelivery;
         const recipient = await normalizeSendRecipient(number);
@@ -318,6 +321,7 @@ function createEvolutionClient(instanceEnvVar, defaultName) {
             number: recipient,
             text,
             delay: 0,
+            ...previewOptions,
         });
         const messageId = data?.key?.id || data?.messageId || data?.id || '';
         return { messageId, raw: data };

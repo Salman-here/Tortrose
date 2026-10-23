@@ -27,6 +27,7 @@ const {
     requirePresentationMoney,
 } = require('../../utils/orderPresentation');
 const { toMinorUnits } = require('../moneyMath');
+const { buyerOrderMessage } = require('./buyerOrderCopy');
 const inlineText = (value, maxLength = 160) => String(value ?? '')
     .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
     .replace(/[*_~`]/g, '')
@@ -154,7 +155,7 @@ exports.KEEPCANCEL_BTN_PREFIX = KEEPCANCEL_BTN_PREFIX;
 // sits above the buttons and provides a full fallback.
 // ──────────────────────────────────────────────────────────────────────────
 
-exports.buildOrderButtonsPayload = (order) => {
+exports.buildOrderButtonsPayload = (order, { friendly = false } = {}) => {
     const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = assertCodConfirmationMoneyIntegrity(order);
@@ -168,7 +169,11 @@ exports.buildOrderButtonsPayload = (order) => {
 
     return {
         title: `Rozare — Order #${order.orderId}`,
-        description: [
+        description: friendly ? buyerOrderMessage(order, {
+            headline: 'Please confirm your cash on delivery order 📦',
+            moneyLine: `Amount due on delivery: *${total}*`,
+            detail: 'Review your items, then tap Confirm order or Cancel order below. Your order can be prepared after you confirm.',
+        }) : [
             `Hi ${buyerName},`,
             ``,
             `Please confirm your cash on delivery order.`,
@@ -202,7 +207,7 @@ exports.buildOrderButtonsPayload = (order) => {
 // that actually renders on WhatsApp today — uses the legacy SINGLE_SELECT
 // listType (Evolution's `sendList`, fixed in the homolog/develop build).
 // ──────────────────────────────────────────────────────────────────────────
-exports.buildOrderListPayload = (order) => {
+exports.buildOrderListPayload = (order, { friendly = false } = {}) => {
     const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = assertCodConfirmationMoneyIntegrity(order);
@@ -215,7 +220,11 @@ exports.buildOrderListPayload = (order) => {
 
     return {
         title: `Rozare — Order #${order.orderId}`,
-        description: [
+        description: friendly ? buyerOrderMessage(order, {
+            headline: 'Please confirm your cash on delivery order 📦',
+            moneyLine: `Amount due on delivery: *${total}*`,
+            detail: 'Review your items, then tap Review order to choose Confirm order or Cancel order. Your order can be prepared after you confirm.',
+        }) : [
             `Hi ${buyerName},`,
             ``,
             `Please confirm your cash on delivery order.`,

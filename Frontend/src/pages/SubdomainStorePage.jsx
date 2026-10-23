@@ -199,7 +199,7 @@ const SubdomainStorePage = () => {
                         ? `${store.description.slice(0, 140)} - Shop on Rozare.`
                         : `Shop products from ${store?.storeName} on Rozare. Browse products, reviews, trust signals, and seller-managed shipping options.`}
                     canonical={`https://${subdomain}.rozare.com/`}
-                    ogImage={store?.logo || undefined}
+                    ogImage={store?.logo || false}
                     ogImageAlt={`${store?.storeName} store logo`}
                 />
 

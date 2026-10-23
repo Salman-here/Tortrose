@@ -79,10 +79,24 @@ test('seller-controlled text cannot break out of structured data or metadata', (
   expect(html).toContain('&lt;/script&gt;');
 });
 
-test('gallery strings and missing logos fall back safely without invalid image URLs', () => {
+test('gallery images remain product-specific, and missing logos never borrow a generic brand image or store banner', () => {
   const html = renderProductPage({ product: { ...product, image: '', images: ['https://images.example.com/gallery.png'] }, store });
   expect(html).toContain('<meta property="og:image" content="https://images.example.com/gallery.png">');
   const storefront = renderStorePage({ store: { ...store, logo: ' ', banner: 'https://images.example.com/banner.png' } });
-  expect(storefront).toContain('<meta property="og:image" content="https://images.example.com/banner.png">');
+  expect(storefront).not.toContain('<meta property="og:image"');
+  expect(storefront).not.toContain('<meta name="twitter:image"');
+  const withoutImage = renderProductPage({ product: { ...product, image: '', images: [] }, store });
+  expect(withoutImage).not.toContain('<meta property="og:image"');
+  expect(withoutImage).not.toContain('og-image.png');
   expect(renderProductPage({ product: { ...product, image: { invalid: true }, images: [] }, store })).not.toContain('%5Bobject');
+});
+
+test('product and store previews each contain exactly their own first image', () => {
+  const productHtml = renderProductPage({ product, store });
+  const storeHtml = renderStorePage({ store, products: [product] });
+  expect(productHtml.match(/property="og:image"/g)).toHaveLength(1);
+  expect(productHtml).toContain(`<meta property="og:image" content="${product.image}">`);
+  expect(storeHtml.match(/property="og:image"/g)).toHaveLength(1);
+  expect(storeHtml).toContain(`<meta property="og:image" content="${store.logo}">`);
+  expect(renderUnavailablePage({ kind: 'product' })).not.toContain('property="og:image"');
 });

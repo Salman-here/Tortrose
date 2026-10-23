@@ -243,7 +243,9 @@ export default async function middleware(request) {
   // crawlable at the HTTP layer so search engines can observe this directive,
   // but they must never enter the public index.
   if (isPrivatePath(url.pathname)) {
-    return next({ headers: { 'X-Robots-Tag': NOINDEX_HEADER } });
+    const target = new URL('/api/public-page', url);
+    target.searchParams.set('kind', 'private');
+    return rewrite(target, { headers: { 'X-Robots-Tag': NOINDEX_HEADER } });
   }
 
   // Vite's SPA fallback otherwise turns every typo into an indexable 200 page,

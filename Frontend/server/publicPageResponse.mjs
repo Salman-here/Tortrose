@@ -6,6 +6,20 @@ const NOINDEX = 'noindex, nofollow, noarchive, nosnippet';
 const ORIGIN = 'https://rozare.com';
 const PUBLIC_KINDS = new Set(['home', 'products', 'marketplace', 'product', 'store']);
 
+export function privateAppPage(appShell) {
+  const head = [
+    '<title>Your account | Rozare</title>',
+    '<meta name="description" content="Sign in to Rozare to view your account and order details.">',
+    '<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">',
+    '<meta property="og:title" content="Rozare">',
+    '<meta property="og:description" content="Sign in to view this private page.">',
+    '<meta name="twitter:card" content="summary">',
+  ].map(managed).join('\n');
+  return clearPrerenderSeoFallbacks(appShell)
+    .replace(/<meta\b[^>]*(?:property|name)=["'](?:og:[^"']*|twitter:[^"']*)["'][^>]*>/gi, '')
+    .replace('</head>', head + '\n</head>');
+}
+
 export function publicRenderTarget(kind, value = '') {
   if (!PUBLIC_KINDS.has(kind)) return null;
   if (kind === 'product' && !/^[a-f\d]{24}$/i.test(value)) return null;
@@ -31,19 +45,18 @@ export function mergePublicPage(appShell, publicHtml, canonical) {
   const body = publicHtml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1];
   if (!head || !body || !appShell.includes('<div id="root"></div>')) throw Error('SEO_DOCUMENT_INVALID');
   const tags = [];
-  let foundCanonical = false, foundImage = false, foundTitle = false;
+  let foundCanonical = false, foundTitle = false;
   for (const match of head.matchAll(/<title\b[^>]*>[\s\S]*?<\/title>|<meta\b[^>]*>|<link\b[^>]*>|<script\b[^>]*>[\s\S]*?<\/script>/gi)) {
     const tag = match[0], attrs = attributes(tag.split('>')[0]);
     if (/^<title\b/i.test(tag)) { foundTitle = true; tags.push(managed(tag)); }
     else if (/^<meta\b/i.test(tag) && (attrs.property?.startsWith('og:') || attrs.name?.startsWith('twitter:') || ['description', 'robots', 'googlebot'].includes(attrs.name))) {
-      if (attrs.property === 'og:image') foundImage = Boolean(attrs.content);
       tags.push(managed(tag));
     } else if (attrs.rel === 'canonical') {
       if (new URL(attrs.href).href !== new URL(canonical).href) throw Error('SEO_CANONICAL_MISMATCH');
       foundCanonical = true; tags.push(managed(tag));
     } else if (attrs.type === 'application/ld+json') tags.push(managed(tag));
   }
-  if (!foundCanonical || !foundImage || !foundTitle) throw Error('SEO_METADATA_INCOMPLETE');
+  if (!foundCanonical || !foundTitle) throw Error('SEO_METADATA_INCOMPLETE');
   // No-JavaScript readers get real public content. With JavaScript enabled,
   // the app checks account-specific blocks before displaying a signed-in
   // shopper's details; public metadata must not flash blocked content first.
@@ -53,6 +66,17 @@ export function mergePublicPage(appShell, publicHtml, canonical) {
 }
 
 export async function publicPageResponse({ kind, value, appShell, fetchImpl = fetch, apiOrigin = 'https://rozare.up.railway.app', noindex = false }) {
+  if (kind === 'private') {
+    try {
+      return new Response(privateAppPage(await appShell()), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store, max-age=0', 'X-Robots-Tag': NOINDEX, 'X-Content-Type-Options': 'nosniff' },
+      });
+    } catch {
+      return new Response('<!doctype html><title>Temporarily unavailable | Rozare</title><h1>Please try again shortly.</h1>', {
+        status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': NOINDEX, 'Retry-After': '60' },
+      });
+    }
+  }
   const target = publicRenderTarget(kind, value);
   const headers = {
     'Content-Type': 'text/html; charset=utf-8',

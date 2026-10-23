@@ -35,7 +35,7 @@ export default function SEOHead({
       : `${SITE_URL}${canonical.startsWith('/') ? canonical : `/${canonical}`}`)
     : null;
   const imageAlt     = ogImageAlt || fullTitle;
-  const imageUrl     = publicImageUrl(ogImage) || DEFAULT_IMG;
+  const imageUrl     = noindex || ogImage === false ? '' : (publicImageUrl(ogImage) || DEFAULT_IMG);
   const allKeywords  = keywords ? `${keywords}, ${DEFAULT_KEYWORDS}` : DEFAULT_KEYWORDS;
 
   return (
@@ -54,20 +54,20 @@ export default function SEOHead({
       <meta property="og:title"       content={fullTitle} />
       <meta property="og:description" content={description} />
       {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
-      <meta property="og:image"       content={imageUrl} />
+      {imageUrl && <meta property="og:image" content={imageUrl} />}
       {imageUrl.startsWith('https://') && <meta property="og:image:secure_url" content={imageUrl} />}
-      <meta property="og:image:alt"   content={imageAlt} />
-      {ogImageWidth > 0 && <meta property="og:image:width" content={String(ogImageWidth)} />}
-      {ogImageHeight > 0 && <meta property="og:image:height" content={String(ogImageHeight)} />}
+      {imageUrl && <meta property="og:image:alt" content={imageAlt} />}
+      {imageUrl && ogImageWidth > 0 && <meta property="og:image:width" content={String(ogImageWidth)} />}
+      {imageUrl && ogImageHeight > 0 && <meta property="og:image:height" content={String(ogImageHeight)} />}
 
       {/* ── Twitter Card ──────────────────────── */}
-      <meta name="twitter:card"        content="summary_large_image" />
+      <meta name="twitter:card"        content={imageUrl ? 'summary_large_image' : 'summary'} />
       <meta name="twitter:site"        content={TWITTER_SITE} />
       <meta name="twitter:creator"     content={TWITTER_SITE} />
       <meta name="twitter:title"       content={fullTitle} />
       <meta name="twitter:description" content={description} />
-      <meta name="twitter:image"       content={imageUrl} />
-      <meta name="twitter:image:alt"   content={imageAlt} />
+      {imageUrl && <meta name="twitter:image" content={imageUrl} />}
+      {imageUrl && <meta name="twitter:image:alt" content={imageAlt} />}
 
       {/* ── JSON-LD Structured Data ───────────── */}
       {jsonLd && (

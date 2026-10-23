@@ -27,6 +27,26 @@ afterAll(async () => {
 }, 60000);
 
 describe('interactive COD WhatsApp queue snapshots', () => {
+  test('friendly COD body keeps the exact confirmation buttons, total and separate variant quantities', () => {
+    const order = { orderId: 'ORD-FRIENDLY-COD', user: new mongoose.Types.ObjectId(), currency: 'PKR',
+      orderSummary: { subtotal: 500, shippingCost: 0, tax: 0, couponDiscount: 0, totalAmount: 500 },
+      orderItems: [
+        { name: 'Travel Mug', quantity: 2, price: 100, lineSubtotal: 200, selectedOptions: { Color: 'Red' } },
+        { name: 'Travel Mug', quantity: 3, price: 100, lineSubtotal: 300, selectedOptions: { Color: 'White' } },
+      ], shippingInfo: { fullName: ' Salman Khan' } };
+    const buttons = buildOrderButtonsPayload(order, { friendly: true });
+    const list = buildOrderListPayload(order, { friendly: true });
+    for (const description of [buttons.description, list.description]) {
+      expect(description).toMatch(/^Hey Salman! 👋/);
+      expect(description).toContain('Travel Mug (Color: Red) ×2');
+      expect(description).toContain('Travel Mug (Color: White) ×3');
+      expect(description).toContain('Amount due on delivery: *Rs500.00 PKR*');
+      expect(description).not.toMatch(/payment (?:is|was) confirmed|seller is packing/i);
+    }
+    expect(buttons.buttons).toEqual(buildOrderButtonsPayload(order).buttons);
+    expect(list.sections).toEqual(buildOrderListPayload(order).sections);
+  });
+
   test('untrusted product and store names cannot insert fake status lines into the buyer message', () => {
     const order = {
       orderId: 'ORD-SAFE-COPY', currency: 'PKR',

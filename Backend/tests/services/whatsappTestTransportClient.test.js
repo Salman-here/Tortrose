@@ -54,6 +54,19 @@ afterEach(() => {
 });
 
 describe('Evolution client test transport', () => {
+    test('internal order links disable preview generation in both the virtual capture and real API request', async () => {
+        const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+        await client.sendText('923001234567', 'Order details: https://rozare.com/user-dashboard/orders');
+        expect(mockCaptureOutbound).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ linkPreview: false }) }));
+        expect(mockPost).toHaveBeenCalledWith('/message/sendText/rozare-seller', expect.objectContaining({ linkPreview: false }));
+    });
+
+    test('public product links retain preview generation and recipient routing is unchanged', async () => {
+        const client = createEvolutionClient('EVOLUTION_SELLER_INSTANCE_NAME', 'rozare-seller');
+        await client.sendText('923001234567', 'Product: https://rozare.com/single-product/6ad0d6444966bc5a7583d639');
+        expect(mockPost).toHaveBeenCalledWith('/message/sendText/rozare-seller', expect.objectContaining({ linkPreview: true, number: '923001234567' }));
+    });
+
     test('returns the virtual delivery without calling Evolution for a captured number', async () => {
         const virtual = {
             messageId: 'rozare-test-message',

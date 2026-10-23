@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { readBuiltAppShell } from '../server/appShell.mjs';
 import { mergePublicPage, publicPageResponse, publicRenderTarget } from '../server/publicPageResponse.mjs';
 import middleware, { nonIndexableQuery, publicPageFunctionUrl } from '../middleware.js';
-import { DEFAULT_SHARE_IMAGE, productShareImage, storeShareImage } from '../src/utils/seoImage.js';
+import { productShareImage, storeShareImage } from '../src/utils/seoImage.js';
 
 const id = '64b000000000000000000001';
 const canonical = `https://rozare.com/single-product/${id}`;
@@ -112,7 +112,9 @@ test('private app pages and preview deployments remain noindex', async () => {
   for (const path of ['/checkout', '/user-dashboard/orders', '/seller-dashboard/payments', '/orders/confirm/private', '/safepay/return', '/login']) {
     const response = await middleware(new Request('https://rozare.com' + path));
     assert.match(response.headers.get('x-robots-tag'), /noindex/);
-    assert.equal(response.headers.get('x-middleware-rewrite'), null);
+    const target = new URL(response.headers.get('x-middleware-rewrite'));
+    assert.equal(target.search, '?kind=private');
+    assert(!target.href.includes('confirm/private'));
   }
   assert.match((await middleware(new Request('https://preview.vercel.app/'))).headers.get('x-robots-tag'), /noindex/);
 });
@@ -156,8 +158,36 @@ test('private SPA navigation uses the same indexing rules, and the catalog has a
 test('product images use the product gallery, and stores prefer their own logo', () => {
   assert.equal(productShareImage({ image, images: [{ url: 'https://images.example.com/other.png' }] }), image);
   assert.equal(productShareImage({ image: ' ', images: ['https://images.example.com/gallery.png'] }), 'https://images.example.com/gallery.png');
-  assert.equal(productShareImage({ image: 'javascript:alert(1)' }), DEFAULT_SHARE_IMAGE);
-  assert.equal(productShareImage({ image: 'https://user:password@images.example.com/private.png' }), DEFAULT_SHARE_IMAGE);
+  assert.equal(productShareImage({ image: 'javascript:alert(1)' }), false);
+  assert.equal(productShareImage({ image: 'https://user:password@images.example.com/private.png' }), false);
   assert.equal(storeShareImage({ logo: '/store-logo.png', banner: image }), 'https://rozare.com/store-logo.png');
-  assert.equal(storeShareImage({ logo: ' ', banner: image }), image);
+  assert.equal(storeShareImage({ logo: ' ', banner: image }), false);
+});
+
+test('private pages serve the actual app without preview images, account data, private URLs or upstream requests', async () => {
+  let calls = 0;
+  const response = await publicPageResponse({ kind: 'private', appShell: async () => shell,
+    fetchImpl: async () => { calls++; throw Error('must not fetch private data'); } });
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.equal(calls, 0);
+  assert.match(response.headers.get('cache-control'), /private, no-store/);
+  assert.match(response.headers.get('x-robots-tag'), /noindex/);
+  assert(!html.includes('og:image'));
+  assert(!html.includes('twitter:image'));
+  assert(!html.includes('brand.png'));
+  assert(html.includes('/assets/app-real.js'));
+  assert(html.includes('<div id="root"></div>'));
+  // Helmet must take ownership on hydration/navigation; an unmanaged private
+  // robots/title tag must not linger after the buyer opens a public product.
+  assert(html.includes('<title data-rh="true">Your account | Rozare</title>'));
+  assert(html.includes('<meta data-rh="true" name="robots"'));
+});
+
+test('public pages with no genuine image still render, without restoring the generic app image', () => {
+  const noImage = document().replace(/<meta[^>]*(?:og:image|twitter:image)[^>]*>/g, '');
+  const html = mergePublicPage(shell, noImage, canonical);
+  assert(html.includes('Travel Mug'));
+  assert(!html.includes('brand.png'));
+  assert(!html.includes('og:image'));
 });

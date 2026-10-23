@@ -17,7 +17,7 @@ export function renderPublicPage(key) {
     ? { '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: commerceFaqCategories.flatMap(category => category.questions.map(item => ({ '@type': 'Question', name: item.q, acceptedAnswer: { '@type': 'Answer', text: item.a } }))) }
     : { '@context': 'https://schema.org', '@type': page.key === 'about' ? 'AboutPage' : page.key === 'contact' ? 'ContactPage' : 'WebPage', name: page.title, description: page.description, url: 'https://rozare.com' + page.path };
   const html = renderToString(<HelmetProvider context={context}><StaticRouter location={page.path}>
-    <SEOHead page={page.path} jsonLd={jsonLd} />
+    <SEOHead page={page.path} jsonLd={jsonLd} ogImage={page.key === 'tracking' ? false : undefined} />
     <TestPhaseNotice />
     <main data-commerce-content className="max-w-4xl mx-auto px-4 py-10">
       <nav aria-label="Site navigation" className="flex flex-wrap gap-5 mb-8"><a href="/">Rozare</a><a href="/marketplace">Stores</a><a href="/faq">Help</a></nav>

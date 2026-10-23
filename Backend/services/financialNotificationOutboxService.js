@@ -28,6 +28,7 @@ const {
   buildOrderListPayload,
 } = require('./whatsapp/messageBuilder');
 const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
+const { buyerOrderMessage } = require('./whatsapp/buyerOrderCopy');
 
 const stringId = value => value?._id?.toString?.() || value?.toString?.() || '';
 const safeText = (value, max = 300) => String(value || '').trim().slice(0, max);
@@ -81,6 +82,32 @@ const buyerOrderRecipient = order => {
   };
 };
 
+// Existing notifications are immutable. A replay of a pre-refresh event must
+// still render its original copy and pass the normal content/money hash check,
+// not resend a newly worded receipt or weaken outbox idempotency validation.
+const friendlyBuyerOrderCopy = async (eventKey, channels, session) => {
+  if (!channels.includes('whatsapp')) return false;
+  const existing = await NotificationOutbox.findOne({
+    eventKey, channel: 'whatsapp', 'recipient.audienceRole': 'buyer',
+  }).select('payload.message').session(session).lean();
+  return !existing || existing.payload?.message?.startsWith('Hey ');
+};
+
+const BUYER_ORDER_HEADLINES = Object.freeze({
+  confirmed: 'Your order is confirmed! ✅',
+  processing: 'Your order is being prepared! 📦',
+  shipped: 'Your order is on the way! 🚚',
+  delivered: 'Your order was marked delivered 📬',
+  cancelled: 'Your order has been cancelled',
+});
+
+const BUYER_ORDER_DETAILS = Object.freeze({
+  confirmed: 'Your order is confirmed. We’ll keep you updated as your items are prepared and shipped.',
+  processing: 'The seller is preparing your items now — shipping is next.',
+  shipped: 'Your order has been marked as shipped. Open your order for shipment and tracking details.',
+  delivered: 'Your order has been marked delivered. Check your order for delivery details and any available return or warranty options.',
+});
+
 const ORDER_LIFECYCLE_STATUS_COPY = Object.freeze({
   confirmed: {
     title: 'Order confirmed',
@@ -111,7 +138,7 @@ const ORDER_CANCELLATION_BUYER_DETAIL = Object.freeze({
   system: 'Rozare automatically cancelled your order.',
 });
 
-const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole } = {}) => {
+const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole, order, friendly = true } = {}) => {
   const copy = ORDER_LIFECYCLE_STATUS_COPY[status];
   const detail = status === 'cancelled'
     ? `${ORDER_CANCELLATION_BUYER_DETAIL[actorRole]} View your order for payment and refund details.`
@@ -132,7 +159,11 @@ const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole } = {}) =
       html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p><p>${totalSentence}</p>`,
     },
     whatsapp: {
-      message: `*${copy.title}*\n\nOrder: #${orderNumber}\n${detail}\n${totalSentence}\n\nView your order in Rozare for details.`,
+      message: friendly ? buyerOrderMessage(order, {
+        orderNumber, headline: BUYER_ORDER_HEADLINES[status],
+        detail: status === 'cancelled' ? detail : BUYER_ORDER_DETAILS[status],
+        moneyLine: 'Order total: {{money.order_total}}',
+      }) : `*${copy.title}*\n\nOrder: #${orderNumber}\n${detail}\n${totalSentence}\n\nView your order in Rozare for details.`,
     },
   };
 };
@@ -176,9 +207,11 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
   const transitionHash = crypto.createHash('sha256')
     .update(`${previous}:${status}:${at.toISOString()}`)
     .digest('hex');
+  const eventKey = `order:${id}:lifecycle:${transitionHash}:buyer:v1`;
+  const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
 
   return enqueueNotificationEvent({
-    eventKey: `order:${id}:lifecycle:${transitionHash}:buyer:v1`,
+    eventKey,
     eventType: 'order.status_updated',
     aggregateType: 'Order',
     aggregateId: id,
@@ -186,7 +219,7 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
     financial: true,
     recipient,
     channels: selectedChannels,
-    templates: orderLifecycleBuyerTemplates(orderNumber, status, { actorRole }),
+    templates: orderLifecycleBuyerTemplates(orderNumber, status, { actorRole, order, friendly }),
     metadata: {
       category: 'order',
       linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
@@ -212,6 +245,12 @@ const SELLER_FULFILLMENT_STATUS_COPY = Object.freeze({
   processing: { title: 'Your items are being prepared', detail: 'is preparing your items' },
   shipped: { title: 'Your items have shipped', detail: 'marked your items as shipped' },
   delivered: { title: 'Your items were marked delivered', detail: 'marked your items as delivered' },
+});
+const BUYER_SHIPMENT_HEADLINES = Object.freeze({
+  confirmed: 'Your items are confirmed! ✅',
+  processing: 'Your items are being prepared! 📦',
+  shipped: 'Your items are on the way! 🚚',
+  delivered: 'Your items were marked delivered 📬',
 });
 
 const sellerFulfillmentBuyerMoneySnapshot = (order, sellerId) => {
@@ -243,6 +282,9 @@ const sellerFulfillmentBuyerTemplates = ({
   status,
   itemSummary,
   shippingSummary,
+  order,
+  items,
+  friendly = true,
 }) => {
   const copy = SELLER_FULFILLMENT_STATUS_COPY[status];
   const detail = `${storeName} ${copy.detail}: ${itemSummary}.`;
@@ -257,7 +299,16 @@ const sellerFulfillmentBuyerTemplates = ({
       html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p>${shipping ? `<p>${escapeHtml(shippingSummary)}</p>` : ''}<p>${money}</p><p>View your order for delivery updates.</p>`,
     },
     whatsapp: {
-      message: `*${copy.title}*\n\nOrder: #${orderNumber}\nStore: ${storeName}\nItems: ${itemSummary}${shippingSummary ? `\n${shippingSummary}` : ''}\n${money}\n\nView your order in Rozare for delivery updates.`,
+      message: friendly ? buyerOrderMessage(order, {
+        orderNumber, storeName, items, shippingSummary,
+        headline: BUYER_SHIPMENT_HEADLINES[status],
+        detail: status === 'processing'
+          ? 'The seller is preparing these items now — shipping is next.'
+          : status === 'confirmed' ? 'The seller has confirmed these items. We’ll keep you updated on this shipment.'
+            : status === 'shipped' ? 'These items have been marked as shipped. Open your order for shipment and tracking details.'
+              : 'These items have been marked delivered. Check your order for delivery details and any available return or warranty options.',
+        moneyLine: 'Total for this store: {{money.seller_order_total}}',
+      }) : `*${copy.title}*\n\nOrder: #${orderNumber}\nStore: ${storeName}\nItems: ${itemSummary}${shippingSummary ? `\n${shippingSummary}` : ''}\n${money}\n\nView your order in Rozare for delivery updates.`,
     },
   };
 };
@@ -325,9 +376,11 @@ async function enqueueOrderSellerFulfillmentBuyerNotifications(order, {
   const transitionHash = crypto.createHash('sha256')
     .update(`${seller}:${previous}:${status}:${at.toISOString()}`)
     .digest('hex');
+  const eventKey = `order:${id}:seller-fulfillment:${transitionHash}:buyer:v1`;
+  const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
 
   return enqueueNotificationEvent({
-    eventKey: `order:${id}:seller-fulfillment:${transitionHash}:buyer:v1`,
+    eventKey,
     eventType: 'order.seller_fulfillment_updated',
     aggregateType: 'Order',
     aggregateId: id,
@@ -341,6 +394,9 @@ async function enqueueOrderSellerFulfillmentBuyerNotifications(order, {
       status,
       itemSummary,
       shippingSummary,
+      order,
+      items: sellerItems,
+      friendly,
     }),
     metadata: {
       category: 'order',
@@ -452,7 +508,7 @@ async function enqueueOrderStockRefundBuyerNotifications(order, {
   });
 }
 
-const paidBuyerTemplates = orderNumber => ({
+const paidBuyerTemplates = (orderNumber, { order, friendly = true } = {}) => ({
   inapp: {
     title: 'Payment received',
     body: `Your payment for order #${orderNumber} was successful. Amount paid: {{money.order_total}}.`,
@@ -467,7 +523,11 @@ const paidBuyerTemplates = orderNumber => ({
     html: `<p>Your payment for order <strong>#${escapeHtml(orderNumber)}</strong> was successful.</p><p>Amount paid: <strong>{{money.order_total}}</strong>.</p><p>We will keep you updated as your items are prepared and shipped.</p>`,
   },
   whatsapp: {
-    message: `*Payment received*\n\nOrder: #${orderNumber}\nAmount paid: {{money.order_total}}\n\nWe will keep you updated as your items are prepared and shipped. View your order in Rozare for details.`,
+    message: friendly ? buyerOrderMessage(order, {
+      orderNumber, headline: 'Payment received! ✅',
+      detail: 'Thanks for shopping with Rozare! Your payment is confirmed. We will keep you updated as your items are prepared and shipped.',
+      moneyLine: 'Amount paid: {{money.order_total}}',
+    }) : `*Payment received*\n\nOrder: #${orderNumber}\nAmount paid: {{money.order_total}}\n\nWe will keep you updated as your items are prepared and shipped. View your order in Rozare for details.`,
   },
 });
 
@@ -482,8 +542,10 @@ async function enqueuePaidOrderBuyerNotifications(order, {
     includeAccountChannels: recipient.kind === 'user',
   });
   if (!selectedChannels.length) return [];
+  const eventKey = `order:${id}:paid:buyer:v1`;
+  const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
   return enqueueNotificationEvent({
-    eventKey: `order:${id}:paid:buyer:v1`,
+    eventKey,
     eventType: 'order.paid',
     aggregateType: 'Order',
     aggregateId: id,
@@ -493,7 +555,7 @@ async function enqueuePaidOrderBuyerNotifications(order, {
       ? { ...recipient, allowBlocked: true }
       : recipient,
     channels: selectedChannels,
-    templates: paidBuyerTemplates(orderNumber),
+    templates: paidBuyerTemplates(orderNumber, { order, friendly }),
     metadata: {
       category: 'order',
       linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
@@ -568,7 +630,7 @@ const requireZeroSnapshot = (snapshot, label) => {
   return snapshot;
 };
 
-const noChargeBuyerTemplates = orderNumber => ({
+const noChargeBuyerTemplates = (orderNumber, { order, friendly = true } = {}) => ({
   inapp: {
     title: 'Order confirmed',
     body: `Order #${orderNumber} is confirmed. Total: {{money.order_total}}; no payment was required.`,
@@ -583,7 +645,11 @@ const noChargeBuyerTemplates = orderNumber => ({
     html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong> is confirmed.</p><p>Order total: <strong>{{money.order_total}}</strong>.</p><p>No payment was required or charged.</p>`,
   },
   whatsapp: {
-    message: `*Your order is confirmed*\n\nOrder: #${orderNumber}\nTotal: {{money.order_total}}\nNo payment was required or charged.\n\nView your order in Rozare.`,
+    message: friendly ? buyerOrderMessage(order, {
+      orderNumber, headline: BUYER_ORDER_HEADLINES.confirmed,
+      detail: 'No payment was required or charged. We’ll keep you updated as your items are prepared and shipped.',
+      moneyLine: 'Order total: {{money.order_total}}',
+    }) : `*Your order is confirmed*\n\nOrder: #${orderNumber}\nTotal: {{money.order_total}}\nNo payment was required or charged.\n\nView your order in Rozare.`,
   },
 });
 
@@ -598,8 +664,10 @@ async function enqueueNoChargeOrderBuyerNotifications(order, {
     includeAccountChannels: recipient.kind === 'user',
   });
   if (!selectedChannels.length) return [];
+  const eventKey = `order:${id}:no-charge-confirmed:buyer:v1`;
+  const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
   return enqueueNotificationEvent({
-    eventKey: `order:${id}:no-charge-confirmed:buyer:v1`,
+    eventKey,
     eventType: 'order.no_charge_confirmed',
     aggregateType: 'Order',
     aggregateId: id,
@@ -612,7 +680,7 @@ async function enqueueNoChargeOrderBuyerNotifications(order, {
       ? { ...recipient, allowBlocked: true }
       : recipient,
     channels: selectedChannels,
-    templates: noChargeBuyerTemplates(orderNumber),
+    templates: noChargeBuyerTemplates(orderNumber, { order, friendly }),
     metadata: {
       category: 'order',
       linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
@@ -759,6 +827,8 @@ async function enqueueCodOrderBuyerConfirmationNotification(order, {
     includeAccountChannels: recipient.kind === 'user',
   });
   if (!selectedChannels.length) return [];
+  const eventKey = `order:${id}:confirmation-requested:buyer:v1`;
+  const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
   const templates = {
     inapp: {
       title: 'Confirm your cash on delivery order',
@@ -774,15 +844,19 @@ async function enqueueCodOrderBuyerConfirmationNotification(order, {
       html: `<p>Your cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong> is awaiting confirmation.</p><p>Amount due on delivery: <strong>{{money.order_total}}</strong>.</p><p>Please review and confirm your order so fulfillment can begin.</p><div style="margin:24px 0"><a href="${escapeHtml(confirmIntentUrl)}" style="display:inline-block;background:#13b6bb;background-image:linear-gradient(110deg,#13b6bb,#5866f3);color:#fff;padding:12px 22px;border-radius:12px;text-decoration:none;font-weight:700;margin:0 10px 10px 0">Confirm order</a><a href="${escapeHtml(cancelIntentUrl)}" style="display:inline-block;background:#f3f0fa;color:#49566d;padding:12px 22px;border:1px solid #e0e4ef;border-radius:12px;text-decoration:none;font-weight:700;margin:0 0 10px">Cancel order</a></div><p style="color:#64748b;font-size:13px">Either button opens Rozare, where you can review and confirm your choice.</p>`,
     },
     whatsapp: {
-      message: `*Confirm your cash on delivery order*\n\nOrder: #${orderNumber}\nAmount due on delivery: {{money.order_total}}\n\nPlease review and confirm your order so fulfillment can begin:\n${confirmUrl}`,
+      message: friendly ? buyerOrderMessage(order, {
+        orderNumber, headline: 'Please confirm your cash on delivery order 📦',
+        moneyLine: 'Amount due on delivery: {{money.order_total}}',
+        detail: 'Review your items, then choose Confirm order or Cancel order. Your order can be prepared after you confirm.',
+      }) : `*Confirm your cash on delivery order*\n\nOrder: #${orderNumber}\nAmount due on delivery: {{money.order_total}}\n\nPlease review and confirm your order so fulfillment can begin:\n${confirmUrl}`,
     },
   };
   const whatsappInteractive = selectedChannels.includes('whatsapp') ? {
-    buttonsPayloadJson: JSON.stringify(buildOrderButtonsPayload(order)),
-    listPayloadJson: JSON.stringify(buildOrderListPayload(order)),
+    buttonsPayloadJson: JSON.stringify(buildOrderButtonsPayload(order, { friendly })),
+    listPayloadJson: JSON.stringify(buildOrderListPayload(order, { friendly })),
   } : null;
   return enqueueNotificationEvent({
-    eventKey: `order:${id}:confirmation-requested:buyer:v1`,
+    eventKey,
     eventType: 'order.confirmation_requested',
     aggregateType: 'Order',
     aggregateId: id,

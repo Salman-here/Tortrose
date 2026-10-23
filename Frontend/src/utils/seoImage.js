@@ -13,9 +13,9 @@ export function publicImageUrl(value) {
 
 export function productShareImage(product) {
   return [product?.image, ...(Array.isArray(product?.images) ? product.images.map(image => typeof image === 'string' ? image : image?.url) : [])]
-    .map(publicImageUrl).find(Boolean) || DEFAULT_SHARE_IMAGE;
+    .map(publicImageUrl).find(Boolean) || false;
 }
 
 export function storeShareImage(store) {
-  return [store?.logo, store?.banner].map(publicImageUrl).find(Boolean) || DEFAULT_SHARE_IMAGE;
+  return publicImageUrl(store?.logo) || false;
 }

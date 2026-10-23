@@ -22,7 +22,7 @@ const pureBuilder = sourcePath => {
   if (!SOURCE_REVISION) return require(path.resolve(ROOT, sourcePath));
   const localRequire = createRequire(path.resolve(ROOT, sourcePath)), module = { exports: {} };
   const context = vm.createContext({ module, exports: module.exports, Date, URL, Object, String, Number, Array, Map, Set, Math, JSON,
-    require: name => ['../../utils/orderPresentation', '../moneyMath'].includes(name) ? localRequire(name)
+    require: name => ['../../utils/orderPresentation', '../moneyMath', './buyerOrderCopy'].includes(name) ? localRequire(name)
       : (() => { throw new Error(`Historical builder dependency blocked: ${name}`); })() });
   new vm.Script(historicalText(sourcePath), { filename: `historical:${sourcePath}` }).runInContext(context, { timeout: 1000 });
   return module.exports;
@@ -271,8 +271,8 @@ function buildFixedWhatsAppGalleryEntries({ includeLegacy = true, includeBefore 
     if (!definition) throw new Error(`Missing message-builder export: ${method}`);
     add('Orders', name, units.buyer, { node: definition.node }, payload, { activity, before: oldMap.get(name) || null });
   };
-  pureBuyer('COD order: confirm or cancel buttons', 'buildOrderButtonsPayload', buyer.buildOrderButtonsPayload(sampleOrder));
-  pureBuyer('COD order: interactive list', 'buildOrderListPayload', buyer.buildOrderListPayload(sampleOrder));
+  pureBuyer('COD order: confirm or cancel buttons', 'buildOrderButtonsPayload', buyer.buildOrderButtonsPayload(sampleOrder, { friendly: true }));
+  pureBuyer('COD order: interactive list', 'buildOrderListPayload', buyer.buildOrderListPayload(sampleOrder, { friendly: true }));
   pureBuyer('Paid order information', 'buildOrderPlacedInfoMessage', buyer.buildOrderPlacedInfoMessage({ ...sampleOrder, paymentMethod: 'safepay' }));
   pureBuyer('Reconfirm a cancelled COD order', 'buildReconfirmButtonsPayload', buyer.buildReconfirmButtonsPayload(sampleOrder, ''));
   covered.add(siteKey(units.webhook, reconfirmSend));

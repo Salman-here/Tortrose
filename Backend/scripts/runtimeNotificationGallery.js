@@ -14,6 +14,7 @@ const { parse } = require('@babel/parser');
 const { notificationActionLabel, outboundNotificationUrl, prepareTransactionalEmail } = require('../utils/transactionalEmail');
 const { escapeHtml, formatItemOptionsText } = require('../utils/orderPresentation');
 const { storefrontNotificationUrl } = require('../utils/storefrontNotificationUrl');
+const { buyerOrderMessage } = require('../services/whatsapp/buyerOrderCopy');
 
 const ROOT = path.resolve(__dirname, '..');
 const SOURCE_REVISION = process.env.ROZARE_GALLERY_SOURCE_REVISION || '';
@@ -44,7 +45,7 @@ function pureSourceModule(relative) {
   const localRequire = createRequire(path.resolve(ROOT, relative));
   const module = { exports: {} };
   const context = vm.createContext({ module, exports: module.exports, Date, URL, Object, String, Number, Array, Map, Set, Math, JSON, Intl,
-    require: name => ['../../utils/orderPresentation', '../moneyMath'].includes(name) ? localRequire(name) : blocked(name) });
+    require: name => ['../../utils/orderPresentation', '../moneyMath', './buyerOrderCopy'].includes(name) ? localRequire(name) : blocked(name) });
   new vm.Script(source(relative).text, { filename: `historical:${relative}` }).runInContext(context, { timeout: 1000 });
   return module.exports;
 }
@@ -257,21 +258,27 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
     'SELLER_FULFILLMENT_STATUS_COPY', 'sellerFulfillmentBuyerTemplates', 'paidBuyerTemplates', 'paidSellerTemplates',
     'noChargeBuyerTemplates', 'noChargeSellerTemplates', 'codSellerPlacedTemplates', 'codSellerDecisionTemplates',
     'returnBuyerTemplates', 'returnSellerTemplates', ...(source(financialPath).text.includes('const warrantySettlementTemplates') ? ['warrantySettlementTemplates'] : [])];
-  const financial = declarations(financialPath, financialNames, deps);
+  if (source(financialPath).text.includes('const BUYER_ORDER_HEADLINES')) {
+    financialNames.unshift('BUYER_ORDER_HEADLINES', 'BUYER_ORDER_DETAILS', 'BUYER_SHIPMENT_HEADLINES');
+  }
+  const financial = declarations(financialPath, financialNames, { ...deps, buyerOrderMessage });
   const f = financial.result;
+  const buyerPreviewOrder = { user: IDS.buyer, orderId: 'ORD-PREVIEW', shippingInfo: { fullName: 'Sam Preview' },
+    orderItems: [{ name: 'Travel Mug', quantity: 2, selectedOptions: { Color: 'Blue' } }] };
   for (const status of Object.keys(f.ORDER_LIFECYCLE_STATUS_COPY)) {
     for (const actorRole of status === 'cancelled' ? ['buyer', 'seller', 'admin', 'system'] : ['buyer']) {
       record(financialPath, financial.lines.orderLifecycleBuyerTemplates, `Buyer order ${status}${status === 'cancelled' ? ` by ${actorRole}` : ''}`,
-        f.orderLifecycleBuyerTemplates('ORD-PREVIEW', status, { actorRole }));
+        f.orderLifecycleBuyerTemplates('ORD-PREVIEW', status, { actorRole, order: buyerPreviewOrder }));
     }
   }
   for (const status of Object.keys(f.SELLER_FULFILLMENT_STATUS_COPY)) {
     record(financialPath, financial.lines.sellerFulfillmentBuyerTemplates, `Seller shipment ${status}`, f.sellerFulfillmentBuyerTemplates({
-      orderNumber: 'ORD-PREVIEW', storeName: 'Atlas Aura', status, itemSummary: 'Travel Mug (Color: Blue) × 1', shippingSummary: 'Standard shipping: 5 days.' }));
+      orderNumber: 'ORD-PREVIEW', storeName: 'Atlas Aura', status, itemSummary: 'Travel Mug (Color: Blue) × 1', shippingSummary: 'Standard shipping: 5 days.',
+      order: buyerPreviewOrder, items: buyerPreviewOrder.orderItems }));
   }
   for (const [builder, name, role] of [['paidBuyerTemplates', 'Buyer paid-order receipt', 'buyer'], ['paidSellerTemplates', 'Seller paid-order receipt', 'seller'],
     ['noChargeBuyerTemplates', 'Buyer no-charge order', 'buyer'], ['noChargeSellerTemplates', 'Seller no-charge order', 'seller'], ['codSellerPlacedTemplates', 'Seller COD order', 'seller']]) {
-    const templates = f[builder]('ORD-PREVIEW');
+    const templates = f[builder]('ORD-PREVIEW', { order: buyerPreviewOrder });
     const frozenMoney = inferredMoney(templates).map(value => name.includes('no-charge') ? { ...value, amountMinor: 0 } : value);
     record(financialPath, financial.lines[builder], name, templates, { role, money: frozenMoney });
   }
@@ -335,7 +342,7 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   // output is captured and rendered, never submitted.
   const messageBuilder = pureSourceModule('services/whatsapp/messageBuilder.js');
   const cod = declarations(financialPath, ['isValidSnapshotEmail', 'buyerReceiptChannels', 'buyerOrderRecipient', 'enqueueCodOrderBuyerConfirmationNotification'],
-    { ...deps, orderTotalSnapshot: () => money('order_total'), ...messageBuilder });
+    { ...deps, orderTotalSnapshot: () => money('order_total'), buyerOrderMessage, friendlyBuyerOrderCopy: async () => true, ...messageBuilder });
   await run(financialPath, 'Buyer COD confirmation', cod.lines.enqueueCodOrderBuyerConfirmationNotification,
     () => cod.result.enqueueCodOrderBuyerConfirmationNotification(order));
 

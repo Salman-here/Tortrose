@@ -97,6 +97,95 @@ const paidMixedOrder = () => {
 };
 
 describe('financial notification domain contracts', () => {
+  test('buyer paid WhatsApp receipt greets the checkout buyer and keeps distinct variants and quantities', async () => {
+    const { order, sellerA, sellerB } = paidMixedOrder();
+    order.shippingInfo.fullName = '  Salman Khan';
+    order.orderItems = [
+      { seller: sellerA, name: 'Travel Mug', quantity: 2, price: 100, lineSubtotal: 200, selectedOptions: { Color: 'Red' } },
+      { seller: sellerB, name: 'Travel Mug', quantity: 3, price: 560, lineSubtotal: 1680, selectedOptions: { Color: 'White' } },
+    ];
+    const [record] = await enqueuePaidOrderBuyerNotifications(order, { channels: ['whatsapp'] });
+    expect(record.payload.message).toMatch(/^Hey Salman! 👋/);
+    expect(record.payload.message).toContain('• Travel Mug (Color: Red) ×2');
+    expect(record.payload.message).toContain('• Travel Mug (Color: White) ×3');
+    expect(record.payload.message).toContain('Amount paid: Rs1,880.00 PKR');
+    expect(record.payload.message).toContain(`/user-dashboard/order/detail/${order._id}`);
+    expect(record.payload.message).not.toMatch(/seller is (?:packing|preparing)|refund completed/i);
+    const [replay] = await enqueuePaidOrderBuyerNotifications(order, { channels: ['whatsapp'] });
+    expect(String(replay._id)).toBe(String(record._id));
+    expect(replay.contentHash).toBe(record.contentHash);
+    order.orderSummary.totalAmount += 1;
+    await expect(enqueuePaidOrderBuyerNotifications(order, { channels: ['whatsapp'] }))
+      .rejects.toMatchObject({ code: 'NOTIFICATION_IDEMPOTENCY_CONFLICT' });
+  });
+
+  test('a pre-refresh paid receipt replay preserves its exact old message and normal money integrity checks', async () => {
+    const { order } = paidMixedOrder();
+    const legacy = { select() { return this; }, session() { return this; },
+      lean: async () => ({ payload: { message: '*Payment received*' } }) };
+    const lookup = jest.spyOn(NotificationOutbox, 'findOne').mockReturnValueOnce(legacy);
+    let original;
+    try { [original] = await enqueuePaidOrderBuyerNotifications(order, { channels: ['whatsapp'] }); }
+    finally { lookup.mockRestore(); }
+    expect(original.payload.message).toMatch(/^\*Payment received\*/);
+    const [replay] = await enqueuePaidOrderBuyerNotifications(order, { channels: ['whatsapp'] });
+    expect(String(replay._id)).toBe(String(original._id));
+    expect(replay.payload.message).toBe(original.payload.message);
+    expect(await NotificationOutbox.countDocuments()).toBe(1);
+    order.orderSummary.totalAmount += 1;
+    await expect(enqueuePaidOrderBuyerNotifications(order, { channels: ['whatsapp'] }))
+      .rejects.toMatchObject({ code: 'NOTIFICATION_IDEMPOTENCY_CONFLICT' });
+  });
+
+  test.each(['confirmed', 'processing', 'shipped', 'delivered', 'cancelled'])('buyer %s WhatsApp update is personalized without inventing a refund or payment', async status => {
+    const { order } = paidMixedOrder();
+    order.shippingInfo.fullName = 'Salman Khan';
+    order.orderStatus = status;
+    const [record] = await enqueueOrderLifecycleBuyerNotifications(order, {
+      status, previousStatus: 'pending', transitionAt: new Date('2026-10-23T03:00:00Z'),
+      actorRole: 'buyer', channels: ['whatsapp'],
+    });
+    expect(record.payload.message).toMatch(/^Hey Salman! 👋/);
+    expect(record.payload.message).toContain('PKR seller item ×1');
+    expect(record.payload.message).toContain('Order total: Rs1,880.00 PKR');
+    expect(record.payload.message).not.toMatch(/payment (?:was|is) (?:received|confirmed)|refund (?:was|is) (?:issued|completed)/i);
+    if (status === 'cancelled') expect(record.payload.message).toContain('You cancelled this order.');
+    if (status === 'delivered') expect(record.payload.message).toContain('marked delivered');
+  });
+
+  test('guest WhatsApp receipts use public tracking and a friendly fallback, not a protected account link', async () => {
+    const { order } = paidMixedOrder();
+    delete order.user;
+    const [record] = await enqueuePaidOrderBuyerNotifications(order, { channels: ['whatsapp'] });
+    expect(record.payload.message).toMatch(/^Hey there! 👋/);
+    expect(record.payload.message).toContain('https://rozare.com/track-order');
+    expect(record.payload.message).not.toContain('/user-dashboard/');
+  });
+
+  test.each([false, true])('COD copy preserves its frozen buttons, total and idempotency across the copy refresh (legacy=%s)', async legacyCopy => {
+    const { order } = paidMixedOrder();
+    order.paymentMethod = 'cash_on_delivery'; order.isPaid = false;
+    order.createdAt = new Date('2026-10-23T03:00:00Z');
+    order.confirmation = { token: 'a'.repeat(64) };
+    order.shippingInfo.fullName = 'Salman Khan';
+    let lookup;
+    if (legacyCopy) lookup = jest.spyOn(NotificationOutbox, 'findOne').mockReturnValueOnce({
+      select() { return this; }, session() { return this; }, lean: async () => ({ payload: { message: '*Confirm your cash on delivery order*' } }),
+    });
+    let original;
+    try { [original] = await enqueueCodOrderBuyerConfirmationNotification(order, { channels: ['whatsapp'] }); }
+    finally { lookup?.mockRestore(); }
+    const body = JSON.parse(original.payload.whatsappButtonsPayloadJson);
+    expect(body.buttons.map(button => button.id)).toEqual(['confirm_ORD-MIXED-1', 'cancel_ORD-MIXED-1']);
+    expect(body.description).toContain('Rs1,880.00 PKR');
+    expect(body.description.startsWith('Hey Salman! 👋')).toBe(!legacyCopy);
+    const [replay] = await enqueueCodOrderBuyerConfirmationNotification(order, { channels: ['whatsapp'] });
+    expect(String(replay._id)).toBe(String(original._id));
+    expect(replay.payload.whatsappButtonsPayloadJson).toBe(original.payload.whatsappButtonsPayloadJson);
+    expect(replay.contentHash).toBe(original.contentHash);
+    expect(await NotificationOutbox.countDocuments()).toBe(1);
+  });
+
   test.each(['inapp', 'push', 'email', 'whatsapp'])('seller paid receipt has a direct order link and renders both frozen money snapshots on %s', async channel => {
     const { order, sellerA } = paidMixedOrder();
     const [record] = await enqueuePaidOrderSellerNotifications(order, sellerA, { channels: [channel] });

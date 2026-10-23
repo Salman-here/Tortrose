@@ -30,6 +30,7 @@ export default function TrackOrderPage() {
   return (
     <>
       <SEOHead
+        ogImage={false}
         page="/track-order"
         keywords="track order, order tracking, rozare order tracking, track my order, order status, shipping status, delivery updates, where is my order, order updates, rozare tracking"
       />
