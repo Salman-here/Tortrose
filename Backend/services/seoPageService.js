@@ -46,6 +46,19 @@ const absoluteImageUrl = value => {
   }
 };
 
+// Preview-only delivery variant. Keep the original catalog images and schema
+// untouched; never rewrite signed, transformed, or non-Cloudinary URLs.
+// Frontend/src/utils/seoImage.js mirrors this rule, with a cross-runtime test.
+const socialPreviewImage = value => {
+  const image = absoluteImageUrl(value);
+  if (!image) return { url: '' };
+  const url = new URL(image);
+  const asset = url.pathname.match(/^\/([a-z\d_-]+)\/image\/upload\/(v\d+\/.+\.(?:avif|gif|jpe?g|png|webp|bmp|tiff?|svg))$/i);
+  if (url.protocol !== 'https:' || url.hostname !== 'res.cloudinary.com' || url.port || url.search || !asset) return { url: image };
+  url.pathname = `/${asset[1]}/image/upload/c_pad,w_1200,h_630,b_white/f_jpg/q_auto:good/${asset[2].replace(/\.[^./]+$/, '.jpg')}`;
+  return { url: url.href, mimeType: 'image/jpeg', width: 1200, height: 630 };
+};
+
 const productImages = product => [...new Set([
   absoluteImageUrl(product?.image),
   ...(Array.isArray(product?.images) ? product.images.map(image => absoluteImageUrl(typeof image === 'string' ? image : image?.url)) : []),
@@ -93,7 +106,8 @@ const renderDocument = ({
   const safeTitle = cleanText(title, SITE_NAME);
   const safeDescription = excerpt(description, 'Shop products from independent sellers and brands on Rozare.');
   const safeCanonical = cleanText(canonical, SITE_URL);
-  const safeImage = image === null ? '' : (absoluteImageUrl(image) || DEFAULT_IMAGE);
+  const previewImage = socialPreviewImage(image === null ? '' : (absoluteImageUrl(image) || DEFAULT_IMAGE));
+  const safeImage = previewImage.url;
   const safeImageAlt = cleanText(imageAlt, heading || safeTitle);
   const schemas = (Array.isArray(jsonLd) ? jsonLd : [jsonLd]).filter(Boolean);
   const schemaMarkup = schemas.map(schema => (
@@ -119,6 +133,9 @@ const renderDocument = ({
   ${safeImage ? `<meta property="og:image" content="${htmlEscape(safeImage)}">` : ''}
   ${safeImage.startsWith('https://') ? `<meta property="og:image:secure_url" content="${htmlEscape(safeImage)}">` : ''}
   ${safeImage ? `<meta property="og:image:alt" content="${htmlEscape(safeImageAlt)}">` : ''}
+  ${previewImage.mimeType ? `<meta property="og:image:type" content="${previewImage.mimeType}">` : ''}
+  ${previewImage.width ? `<meta property="og:image:width" content="${previewImage.width}">` : ''}
+  ${previewImage.height ? `<meta property="og:image:height" content="${previewImage.height}">` : ''}
   <meta name="twitter:card" content="${safeImage ? 'summary_large_image' : 'summary'}">
   <meta name="twitter:title" content="${htmlEscape(safeTitle)}">
   <meta name="twitter:description" content="${htmlEscape(safeDescription)}">
@@ -381,6 +398,7 @@ module.exports = {
   NOINDEX_ROBOTS,
   SITE_URL,
   cleanText,
+  socialPreviewImage,
   renderCatalogPage,
   renderMarketplacePage,
   renderProductPage,

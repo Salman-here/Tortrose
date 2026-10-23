@@ -1,5 +1,5 @@
 import { Helmet } from 'react-helmet-async';
-import { DEFAULT_SHARE_IMAGE, publicImageUrl } from '../../utils/seoImage';
+import { DEFAULT_SHARE_IMAGE, publicImageUrl, socialPreviewImage } from '../../utils/seoImage';
 import { publicSeoPage } from '../../content/publicSeoPages';
 
 const SITE_NAME    = 'Rozare';
@@ -35,7 +35,10 @@ export default function SEOHead({
       : `${SITE_URL}${canonical.startsWith('/') ? canonical : `/${canonical}`}`)
     : null;
   const imageAlt     = ogImageAlt || fullTitle;
-  const imageUrl     = noindex || ogImage === false ? '' : (publicImageUrl(ogImage) || DEFAULT_IMG);
+  const previewImage = socialPreviewImage(noindex || ogImage === false ? '' : (publicImageUrl(ogImage) || DEFAULT_IMG));
+  const imageUrl     = previewImage.url;
+  const imageWidth   = previewImage.width || ogImageWidth;
+  const imageHeight  = previewImage.height || ogImageHeight;
   const allKeywords  = keywords ? `${keywords}, ${DEFAULT_KEYWORDS}` : DEFAULT_KEYWORDS;
 
   return (
@@ -57,8 +60,9 @@ export default function SEOHead({
       {imageUrl && <meta property="og:image" content={imageUrl} />}
       {imageUrl.startsWith('https://') && <meta property="og:image:secure_url" content={imageUrl} />}
       {imageUrl && <meta property="og:image:alt" content={imageAlt} />}
-      {imageUrl && ogImageWidth > 0 && <meta property="og:image:width" content={String(ogImageWidth)} />}
-      {imageUrl && ogImageHeight > 0 && <meta property="og:image:height" content={String(ogImageHeight)} />}
+      {imageUrl && previewImage.mimeType && <meta property="og:image:type" content={previewImage.mimeType} />}
+      {imageUrl && imageWidth > 0 && <meta property="og:image:width" content={String(imageWidth)} />}
+      {imageUrl && imageHeight > 0 && <meta property="og:image:height" content={String(imageHeight)} />}
 
       {/* ── Twitter Card ──────────────────────── */}
       <meta name="twitter:card"        content={imageUrl ? 'summary_large_image' : 'summary'} />

@@ -5,6 +5,7 @@ const {
   renderProductPage,
   renderStorePage,
   renderUnavailablePage,
+  socialPreviewImage,
 } = require('../../services/seoPageService');
 
 const store = {
@@ -99,4 +100,37 @@ test('product and store previews each contain exactly their own first image', ()
   expect(storeHtml.match(/property="og:image"/g)).toHaveLength(1);
   expect(storeHtml).toContain(`<meta property="og:image" content="${store.logo}">`);
   expect(renderUnavailablePage({ kind: 'product' })).not.toContain('property="og:image"');
+});
+
+test('Cloudinary social previews are small JPEG delivery variants, without changing original product photos or store logos', () => {
+  const original = 'https://res.cloudinary.com/dyu9eaqag/image/upload/v1788025500/E-Commerce/product.png';
+  const preview = socialPreviewImage(original);
+  expect(preview).toEqual({ url: 'https://res.cloudinary.com/dyu9eaqag/image/upload/c_pad,w_1200,h_630,b_white/f_jpg/q_auto:good/v1788025500/E-Commerce/product.jpg',
+    mimeType: 'image/jpeg', width: 1200, height: 630 });
+  for (const html of [renderProductPage({ product: { ...product, image: original }, store }), renderStorePage({ store: { ...store, logo: original } })]) {
+    expect(html).toContain(`<meta property="og:image" content="${preview.url}">`);
+    expect(html).toContain(`<meta name="twitter:image" content="${preview.url}">`);
+    expect(html).toContain('<meta property="og:image:type" content="image/jpeg">');
+    expect(html).toContain('<meta property="og:image:width" content="1200">');
+    expect(html).toContain('<meta property="og:image:height" content="630">');
+    const schemas = [...html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs)].map(match => JSON.parse(match[1]));
+    const entity = schemas.find(schema => ['Product', 'Store'].includes(schema['@type']));
+    expect(entity['@type'] === 'Product' ? entity.image[0] : entity.logo).toBe(original);
+  }
+  const html = renderProductPage({ product: { ...product, image: original }, store });
+  expect(html).toContain(`<img src="${original}"`);
+  expect(original).toContain('/v1788025500/E-Commerce/product.png');
+});
+
+test('preview optimization never changes signed, transformed, non-image, or external image URLs', () => {
+  for (const url of [
+    product.image,
+    'https://res.cloudinary.com/demo/image/upload/s--signature--/v123/product.png',
+    'https://res.cloudinary.com/demo/image/upload/w_500/v123/product.png',
+    'https://res.cloudinary.com/demo/image/upload/v123/product.png?__cld_token__=private',
+    'https://res.cloudinary.com/demo/raw/upload/v123/document.pdf',
+    'https://res.cloudinary.com.evil.example/demo/image/upload/v123/product.png',
+  ]) expect(socialPreviewImage(url)).toEqual({ url });
+  expect(socialPreviewImage('javascript:alert(1)')).toEqual({ url: '' });
+  expect(socialPreviewImage(null)).toEqual({ url: '' });
 });

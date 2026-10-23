@@ -91,6 +91,18 @@ test('metadata is replaced once while the real app bundle, safe head tags and pu
   assert(html.includes('<div id="root"></div><noscript>'));
 });
 
+test('a manual-share client can read title and image metadata before scripts, with charset preserved at the start', () => {
+  const longShell = shell.replace('<head>', '<head><meta charset="UTF-8">').replace('<script type="module"', `<script>${'x'.repeat(20000)}</script><script type="module"`);
+  const html = mergePublicPage(longShell, document(), canonical);
+  assert.equal((html.match(/charset="UTF-8"/g) || []).length, 1);
+  assert(html.indexOf('charset="UTF-8"') < 1024);
+  assert(html.indexOf('property="og:image"') < 2000);
+  assert(html.indexOf('property="og:image"') < html.indexOf('<script>'));
+  assert(html.includes('x'.repeat(20000)));
+  assert(html.includes('/assets/app-real.js'));
+  assert(html.includes('name="theme-color"'));
+});
+
 test('the built app shell is resolved relative to the packaged module, not a monorepo launcher directory', async () => {
   // A deployment build supplies this file. Source-only test runs may not have it.
   let html;

@@ -61,7 +61,13 @@ export function mergePublicPage(appShell, publicHtml, canonical) {
   // the app checks account-specific blocks before displaying a signed-in
   // shopper's details; public metadata must not flash blocked content first.
   return clearPrerenderSeoFallbacks(appShell)
-    .replace('</head>', `${tags.join('\n')}\n</head>`)
+    // Put real metadata before analytics/app scripts, not at the end of the
+    // head. Lightweight preview clients should not need to read through those
+    // scripts first. Keep the charset declaration within the first 1024 bytes.
+    .replace(/<head\b([^>]*)>([\s\S]*?)<\/head>/i, (_, attrs, oldHead) => {
+      const charset = oldHead.match(/<meta\b[^>]*\bcharset\s*=[^>]*>/i)?.[0] || '<meta charset="UTF-8">';
+      return `<head${attrs}>\n${charset}\n${tags.join('\n')}\n${oldHead.replace(charset, '')}</head>`;
+    })
     .replace('<div id="root"></div>', `<div id="root"></div><noscript><div id="seo-public-fallback">${fallbackStyle}${body}</div></noscript>`);
 }
 
