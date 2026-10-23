@@ -109,6 +109,13 @@ test.each(['cash_on_delivery', 'wallet', 'safepay'])('%s cancellation commits wi
   expect(records).toHaveLength(8);
   expect(records.filter(record => record.recipient.audienceRole === 'buyer').every(record => record.payload.channelId === 'orders')).toBe(true);
   expect(records.every(record => record.payload.body?.length <= 1000)).toBe(true);
+  const buyerWhatsApp = records.find(record => record.channel === 'whatsapp' && record.recipient.audienceRole === 'buyer');
+  expect(buyerWhatsApp.payload.message).toMatch(/^Hey Notification! 👋/);
+  expect(buyerWhatsApp.payload.message).toContain(method === 'wallet' ? 'Your cancellation refund is complete' : 'Your items have been cancelled');
+  expect(buyerWhatsApp.payload.message).toContain('Cup 0 (Color: Green) ×1');
+  expect(buyerWhatsApp.payload.message).not.toContain('Cup 1');
+  expect(buyerWhatsApp.payload.message).toContain('Items from other stores are unchanged');
+  expect(records.find(record => record.channel === 'whatsapp' && record.recipient.audienceRole === 'seller').payload.message).not.toMatch(/^Hey /);
   expect(records.filter(record => record.recipient.audienceRole === 'seller').every(record => record.recipient.allowBlocked)).toBe(true);
   for (const record of records.filter(row => row.channel === 'inapp')) {
     expect((await deliverNotificationRecord(record)).outcome).toBe('delivered');
@@ -127,6 +134,30 @@ test('large option descriptions keep the refund amount in the bounded push/inapp
   const records = await Outbox.find({ channel: { $in: ['inapp', 'push'] } }).lean();
   expect(records).toHaveLength(4);
   for (const record of records) { expect(record.payload.body.length).toBeLessThanOrEqual(1000); expect(record.payload.body).toContain('$12.00 USD'); }
+});
+
+test('a pre-refresh buyer cancellation keeps its existing WhatsApp snapshot when replayed after the copy refresh', async () => {
+  const f = await fixture('cash_on_delivery');
+  const originalLookup = Outbox.findOne.bind(Outbox);
+  let legacySelected = false;
+  const lookup = jest.spyOn(Outbox, 'findOne').mockImplementation((query, ...args) => {
+    if (!legacySelected && query?.eventKey?.startsWith('order-cancellation:') && query.channel === 'whatsapp') {
+      legacySelected = true;
+      return { select() { return this; }, session() { return this; }, lean: async () => ({ payload: { message: '*Your order items are cancelled*' } }) };
+    }
+    return originalLookup(query, ...args);
+  });
+  let order;
+  try { order = await cancelBuyerOrder({ orderId: f.order._id, buyerId: f.buyer._id, sellerIds: [String(f.sellers[0]._id)] }); }
+  finally { lookup.mockRestore(); }
+  const row = await Cancellation.findOne({ order: order._id });
+  const first = await Outbox.findOne({ aggregateId: String(row._id), channel: 'whatsapp', 'recipient.audienceRole': 'buyer' }).select('+contentHash').lean();
+  expect(first.payload.message).toMatch(/^\*Your order items are cancelled\*/);
+  await notifyCancellation(row, order);
+  const replay = await Outbox.findById(first._id).select('+contentHash').lean();
+  expect(replay.payload.message).toBe(first.payload.message);
+  expect(replay.contentHash).toBe(first.contentHash);
+  expect(await Outbox.countDocuments()).toBe(8);
 });
 
 test.each(['USD', 'PKR', 'EUR', 'GBP'])('%s cancellation messages name the currency and selected option exactly once', async currency => {

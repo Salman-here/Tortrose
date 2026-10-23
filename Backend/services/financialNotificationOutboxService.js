@@ -29,6 +29,7 @@ const {
 } = require('./whatsapp/messageBuilder');
 const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
 const { buyerOrderMessage } = require('./whatsapp/buyerOrderCopy');
+const { friendlyBuyerOrderCopy } = require('./whatsapp/buyerOrderCopyVersion');
 
 const stringId = value => value?._id?.toString?.() || value?.toString?.() || '';
 const safeText = (value, max = 300) => String(value || '').trim().slice(0, max);
@@ -80,17 +81,6 @@ const buyerOrderRecipient = order => {
     email: order?.shippingInfo?.email,
     phone,
   };
-};
-
-// Existing notifications are immutable. A replay of a pre-refresh event must
-// still render its original copy and pass the normal content/money hash check,
-// not resend a newly worded receipt or weaken outbox idempotency validation.
-const friendlyBuyerOrderCopy = async (eventKey, channels, session) => {
-  if (!channels.includes('whatsapp')) return false;
-  const existing = await NotificationOutbox.findOne({
-    eventKey, channel: 'whatsapp', 'recipient.audienceRole': 'buyer',
-  }).select('payload.message').session(session).lean();
-  return !existing || existing.payload?.message?.startsWith('Hey ');
 };
 
 const BUYER_ORDER_HEADLINES = Object.freeze({

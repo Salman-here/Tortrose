@@ -350,6 +350,7 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   const capability = require('../services/safepayRefundCapabilityService');
   const rail = require('../services/safepayPaymentRailService');
   const cancellation = declarations(cancellationPath, ['notifyCancellation'], { ...deps,
+    buyerOrderMessage, friendlyBuyerOrderCopy: async () => true,
     normalizeSafepayPaymentRail: rail.normalizeSafepayPaymentRail,
     externalRefundCapability: capability.externalRefundCapability, originalPaymentLabel: capability.originalPaymentLabel });
   for (const [label, destination, completed, paymentRail, deductionMinor] of [

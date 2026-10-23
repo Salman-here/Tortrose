@@ -20,6 +20,8 @@ const { escapeHtml, formatItemOptionsText } = require('../utils/orderPresentatio
 const { getOnlineOrderFee } = require('./onlineOrderFeeService');
 const { normalizeSafepayPaymentRail, refreshOwnedSafepayOrderRail } = require('./safepayPaymentRailService');
 const { externalRefundCapability, originalPaymentLabel } = require('./safepayRefundCapabilityService');
+const { buyerOrderMessage } = require('./whatsapp/buyerOrderCopy');
+const { friendlyBuyerOrderCopy } = require('./whatsapp/buyerOrderCopyVersion');
 const id = value => String(value?._id || value || '');
 const fail = (message, code = 'ORDER_CANCELLATION_CONFLICT', statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const eligible = status => ['pending', 'confirmed', 'processing'].includes(status);
@@ -81,11 +83,21 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     const html = `<p>Order: <strong>${escapeHtml(order.orderId)}</strong><br>Store: <strong>${escapeHtml(name)}</strong></p><p>Items: ${escapeHtml(description)}</p><p>${escapeHtml(cancellationText)}${escapeHtml(refund)}</p>${sellerAction ? `<p>${escapeHtml(sellerAction.trim())}</p>` : ''}${otherStores ? `<p>${escapeHtml(otherStores.trim())}</p>` : ''}`;
     const recipient = seller ? { kind: 'user', audienceRole: 'seller', user: row.seller, destinationPolicy: 'current_user', allowBlocked: true }
       : { kind: 'user', audienceRole: 'buyer', user: row.buyer, destinationPolicy: 'event_snapshot', email: order.shippingInfo.email, phone: phone || '' };
-    await enqueueNotificationEvent({ eventKey: `order-cancellation:${row._id}:${completed ? 'refunded' : 'cancelled'}:${seller ? 'seller' : 'buyer'}:v1`,
+    const eventKey = `order-cancellation:${row._id}:${completed ? 'refunded' : 'cancelled'}:${seller ? 'seller' : 'buyer'}:v1`;
+    const friendly = !seller && await friendlyBuyerOrderCopy(eventKey, ['whatsapp'], session);
+    const whatsappMessage = friendly ? buyerOrderMessage(order, {
+      headline: completed ? 'Your cancellation refund is complete'
+        : hasOtherSellers ? 'Your items have been cancelled' : 'Your order has been cancelled',
+      storeName: name, items,
+      // Refund status and exact original tokens remain authoritative. An
+      // unpaid COD cancellation must not claim that money was refunded.
+      detail: `${cancellationText}${refund}${otherStores}`,
+    }) : `*${title}*\n\n${message}`;
+    await enqueueNotificationEvent({ eventKey,
       eventType: completed ? 'order.cancellation_refund_completed' : 'order.seller_portion_cancelled', aggregateType: 'OrderCancellation', aggregateId: row._id,
       occurredAt: completed ? row.refundedAt : row.requestedAt, financial: row.refundDestination !== 'none', recipient,
       channels: ['inapp', 'push', 'email', 'whatsapp'],
-      templates: { inapp: { title, body }, push: { title, body }, email: { subject: `${title} — ${order.orderId}`, text: message, html }, whatsapp: { message: `*${title}*\n\n${message}` } },
+      templates: { inapp: { title, body }, push: { title, body }, email: { subject: `${title} — ${order.orderId}`, text: message, html }, whatsapp: { message: whatsappMessage } },
       money: row.refundDestination === 'none' ? [] : [snapshotMinorMoney({ key: 'refund', label: 'Cancellation refund', amountMinor: row.refundAmountMinor ?? row.amountMinor,
         currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: row.refundAmountMinor === undefined ? 'amountMinor' : 'refundAmountMinor' }),
         ...(row.deductionMinor > 0 ? [snapshotMinorMoney({ key: 'deduction', label: 'Processing fee', amountMinor: row.deductionMinor,
