@@ -28,8 +28,8 @@ const {
   buildOrderListPayload,
 } = require('./whatsapp/messageBuilder');
 const { tryOrderBuyerPhoneE164 } = require('./orderBuyerContactService');
-const { buyerOrderMessage } = require('./whatsapp/buyerOrderCopy');
-const { friendlyBuyerOrderCopy } = require('./whatsapp/buyerOrderCopyVersion');
+const { buyerOrderMessage, buyerOrderStoreNames, buyerOrderStoresLine } = require('./whatsapp/buyerOrderCopy');
+const { friendlyBuyerOrderCopy, buyerOrderStoreCopy } = require('./whatsapp/buyerOrderCopyVersion');
 
 const stringId = value => value?._id?.toString?.() || value?.toString?.() || '';
 const safeText = (value, max = 300) => String(value || '').trim().slice(0, max);
@@ -128,12 +128,13 @@ const ORDER_CANCELLATION_BUYER_DETAIL = Object.freeze({
   system: 'Rozare automatically cancelled your order.',
 });
 
-const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole, order, friendly = true } = {}) => {
+const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole, order, friendly = true, stores = { email: true, whatsapp: true } } = {}) => {
   const copy = ORDER_LIFECYCLE_STATUS_COPY[status];
   const detail = status === 'cancelled'
     ? `${ORDER_CANCELLATION_BUYER_DETAIL[actorRole]} View your order for payment and refund details.`
     : copy.detail;
   const totalSentence = 'Order total: {{money.order_total}}.';
+  const storeLine = status === 'confirmed' && stores.email ? buyerOrderStoresLine(order) : '';
   return {
     inapp: {
       title: copy.title,
@@ -145,14 +146,15 @@ const orderLifecycleBuyerTemplates = (orderNumber, status, { actorRole, order, f
     },
     email: {
       subject: `${copy.title} - ${orderNumber}`,
-      text: `Order #${orderNumber}: ${detail}\n\n${totalSentence}`,
-      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p><p>${totalSentence}</p>`,
+      text: `Order #${orderNumber}: ${detail}\n\n${storeLine ? `${storeLine}\n\n` : ''}${totalSentence}`,
+      html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong>: ${escapeHtml(detail)}</p>${storeLine ? `<p>${escapeHtml(storeLine)}</p>` : ''}<p>${totalSentence}</p>`,
     },
     whatsapp: {
       message: friendly ? buyerOrderMessage(order, {
         orderNumber, headline: BUYER_ORDER_HEADLINES[status],
         detail: status === 'cancelled' ? detail : BUYER_ORDER_DETAILS[status],
         moneyLine: 'Order total: {{money.order_total}}',
+        storeNames: status === 'confirmed' && stores.whatsapp ? buyerOrderStoreNames(order) : [],
       }) : `*${copy.title}*\n\nOrder: #${orderNumber}\n${detail}\n${totalSentence}\n\nView your order in Rozare for details.`,
     },
   };
@@ -199,6 +201,7 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
     .digest('hex');
   const eventKey = `order:${id}:lifecycle:${transitionHash}:buyer:v1`;
   const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
+  const stores = status === 'confirmed' ? await buyerOrderStoreCopy(eventKey, selectedChannels, session) : { email: false, whatsapp: false };
 
   return enqueueNotificationEvent({
     eventKey,
@@ -209,7 +212,7 @@ async function enqueueOrderLifecycleBuyerNotifications(order, {
     financial: true,
     recipient,
     channels: selectedChannels,
-    templates: orderLifecycleBuyerTemplates(orderNumber, status, { actorRole, order, friendly }),
+    templates: orderLifecycleBuyerTemplates(orderNumber, status, { actorRole, order, friendly, stores }),
     metadata: {
       category: 'order',
       linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
@@ -498,7 +501,9 @@ async function enqueueOrderStockRefundBuyerNotifications(order, {
   });
 }
 
-const paidBuyerTemplates = (orderNumber, { order, friendly = true } = {}) => ({
+const paidBuyerTemplates = (orderNumber, { order, friendly = true, stores = { email: true, whatsapp: true } } = {}) => {
+  const storeLine = stores.email ? buyerOrderStoresLine(order) : '';
+  return {
   inapp: {
     title: 'Payment received',
     body: `Your payment for order #${orderNumber} was successful. Amount paid: {{money.order_total}}.`,
@@ -509,17 +514,19 @@ const paidBuyerTemplates = (orderNumber, { order, friendly = true } = {}) => ({
   },
   email: {
     subject: `Payment received for order ${orderNumber}`,
-    text: `Your payment for order #${orderNumber} was successful.\n\nAmount paid: {{money.order_total}}.\nWe will keep you updated as your items are prepared and shipped.`,
-    html: `<p>Your payment for order <strong>#${escapeHtml(orderNumber)}</strong> was successful.</p><p>Amount paid: <strong>{{money.order_total}}</strong>.</p><p>We will keep you updated as your items are prepared and shipped.</p>`,
+    text: `Your payment for order #${orderNumber} was successful.\n\n${storeLine ? `${storeLine}\n\n` : ''}Amount paid: {{money.order_total}}.\nWe will keep you updated as your items are prepared and shipped.`,
+    html: `<p>Your payment for order <strong>#${escapeHtml(orderNumber)}</strong> was successful.</p>${storeLine ? `<p>${escapeHtml(storeLine)}</p>` : ''}<p>Amount paid: <strong>{{money.order_total}}</strong>.</p><p>We will keep you updated as your items are prepared and shipped.</p>`,
   },
   whatsapp: {
     message: friendly ? buyerOrderMessage(order, {
       orderNumber, headline: 'Payment received! ✅',
       detail: 'Thanks for shopping with Rozare! Your payment is confirmed. We will keep you updated as your items are prepared and shipped.',
       moneyLine: 'Amount paid: {{money.order_total}}',
+      storeNames: stores.whatsapp ? buyerOrderStoreNames(order) : [],
     }) : `*Payment received*\n\nOrder: #${orderNumber}\nAmount paid: {{money.order_total}}\n\nWe will keep you updated as your items are prepared and shipped. View your order in Rozare for details.`,
   },
-});
+  };
+};
 
 async function enqueuePaidOrderBuyerNotifications(order, {
   channels = null,
@@ -534,6 +541,7 @@ async function enqueuePaidOrderBuyerNotifications(order, {
   if (!selectedChannels.length) return [];
   const eventKey = `order:${id}:paid:buyer:v1`;
   const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
+  const stores = await buyerOrderStoreCopy(eventKey, selectedChannels, session);
   return enqueueNotificationEvent({
     eventKey,
     eventType: 'order.paid',
@@ -545,7 +553,7 @@ async function enqueuePaidOrderBuyerNotifications(order, {
       ? { ...recipient, allowBlocked: true }
       : recipient,
     channels: selectedChannels,
-    templates: paidBuyerTemplates(orderNumber, { order, friendly }),
+    templates: paidBuyerTemplates(orderNumber, { order, friendly, stores }),
     metadata: {
       category: 'order',
       linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
@@ -620,7 +628,9 @@ const requireZeroSnapshot = (snapshot, label) => {
   return snapshot;
 };
 
-const noChargeBuyerTemplates = (orderNumber, { order, friendly = true } = {}) => ({
+const noChargeBuyerTemplates = (orderNumber, { order, friendly = true, stores = { email: true, whatsapp: true } } = {}) => {
+  const storeLine = stores.email ? buyerOrderStoresLine(order) : '';
+  return {
   inapp: {
     title: 'Order confirmed',
     body: `Order #${orderNumber} is confirmed. Total: {{money.order_total}}; no payment was required.`,
@@ -631,17 +641,19 @@ const noChargeBuyerTemplates = (orderNumber, { order, friendly = true } = {}) =>
   },
   email: {
     subject: `Order confirmed - ${orderNumber}`,
-    text: `Order #${orderNumber} is confirmed. Order total: {{money.order_total}}. No payment was required or charged.`,
-    html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong> is confirmed.</p><p>Order total: <strong>{{money.order_total}}</strong>.</p><p>No payment was required or charged.</p>`,
+    text: `Order #${orderNumber} is confirmed.${storeLine ? `\n\n${storeLine}\n\n` : ' '}Order total: {{money.order_total}}. No payment was required or charged.`,
+    html: `<p>Order <strong>#${escapeHtml(orderNumber)}</strong> is confirmed.</p>${storeLine ? `<p>${escapeHtml(storeLine)}</p>` : ''}<p>Order total: <strong>{{money.order_total}}</strong>.</p><p>No payment was required or charged.</p>`,
   },
   whatsapp: {
     message: friendly ? buyerOrderMessage(order, {
       orderNumber, headline: BUYER_ORDER_HEADLINES.confirmed,
       detail: 'No payment was required or charged. We’ll keep you updated as your items are prepared and shipped.',
       moneyLine: 'Order total: {{money.order_total}}',
+      storeNames: stores.whatsapp ? buyerOrderStoreNames(order) : [],
     }) : `*Your order is confirmed*\n\nOrder: #${orderNumber}\nTotal: {{money.order_total}}\nNo payment was required or charged.\n\nView your order in Rozare.`,
   },
-});
+  };
+};
 
 async function enqueueNoChargeOrderBuyerNotifications(order, {
   channels = null,
@@ -656,6 +668,7 @@ async function enqueueNoChargeOrderBuyerNotifications(order, {
   if (!selectedChannels.length) return [];
   const eventKey = `order:${id}:no-charge-confirmed:buyer:v1`;
   const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
+  const stores = await buyerOrderStoreCopy(eventKey, selectedChannels, session);
   return enqueueNotificationEvent({
     eventKey,
     eventType: 'order.no_charge_confirmed',
@@ -670,7 +683,7 @@ async function enqueueNoChargeOrderBuyerNotifications(order, {
       ? { ...recipient, allowBlocked: true }
       : recipient,
     channels: selectedChannels,
-    templates: noChargeBuyerTemplates(orderNumber, { order, friendly }),
+    templates: noChargeBuyerTemplates(orderNumber, { order, friendly, stores }),
     metadata: {
       category: 'order',
       linkTo: recipient.kind === 'user' ? `/user-dashboard/order/detail/${id}` : '/track-order',
@@ -819,6 +832,8 @@ async function enqueueCodOrderBuyerConfirmationNotification(order, {
   if (!selectedChannels.length) return [];
   const eventKey = `order:${id}:confirmation-requested:buyer:v1`;
   const friendly = await friendlyBuyerOrderCopy(eventKey, selectedChannels, session);
+  const stores = await buyerOrderStoreCopy(eventKey, selectedChannels, session);
+  const storeLine = stores.email ? buyerOrderStoresLine(order) : '';
   const templates = {
     inapp: {
       title: 'Confirm your cash on delivery order',
@@ -830,20 +845,21 @@ async function enqueueCodOrderBuyerConfirmationNotification(order, {
     },
     email: {
       subject: `Confirm cash on delivery order ${orderNumber}`,
-      text: `Your cash on delivery order #${orderNumber} is awaiting confirmation.\n\nAmount due on delivery: {{money.order_total}}.\nPlease review and confirm your order so fulfillment can begin.\nConfirm order: ${confirmIntentUrl}\nCancel order: ${cancelIntentUrl}`,
-      html: `<p>Your cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong> is awaiting confirmation.</p><p>Amount due on delivery: <strong>{{money.order_total}}</strong>.</p><p>Please review and confirm your order so fulfillment can begin.</p><div style="margin:24px 0"><a href="${escapeHtml(confirmIntentUrl)}" style="display:inline-block;background:#13b6bb;background-image:linear-gradient(110deg,#13b6bb,#5866f3);color:#fff;padding:12px 22px;border-radius:12px;text-decoration:none;font-weight:700;margin:0 10px 10px 0">Confirm order</a><a href="${escapeHtml(cancelIntentUrl)}" style="display:inline-block;background:#f3f0fa;color:#49566d;padding:12px 22px;border:1px solid #e0e4ef;border-radius:12px;text-decoration:none;font-weight:700;margin:0 0 10px">Cancel order</a></div><p style="color:#64748b;font-size:13px">Either button opens Rozare, where you can review and confirm your choice.</p>`,
+      text: `Your cash on delivery order #${orderNumber} is awaiting confirmation.\n\n${storeLine ? `${storeLine}\n\n` : ''}Amount due on delivery: {{money.order_total}}.\nPlease review and confirm your order so fulfillment can begin.\nConfirm order: ${confirmIntentUrl}\nCancel order: ${cancelIntentUrl}`,
+      html: `<p>Your cash on delivery order <strong>#${escapeHtml(orderNumber)}</strong> is awaiting confirmation.</p>${storeLine ? `<p>${escapeHtml(storeLine)}</p>` : ''}<p>Amount due on delivery: <strong>{{money.order_total}}</strong>.</p><p>Please review and confirm your order so fulfillment can begin.</p><div style="margin:24px 0"><a href="${escapeHtml(confirmIntentUrl)}" style="display:inline-block;background:#13b6bb;background-image:linear-gradient(110deg,#13b6bb,#5866f3);color:#fff;padding:12px 22px;border-radius:12px;text-decoration:none;font-weight:700;margin:0 10px 10px 0">Confirm order</a><a href="${escapeHtml(cancelIntentUrl)}" style="display:inline-block;background:#f3f0fa;color:#49566d;padding:12px 22px;border:1px solid #e0e4ef;border-radius:12px;text-decoration:none;font-weight:700;margin:0 0 10px">Cancel order</a></div><p style="color:#64748b;font-size:13px">Either button opens Rozare, where you can review and confirm your choice.</p>`,
     },
     whatsapp: {
       message: friendly ? buyerOrderMessage(order, {
         orderNumber, headline: 'Please confirm your cash on delivery order 📦',
+        storeNames: stores.whatsapp ? buyerOrderStoreNames(order) : [],
         moneyLine: 'Amount due on delivery: {{money.order_total}}',
         detail: 'Review your items, then choose Confirm order or Cancel order. Your order can be prepared after you confirm.',
       }) : `*Confirm your cash on delivery order*\n\nOrder: #${orderNumber}\nAmount due on delivery: {{money.order_total}}\n\nPlease review and confirm your order so fulfillment can begin:\n${confirmUrl}`,
     },
   };
   const whatsappInteractive = selectedChannels.includes('whatsapp') ? {
-    buttonsPayloadJson: JSON.stringify(buildOrderButtonsPayload(order, { friendly })),
-    listPayloadJson: JSON.stringify(buildOrderListPayload(order, { friendly })),
+    buttonsPayloadJson: JSON.stringify(buildOrderButtonsPayload(order, { friendly, includeStores: stores.whatsapp })),
+    listPayloadJson: JSON.stringify(buildOrderListPayload(order, { friendly, includeStores: stores.whatsapp })),
   } : null;
   return enqueueNotificationEvent({
     eventKey,

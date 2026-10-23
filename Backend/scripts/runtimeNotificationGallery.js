@@ -14,7 +14,7 @@ const { parse } = require('@babel/parser');
 const { notificationActionLabel, outboundNotificationUrl, prepareTransactionalEmail } = require('../utils/transactionalEmail');
 const { escapeHtml, formatItemOptionsText } = require('../utils/orderPresentation');
 const { storefrontNotificationUrl } = require('../utils/storefrontNotificationUrl');
-const { buyerOrderMessage } = require('../services/whatsapp/buyerOrderCopy');
+const { buyerOrderMessage, buyerOrderStoreNames, buyerOrderStoresLine } = require('../services/whatsapp/buyerOrderCopy');
 
 const ROOT = path.resolve(__dirname, '..');
 const SOURCE_REVISION = process.env.ROZARE_GALLERY_SOURCE_REVISION || '';
@@ -261,10 +261,11 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   if (source(financialPath).text.includes('const BUYER_ORDER_HEADLINES')) {
     financialNames.unshift('BUYER_ORDER_HEADLINES', 'BUYER_ORDER_DETAILS', 'BUYER_SHIPMENT_HEADLINES');
   }
-  const financial = declarations(financialPath, financialNames, { ...deps, buyerOrderMessage });
+  const financial = declarations(financialPath, financialNames, { ...deps, buyerOrderMessage, buyerOrderStoreNames, buyerOrderStoresLine });
   const f = financial.result;
   const buyerPreviewOrder = { user: IDS.buyer, orderId: 'ORD-PREVIEW', shippingInfo: { fullName: 'Sam Preview' },
-    orderItems: [{ name: 'Travel Mug', quantity: 2, selectedOptions: { Color: 'Blue' } }] };
+    sellerPolicies: [{ seller: IDS.seller, storeName: 'Atlas Aura' }],
+    orderItems: [{ seller: IDS.seller, name: 'Travel Mug', quantity: 2, selectedOptions: { Color: 'Blue' } }] };
   for (const status of Object.keys(f.ORDER_LIFECYCLE_STATUS_COPY)) {
     for (const actorRole of status === 'cancelled' ? ['buyer', 'seller', 'admin', 'system'] : ['buyer']) {
       record(financialPath, financial.lines.orderLifecycleBuyerTemplates, `Buyer order ${status}${status === 'cancelled' ? ` by ${actorRole}` : ''}`,
@@ -342,7 +343,8 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   // output is captured and rendered, never submitted.
   const messageBuilder = pureSourceModule('services/whatsapp/messageBuilder.js');
   const cod = declarations(financialPath, ['isValidSnapshotEmail', 'buyerReceiptChannels', 'buyerOrderRecipient', 'enqueueCodOrderBuyerConfirmationNotification'],
-    { ...deps, orderTotalSnapshot: () => money('order_total'), buyerOrderMessage, friendlyBuyerOrderCopy: async () => true, ...messageBuilder });
+    { ...deps, orderTotalSnapshot: () => money('order_total'), buyerOrderMessage, buyerOrderStoreNames, buyerOrderStoresLine,
+      friendlyBuyerOrderCopy: async () => true, buyerOrderStoreCopy: async () => ({ email: true, whatsapp: true }), ...messageBuilder });
   await run(financialPath, 'Buyer COD confirmation', cod.lines.enqueueCodOrderBuyerConfirmationNotification,
     () => cod.result.enqueueCodOrderBuyerConfirmationNotification(order));
 
@@ -350,7 +352,7 @@ async function buildRuntimeNotificationGalleryEntries({ includeApp = false } = {
   const capability = require('../services/safepayRefundCapabilityService');
   const rail = require('../services/safepayPaymentRailService');
   const cancellation = declarations(cancellationPath, ['notifyCancellation'], { ...deps,
-    buyerOrderMessage, friendlyBuyerOrderCopy: async () => true,
+    buyerOrderMessage, friendlyBuyerOrderCopy: async () => true, buyerOrderKeptPhrase: async () => ({}),
     normalizeSafepayPaymentRail: rail.normalizeSafepayPaymentRail,
     externalRefundCapability: capability.externalRefundCapability, originalPaymentLabel: capability.originalPaymentLabel });
   for (const [label, destination, completed, paymentRail, deductionMinor] of [

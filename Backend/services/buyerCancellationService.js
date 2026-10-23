@@ -21,7 +21,7 @@ const { getOnlineOrderFee } = require('./onlineOrderFeeService');
 const { normalizeSafepayPaymentRail, refreshOwnedSafepayOrderRail } = require('./safepayPaymentRailService');
 const { externalRefundCapability, originalPaymentLabel } = require('./safepayRefundCapabilityService');
 const { buyerOrderMessage } = require('./whatsapp/buyerOrderCopy');
-const { friendlyBuyerOrderCopy } = require('./whatsapp/buyerOrderCopyVersion');
+const { friendlyBuyerOrderCopy, buyerOrderKeptPhrase } = require('./whatsapp/buyerOrderCopyVersion');
 const id = value => String(value?._id || value || '');
 const fail = (message, code = 'ORDER_CANCELLATION_CONFLICT', statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const eligible = status => ['pending', 'confirmed', 'processing'].includes(status);
@@ -56,6 +56,10 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     return literal(`${item.name} × ${item.quantity}${selected ? ` (${selected})` : ''}`);
   }).join(', ')).slice(0, 1800).join('');
   for (const seller of [false, true]) {
+    const eventKey = `order-cancellation:${row._id}:${completed ? 'refunded' : 'cancelled'}:${seller ? 'seller' : 'buyer'}:v1`;
+    const unpaidExplanation = 'No payment was collected for these items, so no refund is needed.';
+    const keptExplanation = !seller && row.refundDestination === 'none'
+      ? await buyerOrderKeptPhrase(eventKey, ['inapp', 'push', 'email', 'whatsapp'], unpaidExplanation, session) : null;
     const title = completed ? (seller ? 'Buyer refund completed' : 'Your cancellation refund is complete')
       : (seller ? 'Buyer cancelled order items' : 'Your order items are cancelled');
     // The shared money renderer already includes non-USD currency codes.
@@ -64,7 +68,7 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     const externalDestination = originalPaymentLabel(normalizeSafepayPaymentRail(row.paymentRail)).toLowerCase();
     const walletDestination = seller ? 'the buyer’s Rozare Wallet' : 'your Rozare Wallet';
     const cardDestination = seller ? `the buyer’s ${externalDestination}` : `your ${externalDestination}`;
-    const refund = (row.refundDestination === 'none' ? 'No payment was collected for these items, so no refund is needed.'
+    const refund = (row.refundDestination === 'none' ? unpaidExplanation
       : row.refundStatus === 'not_required' ? `Refund after the processing fee: ${refundAmount}. No card refund is due.`
         : completed ? `${refundAmount} was refunded to ${row.refundDestination === 'wallet' ? walletDestination : cardDestination}.${row.refundDestination === 'original_card' ? ' The bank may take additional time to display the refund.' : ''}`
         : externalRefundCapability(row.paymentRail).available
@@ -74,16 +78,17 @@ async function notifyCancellation(row, order, { completed = false, session } = {
     const sellerAction = seller ? ' No action is required from you for this cancellation.' : '';
     const hasOtherSellers = order.orderItems.some(item => id(item.seller) !== id(row.seller));
     const otherStores = hasOtherSellers ? ' Items from other stores are unchanged by this cancellation.' : '';
-    const message = `Order: ${order.orderId}\nStore: ${name}\nItems: ${description}\n\n${cancellationText}${refund}${sellerAction}${otherStores}`;
+    const refundFor = channel => keptExplanation && !keptExplanation[channel] ? '' : refund;
+    const messageFor = channel => `Order: ${order.orderId}\nStore: ${name}\nItems: ${description}\n\n${cancellationText}${refundFor(channel)}${sellerAction}${otherStores}`.trimEnd();
+    const message = messageFor('email');
     // In-app/push previews have a smaller limit than email/WhatsApp. Keep the
     // refund sentence intact even when an order contains many product options.
     const preview = description.length > 400 ? `${Array.from(description).slice(0, 400).join('')}…` : description;
-    const body = `Order ${order.orderId} · ${name}\n${preview}\n${cancellationText}${refund}${sellerAction}`;
+    const bodyFor = channel => `Order ${order.orderId} · ${name}\n${preview}\n${cancellationText}${refundFor(channel)}${sellerAction}`.trimEnd();
     const link = seller ? `/seller-dashboard/order/${order._id}` : `/user-dashboard/order/detail/${order._id}`;
-    const html = `<p>Order: <strong>${escapeHtml(order.orderId)}</strong><br>Store: <strong>${escapeHtml(name)}</strong></p><p>Items: ${escapeHtml(description)}</p><p>${escapeHtml(cancellationText)}${escapeHtml(refund)}</p>${sellerAction ? `<p>${escapeHtml(sellerAction.trim())}</p>` : ''}${otherStores ? `<p>${escapeHtml(otherStores.trim())}</p>` : ''}`;
+    const html = `<p>Order: <strong>${escapeHtml(order.orderId)}</strong><br>Store: <strong>${escapeHtml(name)}</strong></p><p>Items: ${escapeHtml(description)}</p><p>${escapeHtml(cancellationText)}${escapeHtml(refundFor('email'))}</p>${sellerAction ? `<p>${escapeHtml(sellerAction.trim())}</p>` : ''}${otherStores ? `<p>${escapeHtml(otherStores.trim())}</p>` : ''}`;
     const recipient = seller ? { kind: 'user', audienceRole: 'seller', user: row.seller, destinationPolicy: 'current_user', allowBlocked: true }
       : { kind: 'user', audienceRole: 'buyer', user: row.buyer, destinationPolicy: 'event_snapshot', email: order.shippingInfo.email, phone: phone || '' };
-    const eventKey = `order-cancellation:${row._id}:${completed ? 'refunded' : 'cancelled'}:${seller ? 'seller' : 'buyer'}:v1`;
     const friendly = !seller && await friendlyBuyerOrderCopy(eventKey, ['whatsapp'], session);
     const whatsappMessage = friendly ? buyerOrderMessage(order, {
       headline: completed ? 'Your cancellation refund is complete'
@@ -91,13 +96,13 @@ async function notifyCancellation(row, order, { completed = false, session } = {
       storeName: name, items,
       // Refund status and exact original tokens remain authoritative. An
       // unpaid COD cancellation must not claim that money was refunded.
-      detail: `${cancellationText}${refund}${otherStores}`,
-    }) : `*${title}*\n\n${message}`;
+      detail: [cancellationText.trim(), refundFor('whatsapp'), otherStores.trim()].filter(Boolean).join(' '),
+    }) : `*${title}*\n\n${messageFor('whatsapp')}`;
     await enqueueNotificationEvent({ eventKey,
       eventType: completed ? 'order.cancellation_refund_completed' : 'order.seller_portion_cancelled', aggregateType: 'OrderCancellation', aggregateId: row._id,
       occurredAt: completed ? row.refundedAt : row.requestedAt, financial: row.refundDestination !== 'none', recipient,
       channels: ['inapp', 'push', 'email', 'whatsapp'],
-      templates: { inapp: { title, body }, push: { title, body }, email: { subject: `${title} — ${order.orderId}`, text: message, html }, whatsapp: { message: whatsappMessage } },
+      templates: { inapp: { title, body: bodyFor('inapp') }, push: { title, body: bodyFor('push') }, email: { subject: `${title} — ${order.orderId}`, text: message, html }, whatsapp: { message: whatsappMessage } },
       money: row.refundDestination === 'none' ? [] : [snapshotMinorMoney({ key: 'refund', label: 'Cancellation refund', amountMinor: row.refundAmountMinor ?? row.amountMinor,
         currency: row.currency, sourceModel: 'OrderCancellation', sourceDocumentId: row._id, sourcePath: row.refundAmountMinor === undefined ? 'amountMinor' : 'refundAmountMinor' }),
         ...(row.deductionMinor > 0 ? [snapshotMinorMoney({ key: 'deduction', label: 'Processing fee', amountMinor: row.deductionMinor,

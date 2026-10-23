@@ -23,6 +23,59 @@ test('every request agent receives the public-page handler, not a generic app pr
   }
 });
 
+test('store-domain product links expose the product in the first response for every agent, with one main-domain canonical', async t => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    calls.push(args);
+    return Response.json({ indexable: true });
+  });
+  for (const userAgent of ['', 'Mozilla/5.0 Chrome/140', 'WhatsApp/2.26', 'facebookexternalhit/1.1', 'Googlebot/2.1', 'UnknownLinkPreview/1.0']) {
+    const requestUrl = `https://nova-nest.rozare.com/single-product/${id}`;
+    const routed = await middleware(new Request(requestUrl, { headers: { 'User-Agent': userAgent } }));
+    assert.equal(routed.headers.get('location'), null);
+    const target = new URL(routed.headers.get('x-middleware-rewrite'));
+    assert.equal(target.origin, 'https://nova-nest.rozare.com');
+    assert.equal(target.pathname, '/api/public-page');
+    assert.equal(target.searchParams.get('kind'), 'product');
+    assert.equal(target.searchParams.get('value'), id);
+    const response = await publicPageResponse({ kind: target.searchParams.get('kind'), value: target.searchParams.get('value'),
+      appShell: async () => shell, fetchImpl: async () => upstream() });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.equal((html.match(/rel="canonical"/g) || []).length, 1);
+    assert(html.includes(`rel="canonical" href="${canonical}"`));
+    assert(html.includes(`property="og:image" content="${image}"`));
+    assert(!html.includes('brand.png'));
+  }
+  assert(calls.every(call => String(call[0]).endsWith('/api/seo/store-status/nova-nest')));
+});
+
+test('store-domain product preview fixes do not bypass store visibility, product removal or private query rules', async t => {
+  const requestUrl = `https://nova-nest.rozare.com/single-product/${id}`;
+  const statusMock = t.mock.method(globalThis, 'fetch', async () => Response.json({ indexable: false }, { status: 404 }));
+  const blocked = await middleware(new Request(requestUrl));
+  assert.equal(blocked.status, 404);
+  assert.match(blocked.headers.get('x-robots-tag'), /noindex/);
+  assert(!(await blocked.text()).includes('og:image'));
+  statusMock.mock.mockImplementation(async () => Response.json({ indexable: true }));
+  const routed = await middleware(new Request(`${requestUrl}?token=private&email=private`));
+  const target = new URL(routed.headers.get('x-middleware-rewrite'));
+  assert.equal(target.searchParams.get('noindex'), '1');
+  assert(!target.href.includes('private'));
+  const removed = await publicPageResponse({ kind: 'product', value: id, appShell: async () => shell,
+    fetchImpl: async () => upstream('<html><head><title>Product unavailable</title></head><body>Product unavailable</body></html>', 404) });
+  assert.equal(removed.status, 404);
+  assert.match(removed.headers.get('x-robots-tag'), /noindex/);
+  assert(!(await removed.text()).includes('og:image'));
+});
+
+test('store product aliases normalize casing on the same host without adding a cross-host preview hop', async t => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ indexable: true }));
+  const response = await middleware(new Request(`https://nova-nest.rozare.com/SINGLE-PRODUCT/${id.toUpperCase()}/?currency=PKR`));
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get('location'), `https://nova-nest.rozare.com/single-product/${id}?currency=PKR`);
+});
+
 test('metadata is replaced once while the real app bundle, safe head tags and public content remain', () => {
   const html = mergePublicPage(shell, document(), canonical);
   assert.equal((html.match(/<title\b/g) || []).length, 1);

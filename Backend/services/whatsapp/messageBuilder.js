@@ -27,7 +27,7 @@ const {
     requirePresentationMoney,
 } = require('../../utils/orderPresentation');
 const { toMinorUnits } = require('../moneyMath');
-const { buyerOrderMessage } = require('./buyerOrderCopy');
+const { buyerOrderMessage, buyerOrderStoreNames, buyerOrderStoresLine } = require('./buyerOrderCopy');
 const inlineText = (value, maxLength = 160) => String(value ?? '')
     .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
     .replace(/[*_~`]/g, '')
@@ -155,7 +155,7 @@ exports.KEEPCANCEL_BTN_PREFIX = KEEPCANCEL_BTN_PREFIX;
 // sits above the buttons and provides a full fallback.
 // ──────────────────────────────────────────────────────────────────────────
 
-exports.buildOrderButtonsPayload = (order, { friendly = false } = {}) => {
+exports.buildOrderButtonsPayload = (order, { friendly = false, includeStores = false } = {}) => {
     const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = assertCodConfirmationMoneyIntegrity(order);
@@ -171,6 +171,7 @@ exports.buildOrderButtonsPayload = (order, { friendly = false } = {}) => {
         title: `Rozare — Order #${order.orderId}`,
         description: friendly ? buyerOrderMessage(order, {
             headline: 'Please confirm your cash on delivery order 📦',
+            storeNames: includeStores ? buyerOrderStoreNames(order) : [],
             moneyLine: `Amount due on delivery: *${total}*`,
             detail: 'Review your items, then tap Confirm order or Cancel order below. Your order can be prepared after you confirm.',
         }) : [
@@ -207,7 +208,7 @@ exports.buildOrderButtonsPayload = (order, { friendly = false } = {}) => {
 // that actually renders on WhatsApp today — uses the legacy SINGLE_SELECT
 // listType (Evolution's `sendList`, fixed in the homolog/develop build).
 // ──────────────────────────────────────────────────────────────────────────
-exports.buildOrderListPayload = (order, { friendly = false } = {}) => {
+exports.buildOrderListPayload = (order, { friendly = false, includeStores = false } = {}) => {
     const buyerName = inlineText(order.shippingInfo?.fullName?.split(' ')[0]) || 'there';
     const itemCount = order.orderItems?.length || 0;
     const currency = assertCodConfirmationMoneyIntegrity(order);
@@ -222,6 +223,7 @@ exports.buildOrderListPayload = (order, { friendly = false } = {}) => {
         title: `Rozare — Order #${order.orderId}`,
         description: friendly ? buyerOrderMessage(order, {
             headline: 'Please confirm your cash on delivery order 📦',
+            storeNames: includeStores ? buyerOrderStoreNames(order) : [],
             moneyLine: `Amount due on delivery: *${total}*`,
             detail: 'Review your items, then tap Review order to choose Confirm order or Cancel order. Your order can be prepared after you confirm.',
         }) : [
@@ -429,7 +431,7 @@ exports.buildReconfirmButtonsPayload = (order, contextMessage) => {
 
     const productLines = (order.orderItems || []).map(it => buildProductLine(it, currency)).slice(0, 5);
     if (itemCount > 5) productLines.push(`  _...and ${itemCount - 5} more_`);
-    const storesLine = buildStoresLine(order);
+    const storesLine = buyerOrderStoresLine(order);
 
     return {
         title: `Confirm Order #${order.orderId} again?`,

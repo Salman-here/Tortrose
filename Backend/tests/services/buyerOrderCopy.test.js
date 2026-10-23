@@ -1,5 +1,26 @@
 'use strict';
-const { buyerGreeting, buyerProductSummary, buyerOrderMessage } = require('../../services/whatsapp/buyerOrderCopy');
+const { buyerGreeting, buyerProductSummary, buyerOrderMessage, buyerOrderStoreNames, buyerOrderStoresLine } = require('../../services/whatsapp/buyerOrderCopy');
+
+test('store names use order snapshots, are deduplicated, and never borrow mutable product store names', () => {
+  const order = { sellerPolicies: [{ seller: 'a', storeName: 'Atlas Aura' }, { seller: 'b', storeName: 'Nova Nest' }, { seller: 'unrelated', storeName: 'Not ordered' }],
+    orderItems: [{ seller: 'a', storeName: 'Old fallback', productId: { store: { storeName: 'Mutable live product' } } }, { seller: 'a' }, { seller: 'b' }] };
+  expect(buyerOrderStoreNames(order)).toEqual(['Atlas Aura', 'Nova Nest']);
+  expect(buyerOrderStoresLine(order)).toBe('Stores: Atlas Aura, Nova Nest');
+  expect(buyerOrderStoresLine({ orderItems: [{ storeName: 'Atlas Aura' }, { storeName: 'Atlas Aura' }] })).toBe('Store: Atlas Aura');
+  expect(buyerOrderStoresLine({})).toBe('');
+});
+
+test('store display text cannot inject a second line or money-renderer tokens', () => {
+  const line = buyerOrderStoresLine({ sellerPolicies: [{ storeName: 'Atlas\n{{money.order_total}}' }] });
+  expect(line).not.toMatch(/[{}\n]/);
+});
+
+test('large store-name lists are bounded without truncating an ordinary multi-store checkout', () => {
+  const order = { sellerPolicies: Array.from({ length: 50 }, (_, index) => ({ seller: String(index), storeName: `${index} ${'Store '.repeat(30)}` })) };
+  const line = buyerOrderStoresLine(order);
+  expect(line.length).toBeLessThan(1000);
+  expect(line).toContain('and 20 more stores');
+});
 
 test('friendly greeting uses the trimmed checkout first name, including guest and missing-name fallbacks', () => {
   expect(buyerGreeting({ shippingInfo: { fullName: '  Salman Khan ' } })).toBe('Hey Salman! 👋');

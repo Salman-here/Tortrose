@@ -20,6 +20,7 @@ const WhatsAppConfig = require('../../models/WhatsAppConfig');
 const WhatsAppPendingMessage = require('../../models/WhatsAppPendingMessage');
 const { findPendingJobByPhone, findPendingJobByOrderId, applyVote, markInboundConversationWindowOpen } = require('./queue');
 const { buildReconfirmButtonsPayload } = require('./messageBuilder');
+const { buyerOrderStoresLine } = require('./buyerOrderCopy');
 const evolution = require('./evolutionClient');
 const {
     ensureOrderSellerFulfillment,
@@ -161,7 +162,7 @@ const markOutboundDeliveryFailure = async (msg = {}, singletonKey = 'seller') =>
 // ──────────────────────────────────────────────────────────────────────────
 // Outgoing friendly replies
 // ──────────────────────────────────────────────────────────────────────────
-const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName) => {
+const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName, storeNamesLine = '') => {
     // Successful cancellations already notify the buyer through the durable
     // order lifecycle event. Do not send a second button acknowledgement.
     // Error/expired/locked-decision guidance is handled separately below.
@@ -172,7 +173,7 @@ const sendResponseMessage = async (phone, isConfirmed, orderId, buyerName) => {
         const message = [
             `Hi ${firstName},`,
             ``,
-            `Your order *#${orderId}* is confirmed.`,
+            `Your order *#${orderId}* is confirmed.${storeNamesLine ? `\n\n${storeNamesLine}` : ''}`,
             ``,
             `You'll receive updates as your items are prepared and shipped.`,
             ``,
@@ -827,7 +828,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
                     const updated = reconfirmed.order;
                     if (updated) {
                         await applyVote(job, 'yes');
-                        await sendResponseMessage(outboundTo, true, order.orderId, firstName);
+                        await sendResponseMessage(outboundTo, true, order.orderId, firstName, buyerOrderStoresLine(order));
                     } else {
                         const msg = `Hi ${firstName}, the order status changed while you responded. Review it at https://rozare.com/track-order.`;
                         await evolution.sendText(outboundTo, msg);
@@ -1125,7 +1126,7 @@ exports.handleEvolutionWebhook = async (req, res) => {
 
                 // NOW persist the vote on the job (dashboard reads this)
                 await applyVote(job, isYes ? 'yes' : 'no');
-                await sendResponseMessage(outboundTo, isYes, updatedOrder.orderId, updatedOrder.shippingInfo?.fullName);
+                await sendResponseMessage(outboundTo, isYes, updatedOrder.orderId, updatedOrder.shippingInfo?.fullName, buyerOrderStoresLine(updatedOrder));
             }
             return res.status(200).json({ ok: true });
         }

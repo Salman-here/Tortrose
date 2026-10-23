@@ -52,7 +52,8 @@ test('all current withdrawal states render frozen amount and actual status meani
 
 test('cancellation branches preserve exact source audience/fee/destination semantics', () => {
   expect(one('Wallet full refund — buyer').after.html).toContain('Rs1,200.00 PKR');
-  expect(one('COD no refund — buyer').after.html).toContain('No payment was collected for these items, so no refund is needed');
+  expect(one('COD no refund — buyer').after.html).not.toContain('No payment was collected');
+  expect(one('COD no refund — buyer', 'whatsapp').after.message).not.toContain('no refund is needed');
   expect(one('Card refund pending — buyer').after.html).toContain('Rs1,095.60 PKR');
   expect(one('Card refund pending — buyer').after.html).toContain('Processing fee: Rs104.40 PKR');
   expect(one('Card refund pending — seller').after.html).toContain('No action is required from you');

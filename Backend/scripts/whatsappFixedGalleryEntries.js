@@ -158,7 +158,7 @@ function evaluate(node, bindings, resolve, depth = 0) {
 }
 function renderExpression(unit, site, extra = {}, { assignmentIndex = null, expression = null } = {}) {
   const bindings = {
-    Boolean, firstName: 'Sam', orderId: 'ORD-PREVIEW', order: sampleOrder,
+    Boolean, firstName: 'Sam', orderId: 'ORD-PREVIEW', order: sampleOrder, storeNamesLine: 'Store: Atlas Aura',
     isConfirmed: true, prevDecision: 'confirmed', contextMessage: '',
     maskedEmail: 'sa••••@example.test', cancelledFrom: 'your Rozare account',
     otp: '123456', OTP_EXPIRY_MINUTES: 2,
@@ -271,8 +271,8 @@ function buildFixedWhatsAppGalleryEntries({ includeLegacy = true, includeBefore 
     if (!definition) throw new Error(`Missing message-builder export: ${method}`);
     add('Orders', name, units.buyer, { node: definition.node }, payload, { activity, before: oldMap.get(name) || null });
   };
-  pureBuyer('COD order: confirm or cancel buttons', 'buildOrderButtonsPayload', buyer.buildOrderButtonsPayload(sampleOrder, { friendly: true }));
-  pureBuyer('COD order: interactive list', 'buildOrderListPayload', buyer.buildOrderListPayload(sampleOrder, { friendly: true }));
+  pureBuyer('COD order: confirm or cancel buttons', 'buildOrderButtonsPayload', buyer.buildOrderButtonsPayload(sampleOrder, { friendly: true, includeStores: true }));
+  pureBuyer('COD order: interactive list', 'buildOrderListPayload', buyer.buildOrderListPayload(sampleOrder, { friendly: true, includeStores: true }));
   pureBuyer('Paid order information', 'buildOrderPlacedInfoMessage', buyer.buildOrderPlacedInfoMessage({ ...sampleOrder, paymentMethod: 'safepay' }));
   pureBuyer('Reconfirm a cancelled COD order', 'buildReconfirmButtonsPayload', buyer.buildReconfirmButtonsPayload(sampleOrder, ''));
   covered.add(siteKey(units.webhook, reconfirmSend));

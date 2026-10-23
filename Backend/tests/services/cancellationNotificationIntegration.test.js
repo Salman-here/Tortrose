@@ -136,23 +136,32 @@ test('large option descriptions keep the refund amount in the bounded push/inapp
   for (const record of records) { expect(record.payload.body.length).toBeLessThanOrEqual(1000); expect(record.payload.body).toContain('$12.00 USD'); }
 });
 
-test('a pre-refresh buyer cancellation keeps its existing WhatsApp snapshot when replayed after the copy refresh', async () => {
+test.each([false, true])('a pre-refresh buyer cancellation keeps its saved explanation on replay (friendly=%s)', async friendly => {
   const f = await fixture('cash_on_delivery');
   const originalLookup = Outbox.findOne.bind(Outbox);
   let legacySelected = false;
   const lookup = jest.spyOn(Outbox, 'findOne').mockImplementation((query, ...args) => {
     if (!legacySelected && query?.eventKey?.startsWith('order-cancellation:') && query.channel === 'whatsapp') {
       legacySelected = true;
-      return { select() { return this; }, session() { return this; }, lean: async () => ({ payload: { message: '*Your order items are cancelled*' } }) };
+      return { select() { return this; }, session() { return this; }, lean: async () => ({ payload: { message: friendly ? 'Hey Notification! 👋' : '*Your order items are cancelled*' } }) };
     }
     return originalLookup(query, ...args);
   });
+  const originalFind = Outbox.find.bind(Outbox);
+  const phraseLookup = jest.spyOn(Outbox, 'find').mockImplementation((query, ...args) => {
+    if (query?.eventKey?.startsWith('order-cancellation:')) {
+      const text = 'No payment was collected for these items, so no refund is needed.';
+      return { select() { return this; }, session() { return this; }, lean: async () => ['inapp', 'push', 'email', 'whatsapp'].map(channel => ({ channel, payload: { body: text } })) };
+    }
+    return originalFind(query, ...args);
+  });
   let order;
   try { order = await cancelBuyerOrder({ orderId: f.order._id, buyerId: f.buyer._id, sellerIds: [String(f.sellers[0]._id)] }); }
-  finally { lookup.mockRestore(); }
+  finally { lookup.mockRestore(); phraseLookup.mockRestore(); }
   const row = await Cancellation.findOne({ order: order._id });
   const first = await Outbox.findOne({ aggregateId: String(row._id), channel: 'whatsapp', 'recipient.audienceRole': 'buyer' }).select('+contentHash').lean();
-  expect(first.payload.message).toMatch(/^\*Your order items are cancelled\*/);
+  expect(first.payload.message.startsWith('Hey Notification! 👋')).toBe(friendly);
+  expect(first.payload.message).toContain('No payment was collected');
   await notifyCancellation(row, order);
   const replay = await Outbox.findById(first._id).select('+contentHash').lean();
   expect(replay.payload.message).toBe(first.payload.message);

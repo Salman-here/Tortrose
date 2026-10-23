@@ -45,7 +45,9 @@ test.each([
   } else if (refundDestination === 'original_card') {
     expect(buyerEvent.templates.email.text).toContain('bank may take additional time');
   } else {
-    expect(buyerEvent.templates.email.text).toContain('no refund is needed');
+    expect(buyerEvent.templates.email.text).not.toContain('no refund is needed');
+    expect(buyerEvent.templates.whatsapp.message).not.toContain('No payment was collected');
+    expect(sellerEvent.templates.email.text).toContain('no refund is needed');
   }
 });
 beforeEach(() => {

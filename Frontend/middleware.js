@@ -223,13 +223,17 @@ export default async function middleware(request) {
   const productId = productIdFromPath(url.pathname);
   if (productId) {
     const canonicalPath = `/single-product/${productId.toLowerCase()}`;
-    if (storefrontSlug || url.pathname !== canonicalPath) {
-      const target = new URL(canonicalPath, `https://${CANONICAL_HOST}`);
-      target.search = url.search;
+    if (url.pathname !== canonicalPath) {
+      const target = new URL(request.url);
+      target.pathname = canonicalPath;
       return Response.redirect(target, 308);
     }
+    // Product links are also shared from store URLs. Serve their real public
+    // metadata in the first response rather than requiring a cross-host hop
+    // that preview clients may not complete. The renderer still declares the
+    // main-domain product URL as canonical, for every agent (not crawler-only).
   }
-  if (storefrontSlug && url.pathname !== '/' && !PUBLIC_FILE_PATHS.has(url.pathname) && isKnownAppPath(url.pathname)) {
+  if (storefrontSlug && !productId && url.pathname !== '/' && !PUBLIC_FILE_PATHS.has(url.pathname) && isKnownAppPath(url.pathname)) {
     const target = new URL(request.url); target.hostname = CANONICAL_HOST;
     return Response.redirect(target, 308);
   }

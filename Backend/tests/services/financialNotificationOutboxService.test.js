@@ -97,6 +97,56 @@ const paidMixedOrder = () => {
 };
 
 describe('financial notification domain contracts', () => {
+  test.each(['safepay', 'wallet', 'cash_on_delivery', 'no_charge', 'confirmed'])('%s buyer confirmations include all stores in WhatsApp and both email formats', async method => {
+    const { order, sellerA, sellerB } = paidMixedOrder();
+    order.shippingInfo.fullName = 'Salman Khan';
+    order.sellerPolicies = [{ seller: sellerA, storeName: 'Atlas & Aura' }, { seller: sellerB, storeName: 'Nova <Nest>' }];
+    const options = { channels: ['email', 'whatsapp'] };
+    let records;
+    if (method === 'cash_on_delivery') {
+      order.paymentMethod = method; order.isPaid = false; order.confirmation = { token: 'a'.repeat(64) }; order.createdAt = new Date();
+      records = await enqueueCodOrderBuyerConfirmationNotification(order, options);
+      const wa = records.find(record => record.channel === 'whatsapp');
+      const payload = JSON.parse(wa.payload.whatsappButtonsPayloadJson);
+      expect(payload.description).toContain('Stores: Atlas & Aura, Nova <Nest>');
+      expect(payload.buttons.map(button => button.id)).toEqual(['confirm_ORD-MIXED-1', 'cancel_ORD-MIXED-1']);
+    } else if (method === 'no_charge') {
+      order.orderSummary.totalAmount = 0;
+      records = await enqueueNoChargeOrderBuyerNotifications(order, options);
+    } else if (method === 'confirmed') {
+      order.orderStatus = 'confirmed';
+      records = await enqueueOrderLifecycleBuyerNotifications(order, { ...options, status: 'confirmed', previousStatus: 'pending', transitionAt: new Date(), actorRole: 'buyer' });
+    } else {
+      order.paymentMethod = method; records = await enqueuePaidOrderBuyerNotifications(order, options);
+    }
+    const email = records.find(record => record.channel === 'email'), wa = records.find(record => record.channel === 'whatsapp');
+    expect(email.payload.text).toContain('Stores: Atlas & Aura, Nova <Nest>');
+    expect(email.payload.html).toContain('Stores: Atlas &amp; Aura, Nova &lt;Nest&gt;');
+    expect(email.payload.html).not.toContain('Nova <Nest>');
+    expect(wa.payload.message).toContain('Stores: Atlas & Aura, Nova <Nest>');
+    expect(records.every(record => record.money[0].amountMinor === (method === 'no_charge' ? 0 : 188000))).toBe(true);
+  });
+
+  test('confirmation replay keeps pre-store-name email and friendly WhatsApp content unchanged', async () => {
+    const { order, sellerA } = paidMixedOrder();
+    order.sellerPolicies = [{ seller: sellerA, storeName: 'Atlas Aura' }];
+    const lookup = jest.spyOn(NotificationOutbox, 'find').mockReturnValueOnce({
+      select() { return this; }, session() { return this; }, lean: async () => [
+        { channel: 'email', payload: { text: 'Existing receipt without a store header' } },
+        { channel: 'whatsapp', payload: { message: 'Hey there! 👋' } },
+      ],
+    });
+    let first;
+    try { first = await enqueuePaidOrderBuyerNotifications(order, { channels: ['email', 'whatsapp'] }); }
+    finally { lookup.mockRestore(); }
+    expect(first.every(row => !(row.payload.message || row.payload.text).includes('Store: Atlas Aura'))).toBe(true);
+    const replay = await enqueuePaidOrderBuyerNotifications(order, { channels: ['email', 'whatsapp'] });
+    expect(replay.map(row => String(row._id))).toEqual(first.map(row => String(row._id)));
+    expect(replay.map(row => row.contentHash)).toEqual(first.map(row => row.contentHash));
+    order.orderSummary.totalAmount += 1;
+    await expect(enqueuePaidOrderBuyerNotifications(order, { channels: ['email', 'whatsapp'] })).rejects.toMatchObject({ code: 'NOTIFICATION_IDEMPOTENCY_CONFLICT' });
+  });
+
   test('buyer paid WhatsApp receipt greets the checkout buyer and keeps distinct variants and quantities', async () => {
     const { order, sellerA, sellerB } = paidMixedOrder();
     order.shippingInfo.fullName = '  Salman Khan';

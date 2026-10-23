@@ -5,6 +5,7 @@ test.each([
   'https://rozare.com/single-product/6ad0d6444966bc5a7583d639',
   'https://rozare.com/single-product/6ad0d6444966bc5a7583d639?currency=PKR',
   'https://atlas-aura-goods.rozare.com/',
+  'https://atlas-aura-goods.rozare.com/single-product/6ad0d6444966bc5a7583d639',
   'https://rozare.com/store/atlas-aura-goods',
 ])('public catalog share keeps its preview: %s', url => expect(messageLinkPreview(`See ${url}`)).toBe(true));
 

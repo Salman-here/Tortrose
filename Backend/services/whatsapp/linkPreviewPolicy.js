@@ -13,7 +13,8 @@ const isPublicCatalogUrl = url => {
       || /^\/store\/[a-z\d](?:[a-z\d-]{1,61}[a-z\d])$/i.test(path);
   }
   const slug = url.hostname.slice(0, -'.rozare.com'.length);
-  return path === '/' && /^[a-z\d](?:[a-z\d-]{1,61}[a-z\d])$/.test(slug) && !PLATFORM_HOSTS.has(slug);
+  return (path === '/' || /^\/single-product\/[a-f\d]{24}$/i.test(path))
+    && /^[a-z\d](?:[a-z\d-]{1,61}[a-z\d])$/.test(slug) && !PLATFORM_HOSTS.has(slug);
 };
 
 // Do not let order/account/reset/confirmation links produce branded cards or
