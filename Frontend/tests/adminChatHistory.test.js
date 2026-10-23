@@ -31,3 +31,11 @@ test('the admin viewer uses guarded routes and read-only APIs, with request canc
   const users = readFileSync(new URL('../src/components/layout/UserManagement.jsx', import.meta.url), 'utf8');
   assert(users.includes('/admin-dashboard/chats?userId='));
 });
+
+test('desktop and mobile admin menus share the chat-history entry and the page has its own title', () => {
+  const dashboard = readFileSync(new URL('../src/components/layout/AdminDashboard.jsx', import.meta.url), 'utf8');
+  assert.match(dashboard, /const menuItems = getAdminMenuItems\(\{ pendingOrders, lowStockProducts \}\)/);
+  assert.match(dashboard, /getAdminMenuItems\(\{ pendingOrders, lowStockProducts:.*?\}\)\.map/);
+  assert.equal((dashboard.match(/link: '\/admin-dashboard\/chats'/g) || []).length, 1);
+  assert.match(dashboard, /if \(path\.includes\('\/admin-dashboard\/chats'\)\) return 'Chat History'/);
+});

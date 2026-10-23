@@ -316,6 +316,7 @@ const AdminDashboard = () => {
         if (path.includes('store-overview')) return 'Store Overview';
         if (path.includes('analytics')) return 'Analytics';
         if (path.includes('user-management')) return 'User Management';
+        if (path.includes('/admin-dashboard/chats')) return 'Chat History';
         if (path.includes('product-management')) return 'Product Management';
         if (path.includes('order-management')) return 'Order Management';
         if (path.includes('store-verifications')) return 'Store Verifications';
@@ -635,26 +636,7 @@ const AdminDashboard = () => {
 const AdminSidebar = ({ activeTab, setActiveTab, isSidebarOpen, setIsSidebarOpen, isMobile, pendingOrders, lowStockProducts, onAiChat }) => {
     const location = useLocation();
 
-    const menuItems = [
-        { id: 'overview', label: 'Store Overview', icon: <BarChart3 size={18} />, link: '/admin-dashboard/store-overview' },
-        { id: 'analytics', label: 'Analytics', icon: <TrendingUp size={18} />, link: '/admin-dashboard/analytics' },
-        { id: 'payments', label: 'Payments', icon: <DollarSign size={18} />, link: '/admin-dashboard/payments' },
-        { id: 'users', label: 'User Management', icon: <Users size={18} />, link: '/admin-dashboard/user-management' },
-        { id: 'products', label: 'Products', icon: <Package size={18} />, link: '/admin-dashboard/product-management', badge: lowStockProducts },
-        { id: 'orders', label: 'Orders', icon: <ShoppingBag size={18} />, link: '/admin-dashboard/order-management', badge: pendingOrders },
-        { id: 'verifications', label: 'Verifications', icon: <CheckCircle size={18} />, link: '/admin-dashboard/store-verifications' },
-        { id: 'subdomains', label: 'Subdomains', icon: <Store size={18} />, link: '/admin-dashboard/subdomains' },
-        { id: 'complaints', label: 'Complaints', icon: <AlertCircle size={18} />, link: '/admin-dashboard/complaints' },
-        { id: 'tax', label: 'Tax Config', icon: <DollarSign size={18} />, link: '/admin-dashboard/tax-configuration' },
-        { id: 'notifications', label: 'Notifications', icon: <Bell size={18} />, link: '/admin-dashboard/notifications' },
-        { id: 'whatsapp', label: 'WhatsApp Verify', icon: <MessageCircle size={18} />, link: '/admin-dashboard/whatsapp-verification' },
-        { id: 'whatsapp-test', label: 'WA Test Inbox', icon: <TestTube2 size={18} />, link: '/admin-dashboard/whatsapp-test-inbox' },
-        { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={18} />, link: '/admin-dashboard/broadcast' },
-        { id: 'ads', label: 'Seller Ads', icon: <Megaphone size={18} />, link: '/admin-dashboard/ads' },
-        { id: 'ai-prompts', label: 'AI Prompts', icon: <BrainCircuit size={18} />, link: '/admin-dashboard/ai-prompts' },
-        { id: 'settings', label: 'Settings', icon: <Settings size={18} />, link: '/admin-dashboard/notification-settings' },
-        { id: 'ai-assistant', label: 'AI Assistant', icon: <Bot size={18} />, action: 'ai-chat' },
-    ];
+    const menuItems = getAdminMenuItems({ pendingOrders, lowStockProducts });
 
     useEffect(() => {
         menuItems.forEach(item => { if (item.link && location.pathname.includes(item.link.split('/').pop())) setActiveTab(item.id); });
