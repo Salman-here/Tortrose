@@ -188,7 +188,7 @@ const formatUsd = (cents, fallback) => {
 
 export const buildSubscriptionDocsBody = (catalog) => {
   const test = inspectBillingTest(catalog?.pricing?.billingTest);
-  if (test) return `${billingTestNotice(test)} The initial seller setup trial is separate from this paid-plan introductory period. New test agreements pause at the cutoff rather than silently increasing in price. Normal Starter and Elite pricing and monthly periods apply outside the test window. Review the exact quote and next-charge time in Subscription before authorizing billing.`;
+  if (test) return `${billingTestNotice(test)} The initial seller setup trial is separate from this paid-plan introductory period. New test agreements pause ${test.untilDisabled ? 'when the test settings are switched off' : 'at the cutoff'} rather than silently increasing in price. Normal Starter and Elite pricing and monthly periods apply outside the test window. Review the exact quote and next-charge time in Subscription before authorizing billing.`;
   const pricing = catalog?.pricing;
   const starter = pricing?.starter;
   const elite = pricing?.elite;

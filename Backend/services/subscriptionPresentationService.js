@@ -187,6 +187,7 @@ function buildSubscriptionStatusPresentation(subscription, {
     automaticRenewal: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.autoRenew === true : null,
     nextChargeAt: subscription.billingProvider === 'safepay' ? subscription.safepayBilling?.nextChargeAt || null : null,
     billingTestAgreement: agreement ? { id:agreement.id,startsAt:agreement.startsAt,expiresAt:agreement.expiresAt,
+      ...(agreement.untilDisabled ? {untilDisabled:true} : {}),
       amountMinor:100,currency:'USD',starterIntroMinutes:10,eliteIntroMinutes:15,renewalMinutes:20,
       stopped:Boolean(clock.stoppedAt),paused:subscription.safepayBilling.autoRenew !== true } : null,
     renewalRecovery: renewalPolicy.presentation(subscription, now),
@@ -224,7 +225,7 @@ function buildSubscriptionStatusPresentation(subscription, {
 function buildSubscriptionStatusMessage(subscription) {
   if (!subscription) return 'No subscription was found for this seller.';
   const parts = [`Current subscription: ${subscription.planName} (${subscription.status}).`];
-  if (subscription.billingTestAgreement) parts.push(`Temporary live billing test: $1 USD every 20 minutes, ending ${subscription.billingTestAgreement.expiresAt}. ${subscription.billingTestAgreement.paused ? 'Automatic test billing is paused.' : 'Review the exact next billing time in Subscription.'}`);
+  if (subscription.billingTestAgreement) parts.push(`Temporary live billing test: $1 USD every 20 minutes, ${subscription.billingTestAgreement.untilDisabled ? 'until the test settings are switched off' : `ending ${subscription.billingTestAgreement.expiresAt}`}. ${subscription.billingTestAgreement.paused ? 'Automatic test billing is paused.' : 'Review the exact next billing time in Subscription.'}`);
   if (subscription.status === 'trial') {
     parts.push(`${subscription.trialDaysRemaining} trial day${subscription.trialDaysRemaining === 1 ? '' : 's'} remaining${isoDate(subscription.trialEndDate) ? `, through ${isoDate(subscription.trialEndDate)}` : ''}.`);
   }

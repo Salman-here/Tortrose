@@ -140,6 +140,54 @@ test('test-window expiry cancels an unstarted invoice and cannot switch a new te
  expect(captures).toHaveLength(0);expect((await Sub.findById(sub._id)).safepayBilling.autoRenew).toBe(false);
  expect((await Payment.findById(op.payment)).chargeStartedAt).toBeNull();
 });
+
+const enableManualClock=()=>{process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW=JSON.stringify({startsAt:new Date(Date.now()-1000),untilDisabled:true});};
+
+test.each([['starter',10],['elite',15]])('operator-ended %s keeps its %i-minute intro and exact $1 renewals beyond two hours',async(plan,minutes)=>{
+ await Sub.updateOne({_id:sub._id},{$set:{hasUsedFreePeriod:false}});enableManualClock();
+ const q=await quote({plan,includeMetaAds:plan==='elite'});expect(q.billingTest).toMatchObject({untilDisabled:true,expiresAt:null});
+ expect(Number.isFinite(new Date(q.expiresAt).getTime())).toBe(true);
+ expect(q.terms).toContain('no automatic test expiry');await acceptTest(q);
+ let current=await Sub.findById(sub._id);expect(current.currentPeriodEnd-current.currentPeriodStart).toBe(minutes*60000);
+ useBillingClock();
+ for(let count=1;count<=8;count++) {
+  current=await Sub.findById(sub._id);jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+10));
+  await lifecycle.runBillingWorker();await lifecycle.runBillingWorker();expect(captures).toHaveLength(count);
+  current=await Sub.findById(sub._id);expect(current.safepayBilling.autoRenew).toBe(true);
+  expect(current.currentPeriodEnd-current.currentPeriodStart).toBe(20*60000);
+ }
+ expect(captures.every(row=>row.amount===100&&row.currency==='USD')).toBe(true);
+ expect(await Operation.countDocuments({kind:'renewal',status:'applied','terms.billingTest.untilDisabled':true})).toBe(8);
+});
+
+test('switching off an operator-ended test fences unstarted charges and does not switch a new agreement to full price',async()=>{
+ enableManualClock();await acceptTest(await quote());let current=await Sub.findById(sub._id);expect(captures).toHaveLength(1);
+ useBillingClock();jest.setSystemTime(new Date(current.currentPeriodEnd.getTime()+1));const op=await lifecycle.queueRenewal(sub._id);
+ expect(op.terms.billingTest.untilDisabled).toBe(true);delete process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW;
+ await lifecycle.runBillingWorker();await lifecycle.runBillingWorker();current=await Sub.findById(sub._id);
+ expect(captures).toHaveLength(1);expect(current.safepayBilling.autoRenew).toBe(false);expect(current.safepayBilling.nextChargeAt).toBeNull();
+ expect((await Payment.findById(op.payment)).chargeStartedAt).toBeNull();
+});
+
+test('an already claimed manual-test capture settles once after operator disable and uses the real stop time',async()=>{
+ enableManualClock();beforeCharge=async()=>{delete process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW;};
+ await acceptTest(await quote());const current=await Sub.findById(sub._id);
+ expect(captures).toHaveLength(1);expect(current.safepayBilling.autoRenew).toBe(false);
+ expect(current.cancelledAt.getFullYear()).toBeGreaterThan(2020);
+ await lifecycle.runBillingWorker();expect(captures).toHaveLength(1);
+});
+
+test('a restored older agreement can enter the new operator-ended test without reviving a cancellation',async()=>{
+ await accept((await quote()).quoteId);enableTestClock();await lifecycle.refreshStatus(sub._id);
+ const oldClock=(await Sub.findById(sub._id)).safepayBilling.testClock;
+ useBillingClock();jest.setSystemTime(new Date(new Date(oldClock.expiresAt).getTime()+1));await lifecycle.runBillingWorker();
+ let current=await Sub.findById(sub._id);expect(current.safepayBilling.testClock.restoredAt).toBeTruthy();
+ enableManualClock();await lifecycle.refreshStatus(sub._id);current=await Sub.findById(sub._id);
+ expect(current.safepayBilling.testClock.untilDisabled).toBe(true);expect(current.safepayBilling.monthlyMinor).toBe(100);
+ expect(current.safepayBilling.nextChargeAt.getTime()-Date.now()).toBe(20*60000);
+ await lifecycle.cancel(seller._id);await lifecycle.refreshStatus(sub._id);
+ expect((await Sub.findById(sub._id)).safepayBilling.autoRenew).toBe(false);expect(captures).toHaveLength(1);
+});
 test('global test adoption and expiry preserve the pre-existing monthly agreement and invoice history',async()=>{
  await accept((await quote()).quoteId);const original=await Sub.findById(sub._id);expect(captures[0].amount).toBe(999);enableTestClock();
  await lifecycle.refreshStatus(sub._id);let current=await Sub.findById(sub._id);expect(current.safepayBilling.monthlyMinor).toBe(100);

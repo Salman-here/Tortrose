@@ -172,7 +172,7 @@ async function createQuote(sellerId, body) {
     const [operation] = await Operation.create([{ _id: operationId, seller: sellerId, subscription: sub._id,
       environment: config.environment, requestKey, fingerprint: requestFingerprint, sourceVersion: sub.safepayBilling?.version || 0,
       kind: isRemoval ? 'meta_removal' : kind,
-      expiresAt: price.billingTest ? new Date(Math.min(date(claim.claim.expiresAt).getTime(),Date.parse(price.billingTest.expiresAt))) : claim.claim.expiresAt,
+      expiresAt: price.billingTest && !price.billingTest.untilDisabled ? new Date(Math.min(date(claim.claim.expiresAt).getTime(),Date.parse(price.billingTest.expiresAt))) : claim.claim.expiresAt,
       terms: { plan, planName: price.planName, includeMetaAds, metaAddonMinor: price.metaAddOn,
         monthlyMinor: price.unitAmount, currency: 'USD', trialDays,
         ...(price.billingTest ? { billingTest: price.billingTest } : {}),
@@ -267,7 +267,7 @@ async function applyOperation(operation, sub, session) {
   sub.safepayBilling.nextChargeAt = sub.safepayBilling.autoRenew ? sub.currentPeriodEnd : null;
   if (test && !billingTest.authorized(test)) {
     sub.safepayBilling.autoRenew = false; sub.safepayBilling.nextChargeAt = null;
-    sub.cancelledAt = sub.cancelledAt || new Date(test.expiresAt);
+    sub.cancelledAt = sub.cancelledAt || (test.untilDisabled ? new Date() : new Date(test.expiresAt));
     sub.safepayBilling.testClock = { ...sub.safepayBilling.testClock, stoppedAt:new Date(), restoreBlockedByInFlight:true };
   }
   sub.warningEmailSent = false; sub.blockedAt = null; sub.blockedReason = ''; sub.aiMessageLimit = -1;

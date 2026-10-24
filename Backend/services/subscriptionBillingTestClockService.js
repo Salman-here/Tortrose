@@ -94,9 +94,10 @@ async function reconcileOne(subscriptionId, environment, at = new Date()) {
         }
       }
       changed = stop(sub, at);
-    } else if (window && eligible(sub, at)) {
+    }
+    if (window && eligible(sub, at)) {
       const owner = await User.findOne({_id:sub.seller,role:'seller',status:'active'}).select('_id').session(session);
-      if (owner) changed = adopt(sub, window, at);
+      if (owner) changed = adopt(sub, window, at) || changed;
     }
     if (changed) { sub.markModified('safepayBilling.testClock'); await sub.save({session}); }
   },{readConcern:{level:'snapshot'},writeConcern:{w:'majority'}});

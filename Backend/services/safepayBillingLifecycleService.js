@@ -221,7 +221,7 @@ async function queueRenewal(subscriptionId, at = new Date()) {
     const terms = { plan: downgrade ? 'starter' : sub.plan, planName: downgrade ? sub.pendingDowngrade.targetPlanName : sub.planName,
       metaAddonMinor,
       includeMetaAds: downgrade ? false : sub.metaAdsIncluded, monthlyMinor, currency: 'USD', trialDays: 0,
-      ...(test ? {billingTest:{id:test.id,startsAt:test.startsAt,expiresAt:test.expiresAt,amountMinor:100,currency:'USD',starterIntroMinutes:10,eliteIntroMinutes:15,renewalMinutes:20}} : {}),
+      ...(test ? {billingTest:{id:test.id,startsAt:test.startsAt,expiresAt:test.expiresAt,...(test.untilDisabled ? {untilDisabled:true} : {}),amountMinor:100,currency:'USD',starterIntroMinutes:10,eliteIntroMinutes:15,renewalMinutes:20}} : {}),
       founderRate: sub.founderOffer?.active === true, sourceContractId: sub.safepayBilling.contractId,
       periodStart: period.start, periodEnd: period.end, cycle: sub.safepayBilling.cycle,
       grossMinor: monthlyMinor, dueMinor: credit.chargeMinor, appliedCreditMinor: credit.appliedCreditMinor,

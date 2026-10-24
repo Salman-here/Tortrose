@@ -8,6 +8,17 @@ test('test billing is explicit about real $1 charges, minutes, the cutoff, and z
  expect(billingTestNotice(stamp)).toMatch(/\$1 per 20-minute/);expect(billingTestNotice(stamp)).toMatch(/real Safepay/);
  expect(billingCardTestTerms(stamp)).toMatch(/does not collect a payment/);
 });
+
+test('operator-ended tests show no fabricated date and keep card changes free of any immediate charge',()=>{
+ const manual={...stamp,untilDisabled:true,expiresAt:null};
+ expect(inspectBillingTest(manual)).toBe(manual);
+ expect(billingTestAuthorization({billingTest:manual})).toEqual({billingTestId:manual.id});
+ expect(billingTestNotice(manual)).toContain('no automatic test expiry');
+ expect(billingTestNotice(manual)).not.toMatch(/Invalid Date|1970|stop at/);
+ expect(billingCardTestTerms(manual)).toContain('until the test settings are switched off');
+ expect(billingCardTestTerms(manual)).toContain('does not collect a payment');
+ for(const patch of [{untilDisabled:'true'},{untilDisabled:false},{expiresAt:stamp.expiresAt}])expect(validBillingTest({...manual,...patch})).toBe(false);
+});
 test.each([{amountMinor:101},{currency:'PKR'},{renewalMinutes:1},{starterIntroMinutes:30},{eliteIntroMinutes:45},{expiresAt:'2026-10-23T12:00:01Z'},{id:'invalid'}])('corrupt test schedule fails closed: %j',patch=>{
  expect(validBillingTest({...stamp,...patch})).toBe(false);expect(()=>billingTestAuthorization({billingTest:{...stamp,...patch}})).toThrow();
 });

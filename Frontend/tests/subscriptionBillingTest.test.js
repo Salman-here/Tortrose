@@ -16,3 +16,12 @@ test('web and native send the explicit test policy ID with both new agreements a
   const source=readFileSync(new URL(file,import.meta.url),'utf8');assert.match(source,/billingTestAuthorization\(/);assert.match(source,/billingTestId/);assert.match(source,/billingCardTestTerms/);
  }
 });
+
+test('website accepts an explicitly manual-ended test without manufacturing an expiry date',()=>{
+ const manual={...stamp,untilDisabled:true,expiresAt:null};
+ const pricing={schemaVersion:1,currency:'USD',starter:plan('starter'),elite:plan('elite'),metaAdsAddonCents:0,billingTest:manual};
+ assert.deepEqual(getSubscriptionPricing({pricing}).billingTest,manual);
+ assert.match(billingTestNotice(manual),/no automatic test expiry/);
+ assert.doesNotMatch(billingTestNotice(manual),/Invalid Date|1970|stop at/);
+ for(const patch of [{untilDisabled:false},{untilDisabled:'true'},{expiresAt:stamp.expiresAt}])assert.equal(getSubscriptionPricing({pricing:{...pricing,billingTest:{...manual,...patch}}}),null);
+});

@@ -18,6 +18,43 @@ test('the QA window is explicit, globally scoped, bounded to two hours and off a
  expect(policy.readWindow({SAFEPAY_SUBSCRIPTION_TEST_WINDOW:raw},end)).toBeNull();
  for(const value of ['invalid','{}',JSON.stringify({startsAt:start,expiresAt:new Date(end.getTime()+1)})])expect(()=>policy.readWindow({SAFEPAY_SUBSCRIPTION_TEST_WINDOW:value},start)).toThrow();
 });
+
+test('an explicitly operator-ended test has no automatic expiry and still stops when disabled',()=>{
+ const manual=JSON.stringify({startsAt:start.toISOString(),untilDisabled:true});
+ process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW=manual;
+ const stamp=policy.readWindow(process.env,start);
+ expect(stamp).toMatchObject({untilDisabled:true,expiresAt:null,amountMinor:100});
+ expect(policy.authorized(stamp,new Date('2027-10-23T10:00:00Z'))).toBe(true);
+ expect(policy.boundary(start,1500,stamp).getTime()).toBe(start.getTime()+1500*20*60000);
+ expect(policy.terms(stamp,'starter',true)).toContain('no automatic test expiry');
+ expect(policy.readWindow({SAFEPAY_SUBSCRIPTION_TEST_WINDOW:manual},new Date(start-1))).toBeNull();
+ delete process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW;
+ expect(policy.authorized(stamp,start)).toBe(false);
+});
+
+test('no expiry must be explicit, cannot conflict with a date, and never bypasses stamp or amount validation',()=>{
+ for(const value of [{startsAt:start},{startsAt:start,untilDisabled:'true'},
+  {startsAt:start,untilDisabled:true,expiresAt:end}]) {
+  expect(()=>policy.readWindow({SAFEPAY_SUBSCRIPTION_TEST_WINDOW:JSON.stringify(value)},start)).toThrow();
+ }
+ const stamp=policy.readWindow({SAFEPAY_SUBSCRIPTION_TEST_WINDOW:JSON.stringify({startsAt:start,untilDisabled:true})},start);
+ for(const patch of [{untilDisabled:false},{expiresAt:end},{amountMinor:101},{id:'a'.repeat(32)}])expect(()=>policy.validateStamp({...stamp,...patch})).toThrow();
+ expect(()=>policy.boundary(start,Number.MAX_SAFE_INTEGER,stamp)).toThrow();
+});
+
+test('manual test settings retain $1 prices after days and restore normal prices only when switched off',()=>{
+ jest.useFakeTimers().setSystemTime(start);
+ process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW=JSON.stringify({startsAt:start,untilDisabled:true});
+ const stamp=policy.readWindow();const sub=subscription();clocks.adopt(sub,stamp,start);
+ jest.setSystemTime(new Date(start.getTime()+7*86400000));
+ expect(pricing.getPricingCatalog().starter.standardAmountCents).toBe(100);
+ expect(pricing.getPricingCatalog().elite.standardAmountCents).toBe(100);
+ expect(clocks.stop(sub)).toBe(false);expect(sub.safepayBilling.autoRenew).toBe(true);
+ delete process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW;
+ expect(clocks.stop(sub)).toBe(true);expect(sub.safepayBilling.monthlyMinor).toBe(999);
+ expect(pricing.getPricingCatalog().starter.standardAmountCents).toBe(999);
+ expect(pricing.getPricingCatalog().elite.standardAmountCents).toBe(2165);
+});
 test.each(['starter','elite'])('%s quotes exactly $1, even with founder pricing or Meta Ads, and preserves normal catalog definitions',plan=>{
  jest.useFakeTimers().setSystemTime(start);process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW=raw;
  for(const founder of [true,false])expect(pricing.buildPlanPricing(plan,plan==='elite',founder,{ignoreTest:false})).toMatchObject({unitAmount:100,metaAddOn:0});
