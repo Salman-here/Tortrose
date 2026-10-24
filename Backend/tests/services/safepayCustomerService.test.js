@@ -2,17 +2,23 @@
 const mockCreateCustomer = jest.fn();
 const mockListCards = jest.fn();
 const mockGetCard = jest.fn();
+const mockGetCustomer = jest.fn();
+const mockUpdateCustomer = jest.fn();
+const mockPrepareCheckout = jest.fn();
+jest.mock('../../services/safepayPaymentService', () => ({ ...jest.requireActual('../../services/safepayPaymentService'), prepareCheckout: mockPrepareCheckout }));
 jest.mock('../../services/safepayClient', () => ({
   ...jest.requireActual('../../services/safepayClient'),
-  createSafepayClient: () => ({ createCustomer: mockCreateCustomer, listCards: mockListCards, getCard: mockGetCard }),
+  createSafepayClient: () => ({ createCustomer: mockCreateCustomer, listCards: mockListCards, getCard: mockGetCard,
+    getCustomer: mockGetCustomer, updateCustomer: mockUpdateCustomer }),
 }));
 const mongoose = require('mongoose');
+const { readSafepayConfig } = require('../../config/safepay');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const User = require('../../models/User');
 const Customer = require('../../models/SafepayCustomer');
 const Payment = require('../../models/SafepayPayment');
 const Subscription = require('../../models/SellerSubscription');
-const { billingContact, ensureCustomer, startCardSetup, listCards, setDefaultCard } = require('../../services/safepayCustomerService');
+const { billingContact, ensureCustomer, startCardSetup, listCards, setDefaultCard, updateCardSetupContact } = require('../../services/safepayCustomerService');
 let mongo, user;
 const validContact = { fullName: 'Test Seller', phone: '+923001234567', country: 'Pakistan', countryCode: 'PK' };
 const providerCustomer = { token: 'cus_customer-fixture' };
@@ -34,6 +40,10 @@ beforeEach(async () => {
   mockCreateCustomer.mockReset().mockResolvedValue(providerCustomer);
   mockListCards.mockReset().mockResolvedValue([]);
   mockGetCard.mockReset();
+  mockGetCustomer.mockReset().mockResolvedValue({ token: providerCustomer.token, first_name: 'Test', last_name: 'Seller',
+    email: 'customer-fixture@example.com', phone_number: '+923001234567', country: 'PK' });
+  mockUpdateCustomer.mockReset();
+  mockPrepareCheckout.mockReset().mockImplementation(async paymentId => ({ paymentId: String(paymentId) }));
   user = await User.create({ username: 'Seller', email: 'customer-fixture@example.com', status: 'active', role: 'seller',
     savedShippingInfo: { ...validContact, fullName: 'SingleName' } });
 });
@@ -189,6 +199,85 @@ test('owned current billing selection stays distinct from the shopping default, 
   expect(JSON.stringify(result)).not.toContain('private-network-credential');
   await Subscription.updateOne({ seller: user._id }, { $set: { 'safepayBilling.cardId': 'pm_shopping-fixture' } });
   expect((await listCards(user._id)).billingPaymentMethodId).toBe('pm_shopping-fixture');
+});
+
+test('an existing wallet returns editable billing details from its owned provider profile', async () => {
+  await ensureCustomer(user._id, validContact);
+  expect(await listCards(user._id)).toMatchObject({ billingProfileReady: true, billingContact: validContact });
+  expect(mockUpdateCustomer).not.toHaveBeenCalled();
+});
+
+test('corrected billing contact updates the same customer without changing cards, account profile or subscription selection', async () => {
+  const link = await ensureCustomer(user._id, validContact);
+  await Customer.updateOne({ _id: link._id }, { $set: { defaultCardId: 'pm_shopping-fixture' } });
+  await Subscription.create({ seller: user._id, billingProvider: 'safepay', plan: 'starter', status: 'active',
+    safepayBilling: { environment: 'sandbox', customerId: providerCustomer.token, cardId: 'pm_billing-fixture', autoRenew: true } });
+  const details = billingContact(user.toObject(), { ...validContact, fullName: 'Another Cardholder' });
+  mockGetCustomer.mockResolvedValueOnce({ ...details, first_name: 'Test', last_name: 'Seller' }).mockResolvedValueOnce(details);
+  await updateCardSetupContact(link, details, readSafepayConfig());
+  expect(mockUpdateCustomer).toHaveBeenCalledWith(providerCustomer.token, details);
+  expect(mockCreateCustomer).toHaveBeenCalledTimes(1);
+  expect(await Customer.findById(link._id).select('+defaultCardId')).toMatchObject({ customerId: providerCustomer.token, defaultCardId: 'pm_shopping-fixture', leaseUntil: null });
+  expect(await Subscription.findOne({ seller: user._id }).select('+safepayBilling.cardId')).toMatchObject({ safepayBilling: { cardId: 'pm_billing-fixture', autoRenew: true } });
+  expect((await User.findById(user._id)).savedShippingInfo.fullName).toBe('SingleName');
+  expect(await Payment.countDocuments()).toBe(0);
+});
+
+test('matching billing details do not cause a provider update', async () => {
+  const link = await ensureCustomer(user._id, validContact);
+  await updateCardSetupContact(link, billingContact(user.toObject(), validContact), readSafepayConfig());
+  expect(mockUpdateCustomer).not.toHaveBeenCalled();
+});
+
+test('an uncertain billing update cannot start another update or create a card setup until verified', async () => {
+  const link = await ensureCustomer(user._id, validContact), details = billingContact(user.toObject(), { ...validContact, fullName: 'Another Cardholder' });
+  mockUpdateCustomer.mockRejectedValueOnce(Object.assign(new Error('private provider detail'), { outcomeUnknown: true }));
+  await expect(updateCardSetupContact(link, details, readSafepayConfig())).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_UNCERTAIN', retryAfterSeconds: expect.any(Number) });
+  await expect(updateCardSetupContact(link, details, readSafepayConfig())).rejects.toMatchObject({ code: 'CHECKOUT_IN_PROGRESS' });
+  expect(mockUpdateCustomer).toHaveBeenCalledTimes(1);
+  expect(await Payment.countDocuments()).toBe(0);
+});
+
+test('a definite billing update rejection releases its lease and permits correction', async () => {
+  const link = await ensureCustomer(user._id, validContact), details = billingContact(user.toObject(), { ...validContact, fullName: 'Another Cardholder' });
+  mockUpdateCustomer.mockRejectedValueOnce(providerRejection(['last_name']));
+  await expect(updateCardSetupContact(link, details, readSafepayConfig())).rejects.toMatchObject({ code: 'SAFEPAY_BILLING_PROFILE_REQUIRED', fields: ['fullName'] });
+  expect((await Customer.findById(link._id)).leaseUntil).toBeNull();
+});
+
+test('an existing profile still rejects a newly supplied invalid name before any provider update', async () => {
+  await ensureCustomer(user._id, validContact);
+  await expect(startCardSetup(user._id, { consentToSave: true, requestKey: 'invalid-existing-contact', billingContact: { ...validContact, fullName: 'SingleName' } }))
+    .rejects.toMatchObject({ code: 'SAFEPAY_BILLING_PROFILE_REQUIRED' });
+  expect(mockUpdateCustomer).not.toHaveBeenCalled(); expect(await Payment.countDocuments()).toBe(0);
+});
+
+test('new card contact details bind a new zero-value setup to the same owned wallet and are idempotent', async () => {
+  await ensureCustomer(user._id, validContact);
+  const body = { consentToSave: true, requestKey: 'editable-existing-card-setup', billingContact: validContact, clientSurface: 'web' };
+  const first = await startCardSetup(user._id, body), second = await startCardSetup(user._id, body);
+  expect(first.paymentId).toBe(second.paymentId);
+  expect(await Payment.countDocuments()).toBe(1);
+  const payment = await Payment.findById(first.paymentId).lean();
+  expect(payment).toMatchObject({ amountMinor: 0, currency: 'PKR', customerId: providerCustomer.token, purpose: 'card_setup', providerMode: 'instrument' });
+  expect(payment.terms.billingContactHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.stringify(payment.terms)).not.toMatch(/Test Seller|923001234567|customer-fixture@example/);
+  await expect(startCardSetup(user._id, { ...body, billingContact: { ...validContact, fullName: 'Different Cardholder' } }))
+    .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
+  expect(mockUpdateCustomer).not.toHaveBeenCalled();
+});
+
+test('a second explicit card setup can use different contact details without replacing the wallet or charging money', async () => {
+  await ensureCustomer(user._id, validContact);
+  await startCardSetup(user._id, { consentToSave: true, requestKey: 'first-editable-card-setup', billingContact: validContact });
+  const nextContact = { ...validContact, fullName: 'Different Cardholder', phone: '+923391166402' };
+  const nextDetails = billingContact(user.toObject(), nextContact);
+  mockGetCustomer.mockResolvedValueOnce({ ...nextDetails, first_name: 'Test', last_name: 'Seller' }).mockResolvedValue(nextDetails);
+  const next = await startCardSetup(user._id, { consentToSave: true, requestKey: 'second-editable-card-setup', billingContact: nextContact });
+  expect(mockUpdateCustomer).toHaveBeenCalledWith(providerCustomer.token, nextDetails);
+  expect(mockCreateCustomer).toHaveBeenCalledTimes(1);
+  expect(await Payment.countDocuments()).toBe(2);
+  expect(await Payment.findById(next.paymentId)).toMatchObject({ amountMinor: 0, customerId: providerCustomer.token, chargeStartedAt: null, capturedMinor: 0 });
 });
 test.each(['other-owner', 'other-environment', 'other-customer', 'unowned-card', 'expired-card', 'deleting-card'])('never presents %s as the current subscription card', async mismatch => {
   await ensureCustomer(user._id, validContact);

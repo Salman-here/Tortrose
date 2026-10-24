@@ -172,6 +172,24 @@ test('merchant-managed customer creation never creates or forwards a password', 
   expect(body.password).toBeUndefined();
 });
 
+test('customer contact updates use the official PUT endpoint and preserve the owned customer identity', async () => {
+  const customer = { token: 'cus_owned-fixture', merchant_api_key: config.publicKey, is_guest: false, is_deleted: false };
+  const details = { first_name: 'Another', last_name: 'Cardholder', email: 'owned@example.com', phone_number: '+923001234567', country: 'PK' };
+  const fetchImpl = jest.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ data: customer }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { ...customer, ...details } }) });
+  expect(await createSafepayClient({ config, fetchImpl }).updateCustomer(customer.token, { ...details, password: 'never-forward', is_guest: true, card_number: 'never-forward' }))
+    .toMatchObject({ token: customer.token, ...details });
+  expect(fetchImpl.mock.calls.map(([, options]) => options.method)).toEqual(['GET', 'PUT']);
+  expect(fetchImpl.mock.calls[1][0]).toBe('https://sandbox.api.getsafepay.com/user/customers/v1/' + customer.token);
+  expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual(details);
+});
+
+test('a foreign merchant customer is refused before a billing update is sent', async () => {
+  const fetchImpl = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { token: 'cus_owned-fixture', merchant_api_key: 'sec_another-merchant', is_guest: false } }) });
+  await expect(createSafepayClient({ config, fetchImpl }).updateCustomer('cus_owned-fixture', {})).rejects.toMatchObject({ code: 'SAFEPAY_CUSTOMER_MISMATCH' });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
 test('customer rejection retains only recognized field names, not Safepay error text or contact data', async () => {
   const fetchImpl = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ status: { errors: [
     'last_name: cannot be blank.', 'email: private@example.com rejected',

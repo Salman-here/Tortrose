@@ -31,6 +31,7 @@ beforeEach(async () => {
   await AsyncStorage.clear();
   mockUser.role = 'user';
   mockUser._id = 'buyer-test';
+  mockUser.savedShippingInfo = { fullName: 'Test Buyer', phone: '+923001234567', country: 'Pakistan', countryCode: 'PK' };
   api.post.mockReset();
   api.get.mockResolvedValue({ data: { provider: 'safepay', cards: [], defaultPaymentMethodId: null, billingProfileReady: true } });
   openSafepayCheckout.mockReset().mockResolvedValue({ status: 'authorized' });
@@ -80,7 +81,7 @@ test('new accounts see prefilled billing fields before attempting customer creat
   await waitFor(() => expect(screen.getByLabelText('Billing full name').props.value).toBe('SingleName'));
   expect(screen.UNSAFE_getByType('PhoneNumberInput').props.value).toBe('+923001234567');
   expect(screen.UNSAFE_getByType('LocationAutocomplete').props.code).toBe('PK');
-  expect(screen.getByText('Enter your first name and last name.')).toBeTruthy();
+  expect(screen.getByText('Billing details for your next card')).toBeTruthy();
   expect(api.post).not.toHaveBeenCalled();
 });
 
@@ -142,15 +143,26 @@ test.each(['CHECKOUT_IN_PROGRESS', 'SAFEPAY_CUSTOMER_UNCERTAIN'])('%s waits only
   expect(api.post.mock.calls[0][1].requestKey).toBe(api.post.mock.calls[1][1].requestKey);
 });
 
-test('existing provider profiles do not force users to re-enter contact details', async () => {
+test('existing provider profiles retain editable prefilled contact details for the next card', async () => {
   api.post.mockResolvedValue({ data: { paymentId: 'owned-setup' } });
   const screen = render(<PaymentMethodsScreen navigation={navigation} />);
   await waitFor(() => expect(screen.getByText('No card saved yet')).toBeTruthy());
-  expect(screen.queryByLabelText('Billing full name')).toBeNull();
+  expect(screen.getByLabelText('Billing full name').props.value).toBe('Test Buyer');
+  fireEvent.changeText(screen.getByLabelText('Billing full name'), 'Another Cardholder');
   consent(screen);
   add(screen);
   await waitFor(() => expect(openSafepayCheckout).toHaveBeenCalledTimes(1));
-  expect(api.post.mock.calls[0][1].billingContact).toBeUndefined();
+  expect(api.post.mock.calls[0][1].billingContact).toMatchObject({ fullName: 'Another Cardholder', phone: '+923001234567', countryCode: 'PK' });
+  expect(mockUser.username).toBe('Test Buyer');
+});
+
+test('changing contact for another card creates a distinct setup key instead of reopening the previous details', async () => {
+  const screen = await openPendingSetup();
+  fireEvent.changeText(screen.getByLabelText('Billing full name'), 'Another Cardholder');
+  add(screen);
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+  expect(api.post.mock.calls[0][1].requestKey).not.toBe(api.post.mock.calls[1][1].requestKey);
+  expect(api.post.mock.calls[1][1].billingContact.fullName).toBe('Another Cardholder');
 });
 
 const savedCard = { id: 'pm_new-card', brand: 'visa', last4: '1111', expMonth: 12, expYear: 2030, usable: true };

@@ -9,10 +9,15 @@ const { readSafepayConfig } = require('../config/safepay');
 const { createSafepayClient, requireReusableCard } = require('./safepayClient');
 const { canonicalizeShippingPhone } = require('./orderBuyerContactService');
 const { ensurePayment, prepareCheckout, fingerprint } = require('./safepayPaymentService');
+const { Country } = require('country-state-city');
 const fail = (message, code, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const clean = value => typeof value === 'string' ? value.trim() : '';
 const CUSTOMER_LEASE_MS = 90000;
 const CONTACT_FIELDS = ['first_name', 'last_name', 'email', 'phone_number', 'country'];
+const contactMatches = (customer, details) => CONTACT_FIELDS.every(field => customer?.[field] === details[field]);
+const contactPresentation = customer => ({ fullName: [customer.first_name, customer.last_name].map(clean).filter(Boolean).join(' '),
+  phone: clean(customer.phone_number), countryCode: clean(customer.country).toUpperCase(),
+  country: Country.getCountryByCode(clean(customer.country).toUpperCase())?.name || clean(customer.country) });
 const billingError = (message, fields = []) => Object.assign(
   fail(message, 'SAFEPAY_BILLING_PROFILE_REQUIRED', 400), { fields }
 );
@@ -155,6 +160,7 @@ async function listCards(userId) {
       billingProfileReady: false, billingContact: billingContactDraft(user || {}) };
   }
   const all = await client.listCards(link.customerId);
+  const billingContact = contactPresentation(await client.getCustomer(link.customerId));
   const cards = all.filter(card => card.max_usage === -1 && card.cybersource && /^\d{4}$/.test(card.cybersource.last_four || '')).map(cardPresentation);
   const selected = cards.some(card => card.id === link.defaultCardId && card.usable) ? link.defaultCardId : null;
   const subscription = await SellerSubscription.findOne({ seller: userId, billingProvider: 'safepay',
@@ -165,7 +171,7 @@ async function listCards(userId) {
   const billingCard = cards.find(card => card.id === subscription?.safepayBilling?.cardId
     && card.usable && card.id !== link.deletingCardId);
   return { cards, defaultPaymentMethodId: selected, billingPaymentMethodId: billingCard?.id || null,
-    provider: 'safepay', environment: config.environment, billingProfileReady: true };
+    provider: 'safepay', environment: config.environment, billingProfileReady: true, billingContact };
 }
 async function requireOwnedReusableCard(userId, cardId) {
   const { link, client, config } = await ownedCustomer(userId);
@@ -177,13 +183,58 @@ async function requireOwnedReusableCard(userId, cardId) {
 }
 async function startCardSetup(userId, body) {
   if (body?.consentToSave !== true) throw fail('Please agree to save this card for future payments.', 'CARD_STORAGE_CONSENT_REQUIRED', 400);
-  const link = await ensureCustomer(userId, body.billingContact);
-  await Payment.init();
   const requestKey = clean(body.requestKey);
+  if (!/^[A-Za-z0-9:_-]{8,160}$/.test(requestKey)) throw fail('A valid card setup key is required.', 'INVALID_IDEMPOTENCY_KEY', 400);
+  const config = readSafepayConfig(process.env, { requireWebhook: true });
+  const user = await User.findById(userId).select('username email status savedShippingInfo sellerInfo').lean();
+  if (!user || user.status !== 'active') throw fail('This account cannot add a payment card.', 'SAFEPAY_ACCOUNT_UNAVAILABLE', 403);
+  const supplied = body.billingContact !== undefined;
+  const details = supplied ? billingContact(user, body.billingContact) : null;
+  await Payment.init();
+  const existing = await Payment.findOne({ user: userId, environment: config.environment, purpose: 'card_setup', requestKey });
+  if (existing) {
+    // Retrying a frozen setup never silently opens its old details as new input.
+    if (supplied && existing.terms?.billingContactHash !== fingerprint(details)) {
+      throw fail('These billing details differ from the earlier card setup. Start a new card setup to use the changed details.', 'IDEMPOTENCY_CONFLICT');
+    }
+    return prepareCheckout(existing._id, { clientSurface: body.clientSurface || 'mobile' });
+  }
+  const link = await ensureCustomer(userId, body.billingContact);
+  if (details) await updateCardSetupContact(link, details, config);
   const payment = await ensurePayment({ user: userId, purpose: 'card_setup', requestKey,
     reference: `card:${userId}:${fingerprint(requestKey).slice(0, 24)}`, amountMinor: 0, currency: 'PKR', customerId: link.customerId,
-    terms: { consentVersion: 'safepay-card-storage-v1', reusableRequired: true } });
+    terms: { consentVersion: 'safepay-card-storage-v1', reusableRequired: true,
+      ...(details ? { billingContactHash: fingerprint(details) } : {}) } });
   return prepareCheckout(payment._id, { clientSurface: body.clientSurface || 'mobile' });
+}
+
+async function updateCardSetupContact(link, details, config) {
+  const token = crypto.randomUUID(), at = new Date();
+  const claim = await Customer.findOneAndUpdate({ _id: link._id, customerId: link.customerId, status: 'ready',
+    $or: [{ leaseUntil: null }, { leaseUntil: { $lte: at } }] },
+  { $set: { leaseToken: token, leaseUntil: new Date(at.getTime() + CUSTOMER_LEASE_MS) } }, { new: true });
+  if (!claim) throw profileWaitError(await Customer.findById(link._id));
+  let release = false;
+  try {
+    const client = createSafepayClient({ config });
+    let customer = await client.getCustomer(link.customerId);
+    if (!contactMatches(customer, details)) {
+      await client.updateCustomer(link.customerId, details);
+      customer = await client.getCustomer(link.customerId);
+    }
+    if (!contactMatches(customer, details)) throw fail('The updated billing details are still being verified.', 'SAFEPAY_CUSTOMER_UNCERTAIN', 503);
+    release = true;
+  } catch (error) {
+    const definite = error.code === 'SAFEPAY_REQUEST_FAILED' && error.outcomeUnknown === false
+      && error.providerStatus >= 400 && error.providerStatus < 500 && error.providerStatus !== 408;
+    if (definite) { release = true; throw customerFailureForUser(error); }
+    // Do not repeat an uncertain PUT or create a checkout with stale details.
+    // After the bounded lease, the next attempt reads and verifies first.
+    throw profileWaitError(claim, true);
+  } finally {
+    if (release) await Customer.updateOne({ _id: link._id, status: 'ready', customerId: link.customerId, leaseToken: token },
+      { $set: { leaseToken: '', leaseUntil: null } });
+  }
 }
 async function setDefaultCard(userId, cardId) {
   const { link } = await requireOwnedReusableCard(userId, cardId);
@@ -217,4 +268,4 @@ async function deleteCard(userId, cardId) {
   await Customer.updateOne({ _id: link._id, deletingCardId: cardId }, { $set: { deletingCardId: null, deletionStartedAt: null } });
   return { success: true };
 }
-module.exports = { billingContact, billingContactDraft, ensureCustomer, ownedCustomer, listCards, requireOwnedReusableCard, startCardSetup, setDefaultCard, deleteCard, cardPresentation };
+module.exports = { billingContact, billingContactDraft, ensureCustomer, ownedCustomer, listCards, requireOwnedReusableCard, startCardSetup, setDefaultCard, deleteCard, cardPresentation, updateCardSetupContact };

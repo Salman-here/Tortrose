@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isValidPhoneNumber } from 'libphonenumber-js';
 import api from '../config/api';
 import GlassBackground from '../components/common/GlassBackground';
 import GlassPanel from '../components/common/GlassPanel';
@@ -66,7 +67,7 @@ const initialBillingContact = user => {
 const billingContactProblem = contact => {
   const nameError = getSafepayCheckoutNameError(contact.fullName, { paymentMethod: 'card', billingProfileReady: false });
   if (nameError) return nameError;
-  if (!clean(contact.phone)) return 'Enter your billing phone number.';
+  if (!isValidPhoneNumber(clean(contact.phone))) return 'Enter a valid billing phone number.';
   if (!clean(contact.country) && !clean(contact.countryCode)) return 'Select your billing country.';
   return '';
 };
@@ -115,7 +116,6 @@ export default function PaymentMethodsScreen({ navigation }) {
   const addingRef = useRef(false);
   const pendingSetupRef = useRef(null);
   const billingContactEditedRef = useRef(false);
-  const [needsBillingContact, setNeedsBillingContact] = useState(false);
   const [billingContact, setBillingContact] = useState(() => initialBillingContact(currentUser));
   const [retrySeconds, setRetrySeconds] = useState(0);
   const [cards, setCards] = useState([]);
@@ -156,9 +156,6 @@ export default function PaymentMethodsScreen({ navigation }) {
       const normalized = normalizeSavedCards(response);
       setCards(normalized.cards);
       setDefaultPaymentMethodId(normalized.defaultPaymentMethodId);
-      if (typeof response.data?.billingProfileReady === 'boolean') {
-        setNeedsBillingContact(!response.data.billingProfileReady);
-      }
       if (!billingContactEditedRef.current && response.data?.billingContact) {
         const draft = response.data.billingContact;
         setBillingContact({ fullName: clean(draft.fullName), phone: clean(draft.phone),
@@ -166,7 +163,7 @@ export default function PaymentMethodsScreen({ navigation }) {
       }
       setLoadError('');
       if (pending && pendingSetupRef.current === pending && ['authorized', 'failed', 'cancelled'].includes(verified?.status)) {
-        await clearPersistedMutationAttemptFromLedger(AsyncStorage, pending.storageKey, 'safepay-card-storage-v1', pending.attempt.key);
+        await clearPersistedMutationAttemptFromLedger(AsyncStorage, pending.storageKey, pending.fingerprint, pending.attempt.key);
         if (activeOwnerRef.current !== actorId || pendingSetupRef.current !== pending) return normalized;
         pendingSetupRef.current = null;
         setConsentToSave(false);
@@ -189,6 +186,8 @@ export default function PaymentMethodsScreen({ navigation }) {
 
   useEffect(() => {
     pendingSetupRef.current = null;
+    billingContactEditedRef.current = false;
+    setBillingContact(initialBillingContact(currentUser));
     setCards([]);
     setNotice(null);
     setConsentToSave(false);
@@ -204,7 +203,7 @@ export default function PaymentMethodsScreen({ navigation }) {
         text: 'Please agree to save this card for future payments.' });
       return;
     }
-    const problem = needsBillingContact ? billingContactProblem(billingContact) : '';
+    const problem = billingContactProblem(billingContact);
     if (problem) {
       setNotice({ type: 'info', title: 'Check your billing details', text: problem });
       return;
@@ -214,29 +213,31 @@ export default function PaymentMethodsScreen({ navigation }) {
     setNotice(null);
     let attempt = null;
     const storageKey = createScopedMutationStorageKey('rozare_safepay_card_setup_v1', currentUser?._id || currentUser?.id);
+    const fingerprint = JSON.stringify(['safepay-card-storage-contact-v2', billingContact.fullName.trim().replace(/\s+/g, ' '), billingContact.phone.trim(), billingContact.countryCode.trim().toUpperCase()]);
     try {
       attempt = await getOrCreatePersistedMutationAttemptInLedger({ storage: AsyncStorage, storageKey,
-        fingerprint: 'safepay-card-storage-v1', keyPrefix: 'mobile-safepay-card' });
+        fingerprint, keyPrefix: 'mobile-safepay-card' });
       const response = await api.post('/api/safepay/cards/setup', { clientSurface: 'mobile', consentToSave: true,
-        requestKey: attempt.key, ...(needsBillingContact ? { billingContact } : {}) });
+        requestKey: attempt.key, billingContact });
+      if (activeOwnerRef.current !== actorId) return;
       const result = await openSafepayCheckout({ apiClient: api, response });
       if (activeOwnerRef.current !== actorId) return;
       if (result.status === 'authorized') {
         const refreshed = await loadCards({ quiet: true });
         if (activeOwnerRef.current !== actorId || !refreshed) return;
-        await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
+        await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, fingerprint, attempt.key);
         pendingSetupRef.current = null;
         setConsentToSave(false);
         setNotice(savedCardNotice(result, refreshed));
       } else if (['cancelled', 'failed'].includes(result.status)) {
-        await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, 'safepay-card-storage-v1', attempt.key);
+        await clearPersistedMutationAttemptFromLedger(AsyncStorage, storageKey, fingerprint, attempt.key);
         pendingSetupRef.current = null;
         setNotice({ type: 'info', title: 'Card setup closed', text: result.failureCode === 'SAFEPAY_CARD_SETUP_NOT_REUSABLE'
           ? 'Safepay verified the card but did not save it for future payments. Please start a new secure card setup.'
           : 'Safepay confirmed that this card setup did not complete. You can start a new secure setup.' });
       } else {
         const payment = response.data || response;
-        pendingSetupRef.current = { ownerId: actorId, attempt, storageKey,
+        pendingSetupRef.current = { ownerId: actorId, attempt, storageKey, fingerprint,
           payment: { paymentId: payment.paymentId, environment: payment.environment, purpose: 'card_setup',
             currency: payment.currency, amountMinor: 0, paymentRail: result.paymentRail || 'unknown' } };
         setNotice({ type: 'info', title: 'Card setup is being verified', text: 'The same setup is retained. Refresh your cards or retry to resume it.' });
@@ -245,7 +246,6 @@ export default function PaymentMethodsScreen({ navigation }) {
       if (activeOwnerRef.current !== actorId) return;
       trackError('saved_card_setup', error);
       const failure = error.response?.data || {};
-      if (failure.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED') setNeedsBillingContact(true);
       const seconds = Number(failure.retryAfterSeconds);
       const waiting = ['CHECKOUT_IN_PROGRESS', 'SAFEPAY_CUSTOMER_UNCERTAIN'].includes(failure.code)
         && Number.isInteger(seconds) && seconds > 0;
@@ -482,21 +482,21 @@ export default function PaymentMethodsScreen({ navigation }) {
             );
           })}
 
-          {needsBillingContact && <GlassPanel style={{ padding: spacing.lg, gap: spacing.md, marginBottom: spacing.lg }}>
-            <Text style={{ color: palette.colors.text, fontWeight: '700' }}>Billing contact</Text>
+          <GlassPanel style={{ padding: spacing.lg, gap: spacing.md, marginBottom: spacing.lg }}>
+            <Text style={{ color: palette.colors.text, fontWeight: '700' }}>Billing details for your next card</Text>
             <Text style={{ color: palette.colors.textSecondary, fontSize: fontSize.sm }}>
-              Enter your first name and last name.
+              Review or change these details before adding a card. Your Rozare account profile stays unchanged.
             </Text>
             <TextInput accessibilityLabel="Billing full name" placeholder="First and last name" value={billingContact.fullName}
-              maxLength={160} autoCapitalize="words" autoComplete="name"
+              maxLength={160} autoCapitalize="words" autoComplete="name" editable={!adding && !loading}
               onChangeText={fullName => updateBillingContact({ fullName })}
               placeholderTextColor={palette.colors.textSecondary} style={{ color: palette.colors.text, padding: spacing.md, borderWidth: 1, borderColor: palette.glass.borderStrong, borderRadius: 12 }} />
-            <PhoneNumberInput label="Phone number" value={billingContact.phone}
+            <PhoneNumberInput label="Phone number" value={billingContact.phone} editable={!adding && !loading}
               onChangeText={phone => updateBillingContact({ phone })} />
-            <LocationAutocomplete type="country" label="Country" value={billingContact.country} code={billingContact.countryCode}
+            <LocationAutocomplete type="country" label="Country" value={billingContact.country} code={billingContact.countryCode} disabled={adding || loading}
               onSelect={option => updateBillingContact({ country: option.name, countryCode: option.isoCode })}
               onClear={() => updateBillingContact({ country: '', countryCode: '' })} />
-          </GlassPanel>}
+          </GlassPanel>
           <View style={styles.consentCard}>
             <TouchableOpacity
               style={styles.consentChoice}

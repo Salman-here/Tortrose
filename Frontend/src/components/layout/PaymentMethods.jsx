@@ -12,6 +12,9 @@ import { createScopedMutationStorageKey, getOrCreatePersistedMutationAttemptForF
 
 export default function PaymentMethods() {
   const { currentUser } = useAuth();
+  const actorId = String(currentUser?._id || currentUser?.id || '');
+  const activeOwner = useRef(actorId);
+  activeOwner.current = actorId;
   const [cards, setCards] = useState([]);
   const [defaultId, setDefaultId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -21,7 +24,6 @@ export default function PaymentMethods() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [consent, setConsent] = useState(false);
-  const [profileReady, setProfileReady] = useState(false);
   const [contact, setContact] = useState({ fullName: '', phone: '', country: '', countryCode: '' });
   const editedContact = useRef(false);
   const [removeCard, setRemoveCard] = useState(null);
@@ -33,15 +35,15 @@ export default function PaymentMethods() {
     setLoading(true);
     try {
       const { data } = await safepayApi.get('/cards');
+      if (activeOwner.current !== actorId) return null;
       if (!Array.isArray(data.cards)) throw new Error('Saved cards could not be verified.');
       setCards(data.cards); setDefaultId(data.defaultPaymentMethodId); setCardsUnavailable(false);
-      setProfileReady(data.billingProfileReady === true);
       if (data.billingContact && !editedContact.current) setContact(data.billingContact);
       return data;
-    } catch (err) { setCardsUnavailable(true); setError(err.response?.data?.msg || err.message || 'Saved cards are unavailable. Please retry.'); return null; }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(() => { load(); }, [load]);
+    } catch (err) { if (activeOwner.current === actorId) { setCardsUnavailable(true); setError(err.response?.data?.msg || err.message || 'Saved cards are unavailable. Please retry.'); } return null; }
+    finally { if (activeOwner.current === actorId) setLoading(false); }
+  }, [actorId]);
+  useEffect(() => { editedContact.current = false; setContact({ fullName: '', phone: '', country: '', countryCode: '' }); setCards([]); setConsent(false); setError(''); setNotice(''); load(); }, [load]);
   useEffect(() => {
     if (!retryAt) return undefined;
     const timer = setInterval(() => setClock(Date.now()), 1000);
@@ -52,24 +54,25 @@ export default function PaymentMethods() {
     setError(err.response?.data?.msg || err.message || 'This request could not be completed. Please retry.');
     const seconds = Number(err.response?.data?.retryAfterSeconds);
     if (Number.isFinite(seconds) && seconds > 0) { setClock(Date.now()); setRetryAt(Date.now() + Math.min(seconds, 90) * 1000); }
-    if (err.response?.data?.code === 'SAFEPAY_BILLING_PROFILE_REQUIRED') setProfileReady(false);
   };
   const addCard = async event => {
     event.preventDefault();
     if (busyRef.current || remaining || !consent || cardsUnavailable) return;
     setError(''); setNotice('');
-    const nameError = !profileReady && getSafepayCheckoutNameError(contact.fullName, { paymentMethod: 'safepay', billingProfileReady: false });
+    const nameError = getSafepayCheckoutNameError(contact.fullName, { paymentMethod: 'safepay', billingProfileReady: false });
     if (nameError) { setError(nameError); return; }
-    if (!profileReady && (!isValidPhoneNumber(contact.phone || '') || !contact.countryCode)) {
+    if (!isValidPhoneNumber(contact.phone || '') || !contact.countryCode) {
       setError('Enter a valid phone number and select your country.'); return;
     }
     busyRef.current = true; setBusy(true);
     try {
-      const fingerprint = 'safepay-card-storage-v1';
+      const fingerprint = JSON.stringify(['safepay-card-storage-contact-v2', contact.fullName.trim().replace(/\s+/g, ' '), contact.phone.trim(), contact.countryCode.trim().toUpperCase()]);
       const attempt = await getOrCreatePersistedMutationAttemptForFingerprint({ storage: localStorage, storageKey, fingerprint, keyPrefix: 'web-card' });
       const { data } = await safepayApi.post('/cards/setup', { clientSurface: 'web', consentToSave: true,
-        requestKey: attempt.key, ...(!profileReady ? { billingContact: contact } : {}) });
+        requestKey: attempt.key, billingContact: contact });
+      if (activeOwner.current !== actorId) return;
       const result = await openSafepayCheckout(data);
+      if (activeOwner.current !== actorId) return;
       if (['authorized', 'cancelled', 'failed', 'refunded'].includes(result.status)) {
         await clearPersistedMutationAttemptForFingerprint(localStorage, storageKey, fingerprint, attempt.key);
       }
@@ -108,11 +111,12 @@ export default function PaymentMethods() {
       </article>)}</div> : <div className="glass-card p-8 text-center"><CreditCard size={36} className="mx-auto mb-3" /><h3 className="font-semibold">No card saved yet</h3><p className="text-sm text-muted-foreground mt-2">Add a card securely with Safepay.</p></div>}
     </section>
     <form onSubmit={addCard} className="glass-card p-6 space-y-5">
-      {!profileReady && <fieldset disabled={busy || loading} className="space-y-4"><legend className="font-semibold mb-3">Billing details</legend>
-        <label className="block text-sm">Billing first and last name<input className="glass-input block w-full mt-2" autoComplete="cc-name" maxLength={160} value={contact.fullName || ''} onChange={event => edit({ fullName: event.target.value })} required /></label>
+      <fieldset disabled={busy || loading} className="space-y-4"><legend className="font-semibold mb-3">Billing details for your next card</legend>
+        <p className="text-sm text-muted-foreground">Review or change these details before adding a card. Your Rozare account profile stays unchanged.</p>
+        <label className="block text-sm">First and last name<input className="glass-input block w-full mt-2" autoComplete="cc-name" maxLength={160} value={contact.fullName || ''} onChange={event => edit({ fullName: event.target.value })} required /></label>
         <label className="block text-sm">Billing phone number<PhoneField value={contact.phone || ''} onChange={phone => edit({ phone: phone || '' })} profileCountry={contact.country} /></label>
         <LocationAutocomplete type="country" label="Billing country" value={contact.country} code={contact.countryCode} required disabled={busy || loading} onSelect={country => edit({ country: country.name, countryCode: country.isoCode })} onClear={() => edit({ country: '', countryCode: '' })} />
-      </fieldset>}
+      </fieldset>
       <label className="flex gap-3 items-start text-sm"><input type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)} className="mt-1" /><span>Save this card for future payments.</span></label>
       <p className="text-xs text-muted-foreground">New cards become your default for checkout.</p>
       <p className="text-xs text-muted-foreground">By continuing, you agree to Rozare’s <Link className="underline" to="/terms">Terms</Link> and <Link className="underline" to="/privacy">Privacy Policy</Link>.</p>

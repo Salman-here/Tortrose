@@ -88,7 +88,7 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     if (!response.ok || body?.status?.errors?.length || body?.ok === false) {
       throw providerError('Safepay could not complete this request.', 'SAFEPAY_REQUEST_FAILED', response.status >= 500 ? 503 : 502,
         { providerStatus: response.status, outcomeUnknown: method !== 'GET' && (response.status >= 500 || response.status === 408),
-          ...(method === 'POST' && path === '/user/customers/v1/' && [400, 422].includes(response.status)
+          ...((method === 'POST' && path === '/user/customers/v1/' || method === 'PUT' && /^\/user\/customers\/v1\/cus_[a-zA-Z0-9-]+$/.test(path)) && [400, 422].includes(response.status)
             ? { providerValidationFields: customerValidationFields(body) } : {}) });
     }
     if (body?.data === undefined) throw providerError('Safepay response was incomplete.', 'SAFEPAY_RESPONSE_INVALID', 502, { outcomeUnknown: method !== 'GET' });
@@ -180,6 +180,16 @@ function createSafepayClient({ config = readSafepayConfig(), fetchImpl = fetch }
     async getCustomer(customerId) {
       requireId(customerId, 'cus');
       return requireCustomer(await request('GET', `/user/customers/v1/${customerId}`), config, customerId);
+    },
+    async updateCustomer(customerId, contact) {
+      // The official customer update API preserves this merchant-owned wallet.
+      // Never replace the customer, change guest status, or accept a foreign ID.
+      await this.getCustomer(customerId);
+      const { first_name, last_name, email, phone_number, country } = contact;
+      const data = await request('PUT', `/user/customers/v1/${requireId(customerId, 'cus')}`,
+        { first_name, last_name, email, phone_number, country });
+      try { return requireCustomer(data, config, customerId); }
+      catch (error) { error.outcomeUnknown = true; throw error; }
     },
     async createCheckoutGuest(contact) {
       const { first_name, last_name, email, phone_number, country } = contact;
