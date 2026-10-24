@@ -245,6 +245,8 @@ async function applyOperation(operation, sub, session) {
     if (test) sub.safepayBilling.testClock = { ...test, origin:'enrollment', adoptedAt:at, stoppedAt:null, restoredAt:null };
     if (founderAt) sub.founderOffer = { active: true, code: FOUNDER_PROMOTION.code, discountPercent: FOUNDER_PROMOTION.discountPercent, claimedAt: founderAt, forfeitedAt: null, source: 'coupon' };
   } else if (operation.kind === 'renewal' || operation.kind === 'downgrade') {
+    const recoveryAnchor = require('./safepayBillingRecoveryTerms').recoveryAnchor(terms);
+    if (recoveryAnchor) sub.safepayBilling.anchorAt = recoveryAnchor;
     sub.currentPeriodStart = date(terms.periodStart);
     sub.currentPeriodEnd = date(terms.periodEnd);
     sub.safepayBilling.cycle = terms.cycle + 1;
@@ -382,6 +384,7 @@ async function claimRecurringCharge(paymentId) {
       if (!billingTest.authorized(op.terms.billingTest) || sub.safepayBilling.testClock?.id !== op.terms.billingTest.id
         || op.terms.monthlyMinor !== 100 || op.terms.dueMinor > 100) return null;
     } else if (billingTest.readWindow()) return null;
+    require('./safepayBillingRecoveryTerms').recoveryAnchor(op.terms);
     if (['renewal', 'downgrade'].includes(op.kind) && !sub.safepayBilling.autoRenew) return null;
     if (['renewal', 'downgrade'].includes(op.kind) && renewalPolicy.ownsRecovery(sub)
       && date(sub.safepayBilling.recovery.cancelAt) <= new Date()) return null;

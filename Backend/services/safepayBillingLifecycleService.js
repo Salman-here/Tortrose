@@ -257,15 +257,18 @@ async function queueRecoveryAttempt(sub, at, config, session) {
     seller: sub.seller, environment: config.environment, status: 'failed', kind: { $in: ['renewal', 'downgrade'] } }).session(session);
   const failed = previous?.payment && await Payment.findById(previous.payment).session(session);
   if (!previous || previous.terms.sourceContractId !== sub.safepayBilling.contractId
-    || previous.terms.cycle !== sub.safepayBilling.cycle || date(previous.terms.periodEnd) <= at
+    || previous.terms.cycle !== sub.safepayBilling.cycle
     || failed?.status !== 'failed' || failed.chargeOutcome !== 'declined' || failed.appliedAt || failed.capturedMinor !== 0) return null;
   const attempt = r.attempts + 1;
   const requestKey = `renewal-retry:${sub.safepayBilling.contractId}:${sub.safepayBilling.cycle}:${attempt}`;
   const existing = await Operation.findOne({ seller: sub.seller, environment: config.environment, requestKey }).session(session);
   if (existing) return existing;
-  // Reuse the frozen unpaid invoice's price, credit and exact period. Only a
-  // definitively failed authorization permits a fresh payment/tracker.
-  const terms = { ...previous.terms, trialDays: 0, retryOf: id(previous), automaticRetry: true, renewalAttempt: attempt };
+  // Normal invoices retain their exact period. The currently authorized $1
+  // test may restart an expired unpaid cycle, never collect missed cycles.
+  let recovered;
+  try { recovered = require('./safepayBillingRecoveryTerms').retryTerms(previous, sub, at); }
+  catch (error) { if (error.code === 'SUBSCRIPTION_MISSED_PERIOD_REVIEW') return null; throw error; }
+  const terms = { ...recovered, trialDays: 0, retryOf: id(previous), automaticRetry: true, renewalAttempt: attempt };
   delete terms.checkoutClaimToken;
   const [op] = await Operation.create([{ seller: sub.seller, subscription: sub._id, environment: config.environment,
     kind: previous.kind, requestKey, fingerprint: payments.fingerprint(terms), sourceVersion: sub.safepayBilling.version,

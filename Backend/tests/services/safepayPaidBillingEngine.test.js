@@ -143,6 +143,99 @@ test('test-window expiry cancels an unstarted invoice and cannot switch a new te
 
 const enableManualClock=()=>{process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW=JSON.stringify({startsAt:new Date(Date.now()-1000),untilDisabled:true});};
 
+async function expiredTestRecovery(plan = 'starter') {
+  await Sub.updateOne({ _id: sub._id }, { $set: { hasUsedFreePeriod: false } });
+  enableManualClock();
+  await acceptTest(await quote({ plan }));
+  let current = await Sub.findById(sub._id);
+  useBillingClock(); jest.setSystemTime(new Date(current.currentPeriodEnd.getTime() + 10));
+  mode = 'declined'; await lifecycle.runBillingWorker();
+  current = await Sub.findById(sub._id);
+  const failed = await Operation.findById(current.safepayBilling.lastFailedOperation);
+  jest.setSystemTime(new Date(failed.terms.periodEnd.getTime() + 60 * 60000));
+  return { current, failed };
+}
+
+test.each(['starter', 'elite'])('%s: an explicitly retried expired $1 test invoice funds a fresh 20-minute cycle without catch-up charges', async plan => {
+  const { failed } = await expiredTestRecovery(plan);
+  const at = new Date();
+  const q = await recovery.retryQuote(seller._id, { requestKey: 'expired-test-explicit-recovery', failedOperation: String(failed._id) });
+  const op = await Operation.findById(q.quoteId);
+  expect(op.terms).toMatchObject({ dueMinor: 100, currency: 'USD', cycle: failed.terms.cycle, retryOf: String(failed._id) });
+  expect(op.terms.periodStart).toEqual(at);
+  expect(new Date(op.terms.periodEnd) - new Date(op.terms.periodStart)).toBe(20 * 60000);
+  expect(op.terms.billingTestRecovery.sourceOperation).toBe(String(failed._id));
+  expect((await Operation.findById(failed._id)).terms.periodEnd).toEqual(failed.terms.periodEnd);
+  mode = 'success'; await acceptTest(q); await acceptTest(q); await lifecycle.runBillingWorker();
+  let current = await Sub.findById(sub._id);
+  expect(captures).toHaveLength(1);
+  expect(captures[0]).toMatchObject({ amount: 100, currency: 'USD' });
+  expect(current.currentPeriodStart).toEqual(at);
+  expect(current.safepayBilling.nextChargeAt).toEqual(current.currentPeriodEnd);
+  expect(current.safepayBilling.recovery.rootOperation).toBeNull();
+  expect(current.safepayBilling.lastFailedOperation).toBeNull();
+  jest.setSystemTime(new Date(current.currentPeriodEnd.getTime() + 10));
+  await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
+  current = await Sub.findById(sub._id);
+  expect(captures).toHaveLength(2);
+  expect(captures.every(p => p.amount === 100 && p.currency === 'USD')).toBe(true);
+  expect(current.currentPeriodEnd - current.currentPeriodStart).toBe(20 * 60000);
+});
+
+test('scheduled day-3 test recovery keeps the original retry calendar but funds the current test cycle', async () => {
+  const { failed } = await expiredTestRecovery();
+  const current = await Sub.findById(sub._id), at = new Date(current.safepayBilling.recovery.nextRetryAt);
+  jest.setSystemTime(at); mode = 'success';
+  await lifecycle.runBillingWorker(); await lifecycle.runBillingWorker();
+  const retry = await Operation.findOne({ 'terms.retryOf': String(failed._id) });
+  expect(retry.status).toBe('applied');
+  expect(retry.terms.periodStart).toEqual(at);
+  expect(new Date(retry.terms.periodEnd) - at).toBe(20 * 60000);
+  expect(retry.terms.renewalAttempt).toBe(2);
+  expect(captures).toHaveLength(1);
+});
+
+test('an expired regular-price invoice cannot use test recovery rebasing', async () => {
+  const current = await startRecovery();
+  const failed = await Operation.findById(current.safepayBilling.lastFailedOperation);
+  jest.setSystemTime(new Date(failed.terms.periodEnd.getTime() + 10));
+  await expect(recovery.retryQuote(seller._id, { requestKey: 'normal-expired-period-fence', failedOperation: String(failed._id) }))
+    .rejects.toMatchObject({ code: 'SUBSCRIPTION_RECOVERY_EXPIRED' });
+  expect(await Operation.countDocuments({ 'terms.retryOf': String(failed._id) })).toBe(0);
+});
+
+test('disabling the test prevents an expired test invoice from starting a new charge', async () => {
+  const { failed } = await expiredTestRecovery();
+  delete process.env.SAFEPAY_SUBSCRIPTION_TEST_WINDOW;
+  await expect(recovery.retryQuote(seller._id, { requestKey: 'disabled-expired-test-fence', failedOperation: String(failed._id) })).rejects.toBeTruthy();
+  expect(captures).toHaveLength(0);
+  expect(await Operation.countDocuments({ 'terms.retryOf': String(failed._id) })).toBe(0);
+});
+
+test('cancelling an expired test renewal invalidates a prepared recovery quote before capture', async () => {
+  const { failed } = await expiredTestRecovery();
+  const q = await recovery.retryQuote(seller._id, { requestKey: 'cancel-expired-test-fence', failedOperation: String(failed._id) });
+  await lifecycle.cancel(seller._id); mode = 'success';
+  await expect(acceptTest(q)).rejects.toMatchObject({ code: 'SUBSCRIPTION_QUOTE_STALE' });
+  expect(captures).toHaveLength(0);
+});
+
+test('an expired test invoice with captured money cannot create another payment even if its decline flags are stale', async () => {
+  const { failed } = await expiredTestRecovery();
+  await Payment.updateOne({ _id: failed.payment }, { $set: { capturedMinor: 100 } });
+  await expect(recovery.retryQuote(seller._id, { requestKey: 'captured-expired-test-fence', failedOperation: String(failed._id) }))
+    .rejects.toMatchObject({ code: 'SUBSCRIPTION_RETRY_UNAVAILABLE' });
+  expect(await Operation.countDocuments({ 'terms.retryOf': String(failed._id) })).toBe(0);
+});
+
+test('an expired test retry cannot replace a payment whose capture outcome is still uncertain', async () => {
+  const { failed } = await expiredTestRecovery();
+  await Payment.updateOne({ _id: failed.payment }, { $set: { chargeOutcome: 'unknown' } });
+  await expect(recovery.retryQuote(seller._id, { requestKey: 'unknown-expired-test-fence', failedOperation: String(failed._id) }))
+    .rejects.toMatchObject({ code: 'SUBSCRIPTION_RETRY_UNAVAILABLE' });
+  expect(captures).toHaveLength(0);
+});
+
 test.each([['starter',10],['elite',15]])('operator-ended %s keeps its %i-minute intro and exact $1 renewals beyond two hours',async(plan,minutes)=>{
  await Sub.updateOne({_id:sub._id},{$set:{hasUsedFreePeriod:false}});enableManualClock();
  const q=await quote({plan,includeMetaAds:plan==='elite'});expect(q.billingTest).toMatchObject({untilDisabled:true,expiresAt:null});

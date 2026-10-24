@@ -11,6 +11,7 @@ const { requireOwnedReusableCard } = require('./safepayCustomerService');
 const { fail, id, date, transaction } = billing;
 const renewalPolicy = require('./safepayRenewalPolicy');
 const billingTest = require('./subscriptionBillingTestPolicy');
+const recoveryTerms = require('./safepayBillingRecoveryTerms');
 
 async function retryQuote(sellerId, body) {
   const config = readSafepayConfig(process.env, { requireWebhook: true });
@@ -35,20 +36,18 @@ async function retryQuote(sellerId, body) {
   }
   const failedPayment = previous?.payment && await Payment.findById(previous.payment);
   if (!previous || failedPayment?.status !== 'failed' || failedPayment.chargeOutcome !== 'declined'
-    || failedPayment.appliedAt || previous.terms.sourceContractId !== sub.safepayBilling.contractId
+    || failedPayment.appliedAt || failedPayment.capturedMinor !== 0 || previous.terms.sourceContractId !== sub.safepayBilling.contractId
     || previous.terms.cycle !== sub.safepayBilling.cycle) {
     throw fail('The earlier payment must be definitively declined before retrying.', 'SUBSCRIPTION_RETRY_UNAVAILABLE');
   }
-  if (date(previous.terms.periodEnd) <= new Date()) {
-    throw fail('That billing period has ended. Cancel the expired agreement and choose a new plan instead of paying for an old period.', 'SUBSCRIPTION_MISSED_PERIOD_REVIEW');
-  }
+  const terms = recoveryTerms.retryTerms(previous, sub);
   const claim = await claimSellerCheckout({ sellerId, flow: 'subscription', provider: 'safepay', requestFingerprint: fingerprint });
   if (!claim.acquired) throw fail('A billing quote is already being prepared.', 'CHECKOUT_PENDING');
   try {
     const op = await Operation.create({ seller: sellerId, subscription: sub._id, environment: config.environment,
       requestKey: body.requestKey, fingerprint, sourceVersion: sub.safepayBilling.version, kind: previous.kind,
-      expiresAt: new Date(Math.min(date(claim.claim.expiresAt).getTime(), date(previous.terms.periodEnd).getTime())),
-      terms: { ...previous.terms, trialDays: 0, automaticRetry: false, retryOf: id(previous), checkoutClaimToken: claim.claim.token } });
+      expiresAt: new Date(Math.min(date(claim.claim.expiresAt).getTime(), date(terms.periodEnd).getTime())),
+      terms: { ...terms, trialDays: 0, automaticRetry: false, retryOf: id(previous), checkoutClaimToken: claim.claim.token } });
     return billing.presentQuote(op);
   } catch (error) {
     await releaseSellerCheckoutClaim({ sellerId, flow: 'subscription', token: claim.claim.token });
